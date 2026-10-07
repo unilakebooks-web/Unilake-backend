@@ -1,0 +1,817 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String         @id
+  name           String
+  email          String
+  emailVerified  Boolean        @default(false)
+  image          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  sessions       Session[]
+  accounts       Account[]
+  orderSessions  OrderSession[]
+  savedAddresses SavedAddress[]
+  role           String         @default("USER")
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ============================================================
+// COMIC CATALOGUE
+// ============================================================
+
+enum AgeGroup {
+  AGE_0_2
+  AGE_3_5
+  AGE_6_8
+  AGE_9_12
+}
+
+enum CoverType {
+  HARDCOVER
+  SOFTCOVER
+}
+
+enum GenderTag {
+  BOY
+  GIRL
+  UNISEX
+}
+
+enum ComicStatus {
+  DRAFT
+  PUBLISHING // publish job in progress (async sync to ComfyUI)
+  PUBLISHED
+  UNPUBLISHED
+}
+
+model Theme {
+  id   String @id @default(uuid())
+  name String @unique
+
+  comics Comic[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("themes")
+}
+
+model Comic {
+  id                 String      @id @default(uuid())
+  title              String
+  genderTags         GenderTag[] @default([])
+  pageCount          Int
+  freePreviewPages   Int
+  coverThumbnailUrls String[]    @default([])
+  previewVideoUrl    String?
+  loraFileUrl        String?
+  loraStrength       Float       @default(1.0)
+  status             ComicStatus @default(DRAFT)
+  publishJobId       String?
+  publishError       String?
+
+  pages         Page[]
+  fonts         Font[]
+  pricingRules  PricingRule[]
+  orderSessions OrderSession[]
+  facts         ComicFact[]
+
+  metaTitle       String?
+  metaDescription String?
+
+  isBestseller Boolean @default(false)
+
+  description String?    @db.Text
+  themes      Theme[]
+  ageGroups   AgeGroup[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("comics")
+}
+
+model Page {
+  id      String @id @default(uuid())
+  comicId String
+  comic   Comic  @relation(fields: [comicId], references: [id], onDelete: Cascade)
+
+  pageNumber Int // 1–24
+  artworkUrl String? // HD PNG, empty bubbles, R2 public URL
+  maskUrl    String? // PNG marking head area, R2 public URL
+
+  // Real pixel size of artworkUrl, probed server-side with Sharp at upload time.
+  // Null until artwork is attached. Used to (a) reject a mask whose size doesn't
+  // match, (b) warn when a replaced artwork changes aspect ratio, (c) show the
+  // size in the admin UI. NOT needed to position bubbles — those are normalized.
+  artworkWidth  Int?
+  artworkHeight Int?
+
+  hasFace       Boolean @default(false) // does the child's face appear on this page
+  mirrorFace    Boolean @default(false) // should the face be flipped
+  faceDirection String? // "front" | "three-quarter" | "side"
+  isPreviewPage Boolean @default(false) // part of free preview (pages 1–10 typically)
+  pagePrompt    String? @db.Text
+
+  steps Int   @default(3)
+  cfg   Float @default(1.0)
+
+  bubbles     Bubble[]
+  pageVersion PageVersion[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([comicId, pageNumber])
+  @@map("pages")
+}
+
+enum TextAlign {
+  LEFT
+  CENTER
+  RIGHT
+}
+
+enum TextVerticalAlign {
+  TOP
+  MIDDLE
+  BOTTOM
+}
+
+enum TextCase {
+  AS_TYPED
+  UPPERCASE
+  LOWERCASE
+}
+
+model Bubble {
+  id     String @id @default(uuid())
+  pageId String
+  page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  // Normalized 0–1 fractions of the artwork's dimensions — NOT pixels.
+  // x/y is the top-left corner. Constraints (enforced in Zod + bubble.service):
+  //   0 <= x, y            x + width <= 1        y + height <= 1
+  // Resolution-independent by design: artwork can be re-uploaded at any size
+  // without invalidating existing bubbles.
+  x      Float
+  y      Float
+  width  Float
+  height Float
+
+  dialogue  String  @db.Text // contains tokens: {name}, {pronoun_subject}, {pronoun_object}, {pronoun_possessive}
+  fontId    String?
+  font      Font?   @relation(fields: [fontId], references: [id])
+  // Normalized fraction of the artwork's HEIGHT, not pixels.
+  // Rendered size = fontSize * artworkHeight.
+  // Default 0.02 ≈ 31px on a 1536px-tall page.
+  fontSize  Float   @default(0.02)
+  fontColor String  @default("#000000")
+  nameColor String?
+
+  textAlign         TextAlign         @default(CENTER)
+  textVerticalAlign TextVerticalAlign @default(MIDDLE)
+  textCase          TextCase          @default(AS_TYPED)
+
+  sortOrder Int @default(0) // order bubbles were added, for predictable rendering/debugging
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("bubbles")
+}
+
+model Font {
+  id      String @id @default(uuid())
+  comicId String
+  comic   Comic  @relation(fields: [comicId], references: [id], onDelete: Cascade)
+
+  name    String // display name, e.g. "ComicSans-Bold"
+  fileUrl String // R2 path to .ttf/.otf
+  bubbles Bubble[]
+
+  createdAt DateTime @default(now())
+
+  @@map("fonts")
+}
+
+// ============================================================
+// PRICING (country-based)
+// ============================================================
+
+model PricingRule {
+  id      String @id @default(uuid())
+  comicId String
+  comic   Comic  @relation(fields: [comicId], references: [id], onDelete: Cascade)
+
+  countryId String
+  country   Country   @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  coverType CoverType
+  mrp       Decimal?  @db.Decimal(10, 2)
+  price     Decimal   @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([comicId, countryId, coverType])
+  @@map("pricing_rules")
+}
+
+// ============================================================
+// COMIC-ORDER FLOW
+// Named "OrderSession" (not "Session") specifically to avoid colliding
+// with Better Auth's own Session model in this same schema file.
+// This has nothing to do with login — it's the in-progress
+// comic-creation flow for an anonymous parent/user.
+// ============================================================
+
+enum OrderSessionStatus {
+  CREATED
+  PHOTO_UPLOADED
+  GENERATING_PREVIEW
+  PREVIEW_READY
+  AWAITING_PAYMENT
+  PAID
+  GENERATING_PAID
+  PAID_PAGES_READY
+  CONFIRMED
+  COMPILING_PDF
+  PDF_FAILED
+  SHIPMENT_QUEUED
+  SHIPMENT_FAILED
+  COMPLETED
+  FAILED
+}
+
+enum PronounKey {
+  HE
+  SHE
+  THEY
+}
+
+model OrderSession {
+  id      String @id @default(uuid())
+  comicId String
+  comic   Comic  @relation(fields: [comicId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  childName         String?
+  pronounKey        PronounKey?
+  notificationEmail String?
+  coverType         CoverType?
+  age               Int?
+  status            OrderSessionStatus @default(CREATED)
+
+  // Photo validation
+  rawPhotoUrls   String[] // up to 2 uploaded photos, R2 paths
+  bestPhotoUrl   String? // winner from validation pipeline
+  photoScoreJson Json? // breakdown of the check scores
+
+  // Shipping (collected before payment)
+  shippingName    String?
+  shippingLine1   String?
+  shippingLine2   String?
+  shippingCity    String?
+  shippingState   String?
+  shippingZip     String?
+  shippingCountry String? // ISO alpha-2 — drives domestic vs international Shiprocket routing
+  shippingPhone   String?
+
+  wsRoomToken String @unique @default(uuid()) // used to authenticate WS connection
+
+  pageVersions PageVersion[]
+  order        Order?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expiresAt DateTime // 24hr TTL equivalent, enforced at query time / cleanup job
+
+  @@map("order_sessions")
+}
+
+// ============================================================
+// GENERATED PAGE VERSIONS (AI pipeline output)
+// ============================================================
+
+enum PageVersionStatus {
+  QUEUED
+  TEXT_STAMPING
+  TEXT_STAMPED
+  GENERATING_SD
+  SD_READY
+  FAILED
+}
+
+model PageVersion {
+  id             String       @id @default(uuid())
+  orderSessionId String
+  orderSession   OrderSession @relation(fields: [orderSessionId], references: [id], onDelete: Cascade)
+
+  // pageNumber   Int
+  pageId String
+  page   Page   @relation(fields: [pageId], references: [id])
+
+  variantIndex Int     @default(0) // 0,1,2... up to 3-4 free / 8 paid
+  seed         BigInt? // ComfyUI seed used, stored for reproducibility
+
+  textStampedUrl  String? // Sharp output — artwork with text stamped, INPUT to ComfyUI
+  comfyJobId      String? // RunPod job ID for the face-swap job
+  displayImageUrl String? // for storing the display URL that ougth to be displayed in the browser
+  finalImageUrl   String? // ComfyUI output — face-swapped + text-stamped, shown to user & used in PDF
+
+  isSelected   Boolean           @default(false) // chosen by user at confirm step
+  status       PageVersionStatus @default(QUEUED)
+  errorMessage String?
+  retryCount   Int               @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderSessionId, pageId, variantIndex])
+  @@index([orderSessionId, pageId])
+  @@map("page_versions")
+}
+
+// ============================================================
+// ORDERS / PAYMENTS
+// ============================================================
+
+enum OrderStatus {
+  CREATED // Order row created, Razorpay order created, awaiting payment
+  PAID // Payment succeeded, paid-page generation in progress
+  GENERATED // All paid pages ready, waiting for user to select variants + send-to-print
+  CONFIRMED // User clicked send-to-print, PDF compiled, Shiprocket queued
+  SHIPROCKET_FAILED // Shiprocket order creation exhausted retries, admin handles manually
+  READY_TO_SHIP // Shiprocket order created, admin fills dims + generates AWB
+  SHIPPED // AWB generated, package handed to courier
+  DELIVERED // Shiprocket webhook confirmed delivery
+  CANCELLED // Manual admin cancellation (edge case)
+}
+
+model Order {
+  id             String       @id @default(uuid())
+  orderSessionId String       @unique
+  orderSession   OrderSession @relation(fields: [orderSessionId], references: [id])
+
+  amount      Decimal   @db.Decimal(10, 2)
+  currency    String
+  countryCode String // snapshot of country used for pricing lookup at order time
+  coverType   CoverType
+
+  notificationEmail String?
+
+  // Shipping address snapshot — copied from OrderSession at order creation, never changes
+  shippingName    String?
+  shippingLine1   String?
+  shippingLine2   String?
+  shippingCity    String?
+  shippingState   String?
+  shippingZip     String?
+  shippingCountry String? // ISO alpha-2
+  shippingPhone   String?
+
+  razorpayOrderId   String?     @unique
+  razorpayPaymentId String?     @unique
+  status            OrderStatus @default(CREATED)
+
+  pdfUrl            String? // R2 path, 30-day retention
+  pdfDownloadUrl    String? // signed URL, 7-day validity
+  pdfDownloadExpiry DateTime?
+
+  shiprocketOrderId    String?
+  awbNumber            String?
+  courierName          String?
+  trackingStatus       String?
+  trackingUpdatedAt    DateTime?
+  shiprocketShipmentId String?
+  courierId            Int?
+  isInternational      Boolean   @default(false)
+  trackingUrl          String?
+
+  // Real package dimensions (admin-entered at packaging)
+  finalLength  Float?
+  finalBreadth Float?
+  finalHeight  Float?
+  finalWeight  Float?
+
+  // Lifecycle timestamps
+  awbGeneratedAt      DateTime?
+  labelGeneratedAt    DateTime?
+  pickupScheduledDate DateTime?
+  pickupGeneratedAt   DateTime?
+  shippedAt           DateTime?
+  deliveredAt         DateTime?
+
+  printVendorOrderId String? // e.g. Gelato order reference
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  webhookEvents WebhookEvent[]
+
+  @@map("orders")
+}
+
+model SavedAddress {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label   String? // optional friendly name, e.g. "Home", "Office"
+  name    String // recipient full name
+  line1   String // address line 1
+  line2   String? // address line 2 (optional)
+  city    String
+  state   String
+  zip     String
+  country String // ISO alpha-2, e.g. "IN", "US"
+  phone   String
+
+  isDefault Boolean @default(false) // only one per user can be true
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("saved_addresses")
+}
+
+// Idempotency tracking for Razorpay + Shiprocket webhooks
+
+model WebhookEvent {
+  id      String  @id @default(uuid())
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id])
+
+  source      String // "razorpay" | "shiprocket"
+  eventId     String   @unique // the PROVIDER's own event id (x-razorpay-event-id) — unique per event, stable across that event's retries. Never the payment id: one payment emits several event types sharing it.
+  eventType   String
+  payloadJson Json
+  processedAt DateTime @default(now())
+
+  @@map("webhook_events")
+}
+
+// ============================================================
+// SYSTEM CONFIG (tokens, feature flags, vendor settings)
+// ============================================================
+
+model SystemConfig {
+  key       String   @id // e.g. "shiprocket_token", "shiprocket_token_expiry"
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@map("system_config")
+}
+
+model Country {
+  id           String  @id @default(uuid())
+  code         String  @unique // ISO 3166-1 alpha-2, e.g. "IN", "US"
+  name         String // e.g. "India", "United States"
+  currencyCode String // ISO 4217, e.g. "INR", "USD"
+  flagUrl      String // R2 public bucket path to the flag image
+  isActive     Boolean @default(true)
+
+  pricingRules PricingRule[]
+}
+
+model AnnouncementBar {
+  id        String  @id @default(uuid())
+  message   String  @db.Text
+  isActive  Boolean @default(false)
+  sortOrder Int     @default(0) // controls rotation order on the frontend
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("announcement_bars")
+}
+
+model HeroImage {
+  id        String   @id @default(uuid())
+  imageUrl  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("hero_images")
+}
+
+model CustomerReview {
+  id           String   @id @default(uuid())
+  customerName String
+  description  String   @db.Text
+  videoUrl     String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("customer_reviews")
+}
+
+model TeamMember {
+  id           String   @id @default(uuid())
+  name         String
+  role         String
+  description  String?  @db.Text
+  imageUrl     String?
+  linkedinUrl  String?
+  instagramUrl String?
+  twitterUrl   String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("team_members")
+}
+
+enum FeedbackStatus {
+  OPEN
+  VIEWED
+  RESOLVED
+  DISMISSED
+}
+
+model Feedback {
+  id        String         @id @default(uuid())
+  name      String
+  message   String         @db.Text
+  status    FeedbackStatus @default(OPEN)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@map("feedbacks")
+}
+
+// ============================================================
+// HOW IT WORKS (homepage explainer — singleton row)
+// ============================================================
+
+model HowItWorks {
+  id        String  @id @default(uuid())
+  videoUrl  String?
+  posterUrl String?
+
+  steps Json @default("[]")
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("how_it_works")
+}
+
+// ============================================================
+// FAQ (two independent global sets, split by placement)
+// ============================================================
+
+enum FaqPlacement {
+  HOME
+  COMIC
+}
+
+model Faq {
+  id        String       @id @default(uuid())
+  placement FaqPlacement
+
+  question  String
+  answer    String  @db.Text
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([placement, sortOrder])
+  @@map("faqs")
+}
+
+// ============================================================
+// BLOG
+// ============================================================
+
+model Blog {
+  id    String @id @default(uuid())
+  slug  String @unique
+  title String
+
+  excerpt       String?  @db.Text
+  body          String   @db.Text
+  coverImageUrl String?
+  tags          String[]
+
+  isActive Boolean @default(false)
+
+  metaTitle       String?
+  metaDescription String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, createdAt])
+  @@map("blogs")
+}
+
+enum SitePageSlug {
+  PRIVACY
+  TERMS
+  REFUND
+}
+
+model SitePage {
+  id   String       @id @default(uuid())
+  slug SitePageSlug @unique // fixed set — admin edits, never creates
+
+  title String // H1 on the page, e.g. "Privacy Policy"
+  body  String @db.Text // TipTap HTML, same as Blog.body
+
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt // powers "Last updated: …"
+
+  @@map("site_pages")
+}
+
+model SiteSetting {
+  // Fixed id makes this a true singleton: every read and write targets the
+  // same row, so upsert needs no lookup and duplicates are impossible.
+  id String @id @default("singleton")
+
+  // ---- Store status ----
+  acceptingOrders  Boolean @default(true)
+  // ---- Brand ----
+  // Rendered in the Footer's left column. Was hardcoded in Footer.tsx.
+  brandDescription String? @db.Text
+
+  // ---- Contact page intro ----
+  headline    String?
+  description String? @db.Text
+
+  // ---- Contact channels ----
+  email         String?
+  phone         String?
+  whatsappPhone String?
+  businessHours String? // free text, e.g. "Mon–Fri, 9am–6pm IST"
+
+  // ---- Address ----
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  zip          String?
+  country      String?
+  mapEmbedUrl  String?
+
+  // ---- Socials — also consumed by the Footer ----
+  instagramUrl String?
+  facebookUrl  String?
+  twitterUrl   String?
+  youtubeUrl   String?
+  linkedinUrl  String?
+
+  metaTitle       String?
+  metaDescription String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("site_settings")
+}
+
+// ============================================================
+// GOOGLE REVIEWS (homepage "Excellent On Google" section)
+// ============================================================
+
+model GoogleReview {
+  id           String @id @default(uuid())
+  customerName String
+
+  // Whole stars only, 1–5. Postgres has no CHECK constraint via Prisma, so the
+  // range is enforced in Zod — do not write to this column outside the service.
+  rating Int
+
+  reviewText String @db.Text
+  imageUrl   String // required, R2 public URL
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, createdAt])
+  @@map("google_reviews")
+}
+
+enum ComicFactPlacement {
+  PRELOADER // the 55-second loading screen before the preview opens
+  GENERATING // the "GENERATING..." boxes on each page while it renders
+}
+
+// ============================================================
+// COMIC FACTS (rotating lines shown while a comic generates)
+// ============================================================
+
+model ComicFact {
+  id      String @id @default(uuid())
+  comicId String
+  comic   Comic  @relation(fields: [comicId], references: [id], onDelete: Cascade)
+
+  placement ComicFactPlacement
+
+  text String @db.Text
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([comicId, placement, isActive])
+  @@map("comic_facts")
+}
+
+enum ContactEnquiryStatus {
+  OPEN
+  VIEWED
+  RESOLVED
+  DISMISSED
+}
+
+model ContactEnquiry {
+  id      String @id @default(uuid())
+  name    String
+  email   String
+  phone   String
+  message String @db.Text
+
+  status ContactEnquiryStatus @default(OPEN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@map("contact_enquiries")
+}

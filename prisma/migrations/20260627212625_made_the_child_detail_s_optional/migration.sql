@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "order_sessions" ALTER COLUMN "childName" DROP NOT NULL,
+ALTER COLUMN "pronounKey" DROP NOT NULL,
+ALTER COLUMN "age" DROP NOT NULL;

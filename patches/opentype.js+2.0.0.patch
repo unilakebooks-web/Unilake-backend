@@ -1,0 +1,16 @@
+diff --git a/node_modules/opentype.js/dist/opentype.js b/node_modules/opentype.js/dist/opentype.js
+index 4dc6dea..0740516 100644
+--- a/node_modules/opentype.js/dist/opentype.js
++++ b/node_modules/opentype.js/dist/opentype.js
+@@ -14536,9 +14536,8 @@ var opentype = (() => {
+           [contextParams, subtable]
+         );
+       default:
+-        throw new Error(
+-          `substitutionType : ${substitutionType} lookupType: ${lookupTable.lookupType} - substFormat: ${subtable.substFormat} is not yet supported`
+-        );
++        // PATCHED: skip unsupported lookup encodings instead of throwing.
++        return () => undefined;
+     }
+   };
+   FeatureQuery.prototype.lookupFeature = function(query) {
