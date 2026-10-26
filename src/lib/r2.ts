@@ -26,20 +26,30 @@ export const r2Client = new S3Client({
  * @param key - The unique file path/name inside the destination bucket
  * @param buffer - The raw binary data of the file
  * @param contentType - The standard MIME type of the file (e.g., 'image/png', 'application/pdf')
+ * @param options.contentDisposition - Optional Content-Disposition stored on the object.
+ *   R2 returns it on every GET, which is how a download gets a real filename instead
+ *   of the key's last segment (used for print PDFs — see utils/pdfFilename.ts).
+ *   Must be plain ASCII; omit it and the object is stored exactly as before.
  */
 
 export const uploadFile = async (
   bucket: "public" | "private",
   key: string,
   buffer: Buffer,
-  contentType: string
+  contentType: string,
+  options?: { contentDisposition?: string }
 ): Promise<void> => {
   const targetBucketName = bucket === "public" ? config.r2.publicBucket : config.r2.privateBucket;
     logger.debug(`Public bucket name : ${config.r2.publicBucket}`)
     logger.debug(`private bucket name : ${config.r2.privateBucket}`)
 
   logger.info(
-    { bucket: targetBucketName, key, contentType },
+    {
+      bucket: targetBucketName,
+      key,
+      contentType,
+      contentDisposition: options?.contentDisposition,
+    },
     "Initiating file upload to Cloudflare R2"
   );
 
@@ -48,6 +58,8 @@ export const uploadFile = async (
     Key: key,
     Body: buffer,
     ContentType: contentType,
+    // undefined is omitted from the request, so every other caller is unchanged.
+    ContentDisposition: options?.contentDisposition,
   });
 
   await r2Client.send(command);

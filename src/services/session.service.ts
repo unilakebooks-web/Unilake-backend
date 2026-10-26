@@ -27,6 +27,10 @@ import {
 import { pdfCompilationQueue } from "../jobs/queues.js";
 import type { SendToPrintInput } from "../validators/sendToPrint.schema.js";
 import { notifySentToPrint } from "./notification.service.js";
+import {
+  buildAttachmentContentDisposition,
+  buildPdfDownloadFilename,
+} from "../utils/pdfFilename.js";
 
 /**
  * Statuses meaning "the customer has paid."
@@ -1348,7 +1352,9 @@ export async function sendToPrint(
  *      re-enqueueing Shiprocket (BullMQ retry after a crash).
  *   3. Download every selected image from R2, convert PNG->JPEG at 85% quality
  *      using sharp, embed into a new PDF page sized to the image dimensions.
- *   4. Save PDF bytes, upload to R2 public bucket at pdfs/{sessionId}.pdf.
+ *   4. Save PDF bytes, upload to R2 public bucket at pdfs/{sessionId}.pdf,
+ *      with a Content-Disposition carrying the human-readable download name
+ *      (see utils/pdfFilename.ts). The key itself stays the UUID.
  *   5. Update Order (pdfUrl, pdfDownloadUrl) + flip session to SHIPMENT_QUEUED
  *      in one transaction.
  *   6. Enqueue Shiprocket OUTSIDE the transaction.
@@ -1495,12 +1501,28 @@ export async function compilePdfForSession(
 
   // 5. Upload to R2 public bucket. Key uses sessionId (UUID) so it's
   // unguessable — same security model as unlisted YouTube URLs.
+  //
+  // The readable name ("Aarav_Hardcover_The_Magic_Treehouse_3f6a1c2e.pdf")
+  // travels as Content-Disposition stored on the object, NOT in the key: the
+  // key stays unguessable and free of the child's name, and pdfDownloadUrl is
+  // unchanged. R2 serves the header on every GET, so whoever downloads the
+  // file gets this name. Deterministic, so a retried compile re-uploads with
+  // the same name.
   const pdfKey = `pdfs/${orderSessionId}.pdf`;
-  await uploadFile("public", pdfKey, pdfBuffer, "application/pdf");
+  const downloadFilename = buildPdfDownloadFilename({
+    childName: session.childName,
+    coverType: session.order.coverType,
+    comicTitle: session.comic.title,
+    orderId: session.order.id,
+  });
+
+  await uploadFile("public", pdfKey, pdfBuffer, "application/pdf", {
+    contentDisposition: buildAttachmentContentDisposition(downloadFilename),
+  });
   const pdfPublicUrl = getPublicUrl(pdfKey);
 
   logger.info(
-    { orderSessionId, pdfKey, pdfPublicUrl },
+    { orderSessionId, pdfKey, pdfPublicUrl, downloadFilename },
     "PDF uploaded to R2 public bucket"
   );
 

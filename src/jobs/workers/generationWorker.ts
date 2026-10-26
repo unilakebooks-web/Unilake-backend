@@ -667,7 +667,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
 export const generationWorker = new Worker<GeneratePageJobData>(
   "sd-generation",
   processJob,
-  { connection: redisClient, concurrency: 5}
+  { connection: redisClient, concurrency: 16}
 );
 
 generationWorker.on("failed", async (job, err) => {

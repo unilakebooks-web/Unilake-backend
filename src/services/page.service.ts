@@ -30,6 +30,14 @@ import type { Bubble, Font } from "../generated/prisma/client.js";
 
 const PAGE_ASSET_UPLOAD_EXPIRY_SECONDS = 15 * 60;
 
+/**
+ * Shown to the admin when a page cannot be deleted because a customer's book
+ * already contains a generated version of it. The admin delete dialog renders
+ * the error message as-is.
+ */
+const PAGE_IN_USE_MESSAGE =
+  "This comic page is in one of the user's generated pages and thus cannot be deleted.";
+
 // Two artworks are treated as the same shape if their width/height ratios agree
 // to within this tolerance. Never compare ratios with === — 2048/1536 and
 // 4096/3072 are both 1.333... but not bit-identical.
@@ -342,6 +350,20 @@ export async function deletePage(pageId: string) {
     throw new NotFoundError("Page not found");
   }
 
+  // A page that any customer has had generated cannot be deleted: the
+  // page_versions_pageId_fkey constraint is ON DELETE RESTRICT, so Postgres
+  // refuses the delete outright. Checked up front so the admin gets a message
+  // that says why, instead of the generic 500 the raw FK error produced.
+  // Counts every PageVersion regardless of status or session expiry — the
+  // constraint does too.
+  const generatedVersionCount = await prisma.pageVersion.count({
+    where: { pageId },
+  });
+
+  if (generatedVersionCount > 0) {
+    throw new ConflictError(PAGE_IN_USE_MESSAGE);
+  }
+
   // Collect the R2 keys we'll clean up BEFORE the DB delete, so we still
   // have access to page.artworkUrl and page.maskUrl. Nothing hits R2 yet.
   const publicBase = config.r2.publicUrlBase.replace(/\/$/, "");
@@ -352,9 +374,18 @@ export async function deletePage(pageId: string) {
   // DB delete is the moment of truth. If it throws, we haven't touched R2 —
   // caller sees an error and the page + its assets stay intact, exactly
   // recoverable by retrying the delete. (Audit 8.9 — DB first, R2 second.)
-  await prisma.page.delete({
-    where: { id: pageId },
-  });
+  try {
+    await prisma.page.delete({
+      where: { id: pageId },
+    });
+  } catch (error: any) {
+    // P2003 = foreign-key violation: a generation job created a PageVersion
+    // for this page between the count above and this delete. Same answer.
+    if (error.code === "P2003") {
+      throw new ConflictError(PAGE_IN_USE_MESSAGE);
+    }
+    throw error;
+  }
 
   // Best-effort R2 cleanup AFTER the DB delete succeeded. Failures here mean
   // orphaned files (wasted storage) but never a page row pointing at 404s.
