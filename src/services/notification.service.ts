@@ -274,17 +274,18 @@ function renderSignOff(closing: string): string {
   return `<p>${escapeHtml(closing)}<br />The Unilake Team</p>`;
 }
 
-/** 1. Preview Created — "The Hook". */
+/** 1. Preview Created — the sneak peek. */
 function renderPreviewReadyBody(args: BodyArgs & { link: string }): string {
   const name = nameOf(args.childName);
   const buttonLabel = name ? `View ${name}'s Preview` : "View Your Child's Preview";
 
   return `
     <p>Hi,</p>
-    <p>Magic is brewing at Unilake! Our digital artists have just finished the first few pages of ${escapeHtml(kids(args.childName))} personalized story, and we couldn't wait to show you.</p>
+    <p>We at Unilake have just finished putting together the first few pages of ${escapeHtml(kids(args.childName))} personalized story, as per your request, and we wanted to share a quick sneak peek with you.</p>
+    <p>You can view the early cinematic illustrations here:</p>
     ${renderButton(args.link, buttonLabel)}
-    <p>Take a look at how the cinematic illustrations are coming together. If you love where the story is heading, you can grab the full adventure in a Softcover or Premium Hardcover right from the preview page.</p>
-    ${renderSignOff("Let's make some magic,")}
+    <p>Take a look and let us know what you think so far. If you love the direction this concept is heading, you can approve it on that page to get the full adventure finalized.</p>
+    ${renderSignOff("Regards,")}
   `.trim();
 }
 
@@ -369,7 +370,7 @@ export async function notifyPreviewReady(
 
   return safeSend(
     to,
-    `A sneak peek into ${kids(session.childName)} new adventure!`,
+    `${Kids(session.childName)} story preview is ready`,
     renderEmailShell(
       renderPreviewReadyBody({
         childName: session.childName,

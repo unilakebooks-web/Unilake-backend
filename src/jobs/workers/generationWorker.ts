@@ -60,6 +60,11 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
  *     row, conclude every page had settled, and flip the session to
  *     PREVIEW_READY while attempt 2 was still running.
  *
+ * Not every final failure passes through here. A job that stalls past
+ * BullMQ's limit is failed by BullMQ without ever calling processJob, so this
+ * catch block never runs for it. The worker's `failed` handler covers that
+ * case via markPageVersionTerminallyFailed.
+ *
  * Trade-off: if the worker process dies between attempts the row is left
  * non-terminal rather than FAILED. Same shape as the orphaned QUEUED rows that
  * `enqueuePreviewGenerationJobs` already recovers from on re-generate.
@@ -69,13 +74,20 @@ async function markPageVersionFailed(
   err: unknown,
   isFinal: boolean
 ): Promise<string> {
-  const rawMessage = err instanceof Error ? err.message : String(err);
-  const errorMessage = rawMessage.substring(0, MAX_ERROR_MESSAGE_LENGTH);
+  if (isFinal) {
+    const { errorMessage } = await markPageVersionTerminallyFailed(
+      pageVersionId,
+      err
+    );
+    return errorMessage;
+  }
+
+  const errorMessage = toErrorMessage(err);
 
   try {
     await prisma.pageVersion.update({
       where: { id: pageVersionId },
-      data: isFinal ? { status: "FAILED", errorMessage } : { errorMessage },
+      data: { errorMessage },
     });
   } catch (dbErr) {
     logger.error(
@@ -85,6 +97,54 @@ async function markPageVersionFailed(
   }
 
   return errorMessage;
+}
+
+function toErrorMessage(err: unknown): string {
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  return rawMessage.substring(0, MAX_ERROR_MESSAGE_LENGTH);
+}
+
+/**
+ * Writes FAILED, but only while the row is still mid-flight. Never throws.
+ *
+ * The status guard lives in the WHERE clause, same pattern as the session
+ * flips: a row that is already SD_READY (a run BullMQ had given up on finished
+ * anyway) is never overwritten, and a row that is already FAILED is not
+ * written twice.
+ *
+ * `flipped` is true only for the call that actually did the write, so callers
+ * can emit page:error exactly once even when processJob's catch and the
+ * `failed` handler both reach this for the same job.
+ *
+ * `staleBefore` (stuck-page sweeper only) adds `updatedAt < staleBefore` to the
+ * guard: a row that was re-queued or moved forward after the sweeper picked it
+ * as a candidate has a fresh updatedAt and is left alone.
+ */
+async function markPageVersionTerminallyFailed(
+  pageVersionId: string,
+  err: unknown,
+  staleBefore?: Date
+): Promise<{ flipped: boolean; errorMessage: string }> {
+  const errorMessage = toErrorMessage(err);
+
+  try {
+    const { count } = await prisma.pageVersion.updateMany({
+      where: {
+        id: pageVersionId,
+        status: { notIn: ["SD_READY", "FAILED"] },
+        ...(staleBefore && { updatedAt: { lt: staleBefore } }),
+      },
+      data: { status: "FAILED", errorMessage },
+    });
+
+    return { flipped: count > 0, errorMessage };
+  } catch (dbErr) {
+    logger.error(
+      { pageVersionId, dbErr },
+      "[SD Worker] Failed to record terminal PageVersion failure — leaving in prior status"
+    );
+    return { flipped: false, errorMessage };
+  }
 }
 
 /**
@@ -670,6 +730,127 @@ export const generationWorker = new Worker<GeneratePageJobData>(
   { connection: redisClient, concurrency: 16}
 );
 
+/**
+ * Everything that follows a page giving up for good: mark the row FAILED,
+ * tell the browser, then check whether the session as a whole is now done.
+ *
+ * Shared by the worker's `failed` handler and the stuck-page sweeper so the two
+ * can never drift apart. Safe to run more than once for the same page — the
+ * FAILED write is status-guarded and so are both session flips, so a second
+ * call does nothing and emits nothing.
+ *
+ * Throws on DB errors; each caller decides how to log them.
+ */
+export async function settleTerminalPageFailure(
+  pageVersionId: string,
+  reason: unknown,
+  opts: { source: "failed-event" | "sweeper"; staleBefore?: Date }
+): Promise<{ flipped: boolean }> {
+  // The job data only carries pageVersionId. Look up the session + comic so
+  // we can pass them to the completion check. This runs OUTSIDE the worker's
+  // processJob transaction, so a Prisma call here is safe.
+  const pageVersion = await prisma.pageVersion.findUnique({
+    where: { id: pageVersionId },
+    select: {
+      orderSessionId: true,
+      variantIndex: true,
+      page: { select: { pageNumber: true } },
+      orderSession: { select: { comicId: true } },
+    },
+  });
+
+  if (!pageVersion) {
+    logger.warn(
+      { pageVersionId, source: opts.source },
+      "[SD Worker] Terminal-failure handler: PageVersion not found, skipping"
+    );
+    return { flipped: false };
+  }
+
+  const sessionId = pageVersion.orderSessionId;
+  const comicId = pageVersion.orderSession.comicId;
+
+  // processJob's catch has already written FAILED on an ordinary final
+  // attempt, so this is a no-op there (flipped = false, no second event).
+  // It only does work when the page was given up on without our code running —
+  // a stalled job, or a row the sweeper found with no live job — and then it is
+  // the only thing that marks the page and tells the browser.
+  const { flipped, errorMessage } = await markPageVersionTerminallyFailed(
+    pageVersionId,
+    reason,
+    opts.staleBefore
+  );
+
+  if (flipped) {
+    logger.error(
+      { pageVersionId, sessionId, source: opts.source, failedReason: errorMessage },
+      "[SD Worker] Page given up outside processJob — PageVersion marked FAILED"
+    );
+    emitPageError(sessionId, {
+      pageNumber: pageVersion.page.pageNumber,
+      variantIndex: pageVersion.variantIndex,
+      errorMessage,
+      isFinal: true,
+    });
+  }
+
+  const result = await maybeMarkPreviewComplete(sessionId, comicId);
+
+  if (result === "failed") {
+    logger.error(
+      { sessionId },
+      "[SD Worker] All preview pages final-failed — session marked FAILED"
+    );
+    // Intentionally no WebSocket emit here (Decision 4 skipped).
+    // Frontend learns via per-page `page:error` events + GET /sessions/:id.
+  } else if (result === "ready") {
+    // This page failed, but every other preview page has settled and at least
+    // one succeeded. Emit the ready event so a connected client doesn't miss
+    // the transition.
+    logger.info(
+      { sessionId },
+      "[SD Worker] Session marked PREVIEW_READY from failure handler (last page failed but earlier pages covered the total)"
+    );
+    emitSessionPreviewReady(sessionId);
+    notifyPreviewReady(sessionId).catch((err) => {
+      logger.error(
+        { sessionId, err },
+        "[SD Worker] notifyPreviewReady failed (swallowed)"
+      );
+    });
+  }
+
+  // Mirror check for paid pages. Same rationale as the preview branch
+  // above — the helper whose isPreviewPage filter doesn't match this
+  // page will no-op.
+  const paidResult = await maybeMarkPaidReady(sessionId, comicId);
+
+  if (paidResult === "failed") {
+    logger.error(
+      { sessionId },
+      "[SD Worker] All paid pages final-failed — session marked FAILED, Order left at PAID for admin review"
+    );
+    // No WebSocket emit — matches preview failure handling. Frontend
+    // picks it up via page:error + GET /sessions/:id.
+  } else if (paidResult === "ready") {
+    // Same as above but for paid: this page failed, earlier successes
+    // already covered the total.
+    logger.info(
+      { sessionId },
+      "[SD Worker] Session marked PAID_PAGES_READY from failure handler (last page failed but earlier pages covered the total)"
+    );
+    emitSessionPaidReady(sessionId);
+    notifyBookReady(sessionId).catch((err) => {
+      logger.error(
+        { sessionId, err },
+        "[SD Worker] notifyBookReady failed (swallowed)"
+      );
+    });
+  }
+
+  return { flipped };
+}
+
 generationWorker.on("failed", async (job, err) => {
   logger.error(
     { jobId: job?.id, pageVersionId: job?.data?.pageVersionId, err },
@@ -679,98 +860,27 @@ generationWorker.on("failed", async (job, err) => {
   if (!job) return;
 
   // BullMQ's `failed` event fires on EVERY failed attempt, not just the last.
-  // Only run the completion check on the final attempt — retries in progress
-  // must not be treated as terminal failures.
-  const maxAttempts = job.opts.attempts ?? 1;
-  const isFinalAttempt = job.attemptsMade >= maxAttempts;
+  // Only act once the job has really given up — retries in progress must not
+  // be treated as terminal failures.
+  //
+  // `finishedOn` is BullMQ's own answer: it is set only when the job lands in
+  // the failed set, never when a retry is scheduled. Counting attempts is not
+  // enough — a job that stalls past maxStalledCount is failed with an
+  // UnrecoverableError after a single counted attempt (attemptsMade = 1), and
+  // processJob's catch never runs for it. Before this check, such pages were
+  // left in GENERATING_SD forever and their session never completed.
+  if (!job.finishedOn) return;
 
-  if (!isFinalAttempt) return;
-
-  // The job data only carries pageVersionId. Look up the session + comic so
-  // we can pass them to the completion check. This runs OUTSIDE the worker's
-  // processJob transaction, so a Prisma call here is safe.
   const { pageVersionId } = job.data;
 
   try {
-    const pageVersion = await prisma.pageVersion.findUnique({
-      where: { id: pageVersionId },
-      select: {
-        orderSessionId: true,
-        orderSession: { select: { comicId: true } },
-      },
+    await settleTerminalPageFailure(pageVersionId, err, {
+      source: "failed-event",
     });
-
-    if (!pageVersion) {
-      logger.warn(
-        { pageVersionId },
-        "[SD Worker] Terminal-failure handler: PageVersion not found, skipping"
-      );
-      return;
-    }
-
-    const result = await maybeMarkPreviewComplete(
-      pageVersion.orderSessionId,
-      pageVersion.orderSession.comicId
-    );
-
-    if (result === "failed") {
-      logger.error(
-        { sessionId: pageVersion.orderSessionId },
-        "[SD Worker] All preview pages final-failed — session marked FAILED"
-      );
-      // Intentionally no WebSocket emit here (Decision 4 skipped).
-      // Frontend learns via per-page `page:error` events + GET /sessions/:id.
-    } else if (result === "ready") {
-      // Edge case: this page failed, but earlier successes already covered
-      // the total. Rare — would only happen if failure and last success
-      // finish in an unusual order. Emit the ready event so a connected
-      // client doesn't miss the transition.
-      logger.info(
-        { sessionId: pageVersion.orderSessionId },
-        "[SD Worker] Session marked PREVIEW_READY from failure handler (last page failed but earlier pages covered the total)"
-      );
-      emitSessionPreviewReady(pageVersion.orderSessionId);
-      notifyPreviewReady(pageVersion.orderSessionId).catch((err) => {
-        logger.error(
-          { sessionId: pageVersion.orderSessionId, err },
-          "[SD Worker] notifyPreviewReady failed (swallowed)"
-        );
-      });
-    }
-    // Mirror check for paid pages. Same rationale as the preview branch
-    // above — the helper whose isPreviewPage filter doesn't match this
-    // page will no-op.
-    const paidResult = await maybeMarkPaidReady(
-      pageVersion.orderSessionId,
-      pageVersion.orderSession.comicId
-    );
-
-    if (paidResult === "failed") {
-      logger.error(
-        { sessionId: pageVersion.orderSessionId },
-        "[SD Worker] All paid pages final-failed — session marked FAILED, Order left at PAID for admin review"
-      );
-      // No WebSocket emit — matches preview failure handling. Frontend
-      // picks it up via page:error + GET /sessions/:id.
-    } else if (paidResult === "ready") {
-      // Same edge case as above but for paid: this page failed, earlier
-      // successes already covered the total.
-      logger.info(
-        { sessionId: pageVersion.orderSessionId },
-        "[SD Worker] Session marked PAID_PAGES_READY from failure handler (last page failed but earlier pages covered the total)"
-      );
-      emitSessionPaidReady(pageVersion.orderSessionId);
-      notifyBookReady(pageVersion.orderSessionId).catch((err) => {
-        logger.error(
-          { sessionId: pageVersion.orderSessionId, err },
-          "[SD Worker] notifyBookReady failed (swallowed)"
-        );
-      });
-    }
   } catch (handlerErr) {
     // A crash inside the terminal-failure handler must not itself crash the
-    // worker. Log it and move on — the session will stay in
-    // GENERATING_PREVIEW, which is exactly the pre-fix behaviour, not worse.
+    // worker. Log it and move on — the stuck-page sweeper picks the row up
+    // on a later pass.
     logger.error(
       { pageVersionId, handlerErr },
       "[SD Worker] Terminal-failure handler crashed"
