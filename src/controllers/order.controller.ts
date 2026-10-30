@@ -11,6 +11,7 @@ import {
 } from "../services/order.service.js";
 import { listAdminOrdersQuerySchema } from "../validators/order.schema.js";
 import { pushDimensionsAssignAwbAndSchedulePickup, retryPhaseAForFailedOrder, getLabelForOrder, refreshTrackingForOrder} from "../services/shiprocket.service.js";
+import { buildBillOfSupplyPdf } from "../services/billOfSupply.service.js";
 import { z } from "zod";
 
 export const listUserOrdersHandler = asyncHandler(
@@ -221,6 +222,33 @@ export const getOrderLabelHandler = asyncHandler(
     const result = await getLabelForOrder(parseResult.data.orderId);
 
     sendSuccess(res, 200, result);
+  }
+);
+
+// GET /api/admin/orders/:orderId/bill-of-supply
+// Auth: requireAdmin (applied at router mount in app.ts)
+//
+// Streams the order's Bill of Supply PDF as a download. Built in memory on
+// every call and never stored — not in the DB, not in R2.
+//
+// 409 when the order has no bill number (non-INR, or paid before billing).
+
+export const getBillOfSupplyHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const parseResult = labelParamsSchema.safeParse(req.params);
+    if (!parseResult.success) {
+      throw new ValidationError(
+        parseResult.error.issues[0]?.message ?? "Invalid order ID"
+      );
+    }
+
+    const { bytes, fileName } = await buildBillOfSupplyPdf(parseResult.data.orderId);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    // Customer name and address — never let a shared cache keep a copy.
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).send(Buffer.from(bytes));
   }
 );
 

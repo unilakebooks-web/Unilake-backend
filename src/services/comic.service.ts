@@ -568,7 +568,7 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
     };
   }
 
-  return await prisma.comic.findMany({
+  const comics = await prisma.comic.findMany({
     where,
     select: {
       id: true,
@@ -577,7 +577,8 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
       genderTags: true,
       ageGroups: true,
       isBestseller: true,
-      pageCount: true,
+      // Real page count — see withRealPageCount.
+      _count: { select: { pages: true } },
       coverThumbnailUrls: true,
       themes: THEMES_SELECT,
       pricingRules: {
@@ -602,7 +603,22 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
     // "Explore More Books" picks on a comic page — so they always agree.
     orderBy: [{ isBestseller: "desc" }, { createdAt: "desc" }],
   });
+
+  return comics.map(withRealPageCount);
 };
+
+/**
+ * Storefront `pageCount` is the number of pages the comic actually has.
+ * `Comic.pageCount` is the admin's planned total — it drives the admin's
+ * "30 of 32 pages created" progress and publish checklist — and can disagree
+ * with reality, so customers are never shown it.
+ */
+function withRealPageCount<T extends { _count: { pages: number } }>({
+  _count,
+  ...comic
+}: T): Omit<T, "_count"> & { pageCount: number } {
+  return { ...comic, pageCount: _count.pages };
+}
 
 export const getPublicComicDetails = async (comicId: string) => {
   const comic = await prisma.comic.findFirst({
@@ -617,7 +633,8 @@ export const getPublicComicDetails = async (comicId: string) => {
       genderTags: true,
       ageGroups: true,
       isBestseller: true,
-      pageCount: true,
+      // Real page count — see withRealPageCount.
+      _count: { select: { pages: true } },
       freePreviewPages: true,
       coverThumbnailUrls: true,
       // Optional. Null for most comics — the carousel renders images only then.
@@ -679,7 +696,7 @@ export const getPublicComicDetails = async (comicId: string) => {
     throw new NotFoundError("Comic not found or not available.");
   }
 
-  return comic;
+  return withRealPageCount(comic);
 };
 
 const LORA_UPLOAD_EXPIRY_SECONDS = 60 * 60;

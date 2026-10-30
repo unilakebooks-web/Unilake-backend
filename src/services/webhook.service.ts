@@ -6,6 +6,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { config } from "../config/env.js";
 import { processShiprocketStatusUpdate } from "./shiprocket.service.js";
 import { notifyPaymentReceived } from "./notification.service.js";
+import { assignBillNumber } from "./billOfSupply.service.js";
 
 /**
  * Handle an incoming Razorpay webhook.
@@ -177,13 +178,20 @@ async function handlePaymentCaptured(
 
   // Flip Order + Session in a transaction. Enqueue OUTSIDE.
   await prisma.$transaction(async (tx) => {
-    await tx.order.updateMany({
+    const { count: orderFlipped } = await tx.order.updateMany({
       where: { id: order.id, status: "CREATED" },
       data: {
         status: "PAID",
         razorpayPaymentId,
       },
     });
+
+    // Bill of Supply number — INR orders only, and only by the call that
+    // actually flipped the order, so a redelivered webhook never takes a
+    // second number. In this transaction so a rollback takes none.
+    if (orderFlipped === 1 && order.currency === "INR") {
+      await assignBillNumber(tx, order.id, new Date());
+    }
 
     await tx.orderSession.updateMany({
       where: { id: order.orderSessionId, status: "AWAITING_PAYMENT" },
@@ -203,8 +211,7 @@ async function handlePaymentCaptured(
   // Enqueue paid-page generation OUTSIDE the transaction.
   // Never enqueue inside $transaction (Redis doesn't roll back with Prisma).
   const jobsEnqueued = await enqueuePaidGenerationJobs(
-    order.orderSessionId,
-    order.orderSession.comicId
+    order.orderSessionId
   ).catch(async (error) => {
     await prisma.webhookEvent
       .delete({ where: { eventId } })

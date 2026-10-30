@@ -174,7 +174,7 @@ import {
   toggleBlogStatusHandler,
   updateBlogHandler,
 } from "../controllers/blog.controller.js";
-import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler,  refreshTrackingHandler} from "../controllers/order.controller.js";
+import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler } from "../controllers/order.controller.js";
 import { confirmDimensionsBodySchema } from "../validators/order.schema.js";
 import {
   getAdminSitePageHandler,
@@ -530,6 +530,7 @@ router.delete("/blogs/:id", deleteBlogHandler);
 router.get("/orders", listAdminOrdersHandler);
 router.get("/orders/:orderId", getAdminOrderDetailHandler);
 router.get("/orders/:orderId/label", getOrderLabelHandler);
+router.get("/orders/:orderId/bill-of-supply", getBillOfSupplyHandler); // Bill of Supply PDF, built on demand, never stored
 router.post(
   "/orders/:orderId/confirm-dimensions",
   validateBody(confirmDimensionsBodySchema),

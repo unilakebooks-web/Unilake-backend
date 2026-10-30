@@ -213,15 +213,21 @@ async function buildAndUploadDisplayImage(
 type PreviewCompleteResult = "not-done" | "ready" | "failed";
 
 async function maybeMarkPreviewComplete(
-  orderSessionId: string,
-  comicId: string
+  orderSessionId: string
 ): Promise<PreviewCompleteResult> {
-  // `Page.isPreviewPage` is the only source of truth for which pages are
-  // free — same filter enqueuePreviewGenerationJobs uses. Counting against
-  // Comic.freePreviewPages instead would desync the moment that counter drifts.
-  const totalPreviewPages = await prisma.page.count({
-    where: { comicId, isPreviewPage: true },
-  });
+  // The session's frozen preview pages are the only source of truth for which
+  // pages are free — same list enqueuePreviewGenerationJobs uses. Counting the
+  // comic's live pages instead would stall the session forever the moment the
+  // admin added or re-flagged one; counting Comic.freePreviewPages would
+  // desync the moment that counter drifts.
+  const previewPageIds = (
+    await prisma.sessionPage.findMany({
+      where: { orderSessionId, isPreviewPage: true },
+      select: { pageId: true },
+    })
+  ).map((row) => row.pageId);
+
+  const totalPreviewPages = previewPageIds.length;
 
   // No preview pages flagged means nothing was ever enqueued. Never flip.
   if (totalPreviewPages === 0) return "not-done";
@@ -239,7 +245,7 @@ async function maybeMarkPreviewComplete(
     where: {
       orderSessionId,
       status: { in: ["SD_READY", "FAILED"] },
-      page: { isPreviewPage: true },
+      pageId: { in: previewPageIds },
     },
     select: { pageId: true, status: true },
   });
@@ -620,10 +626,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     // Success path can only ever produce "ready" or "not-done" — reaching
     // this line means at least one page (this one) just went SD_READY, so
     // the anySuccess branch will win if all other pages are terminal too.
-    const result = await maybeMarkPreviewComplete(
-      sessionId,
-      orderSession.comicId
-    );
+    const result = await maybeMarkPreviewComplete(sessionId);
 
     if (result === "ready") {
       logger.info(
@@ -649,10 +652,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     // routing at the worker level.
     //
     // Success path can only ever produce "ready" or "not-done" here.
-    const paidResult = await maybeMarkPaidReady(
-      sessionId,
-      orderSession.comicId
-    );
+    const paidResult = await maybeMarkPaidReady(sessionId);
 
     if (paidResult === "ready") {
       logger.info(
@@ -746,8 +746,8 @@ export async function settleTerminalPageFailure(
   reason: unknown,
   opts: { source: "failed-event" | "sweeper"; staleBefore?: Date }
 ): Promise<{ flipped: boolean }> {
-  // The job data only carries pageVersionId. Look up the session + comic so
-  // we can pass them to the completion check. This runs OUTSIDE the worker's
+  // The job data only carries pageVersionId. Look up the session so we can
+  // pass it to the completion check. This runs OUTSIDE the worker's
   // processJob transaction, so a Prisma call here is safe.
   const pageVersion = await prisma.pageVersion.findUnique({
     where: { id: pageVersionId },
@@ -755,7 +755,6 @@ export async function settleTerminalPageFailure(
       orderSessionId: true,
       variantIndex: true,
       page: { select: { pageNumber: true } },
-      orderSession: { select: { comicId: true } },
     },
   });
 
@@ -768,7 +767,6 @@ export async function settleTerminalPageFailure(
   }
 
   const sessionId = pageVersion.orderSessionId;
-  const comicId = pageVersion.orderSession.comicId;
 
   // processJob's catch has already written FAILED on an ordinary final
   // attempt, so this is a no-op there (flipped = false, no second event).
@@ -794,7 +792,7 @@ export async function settleTerminalPageFailure(
     });
   }
 
-  const result = await maybeMarkPreviewComplete(sessionId, comicId);
+  const result = await maybeMarkPreviewComplete(sessionId);
 
   if (result === "failed") {
     logger.error(
@@ -823,7 +821,7 @@ export async function settleTerminalPageFailure(
   // Mirror check for paid pages. Same rationale as the preview branch
   // above — the helper whose isPreviewPage filter doesn't match this
   // page will no-op.
-  const paidResult = await maybeMarkPaidReady(sessionId, comicId);
+  const paidResult = await maybeMarkPaidReady(sessionId);
 
   if (paidResult === "failed") {
     logger.error(

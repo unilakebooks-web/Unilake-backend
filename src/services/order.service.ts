@@ -589,6 +589,12 @@ export async function getAdminOrderDetail(orderId: string) {
       razorpayPaymentId: order.razorpayPaymentId,
     },
 
+    // Null on orders without one (non-INR, or paid before bills existed) —
+    // the admin page only offers the download when this is set.
+    bill: order.billNumber
+      ? { billNumber: order.billNumber, billIssuedAt: order.billIssuedAt }
+      : null,
+
     pdf: {
       pdfUrl: order.pdfUrl,
       pdfDownloadUrl: order.pdfDownloadUrl,

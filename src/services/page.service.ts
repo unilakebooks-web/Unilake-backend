@@ -356,6 +356,10 @@ export async function deletePage(pageId: string) {
   // that says why, instead of the generic 500 the raw FK error produced.
   // Counts every PageVersion regardless of status or session expiry — the
   // constraint does too.
+  //
+  // A page that sessions include but have not generated yet (a paid page in a
+  // book not yet paid for, say) CAN be deleted: its SessionPage rows cascade
+  // away, and those books simply have one page fewer.
   const generatedVersionCount = await prisma.pageVersion.count({
     where: { pageId },
   });

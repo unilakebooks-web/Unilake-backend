@@ -179,9 +179,10 @@ model Page {
   steps Int   @default(3)
   cfg   Float @default(1.0)
 
-  bubbles     Bubble[]
-  pageVersion PageVersion[]
-  createdAt   DateTime      @default(now())
+  bubbles      Bubble[]
+  pageVersion  PageVersion[]
+  sessionPages SessionPage[]
+  createdAt    DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
   @@unique([comicId, pageNumber])
@@ -344,6 +345,7 @@ model OrderSession {
   wsRoomToken String @unique @default(uuid()) // used to authenticate WS connection
 
   pageVersions PageVersion[]
+  sessionPages SessionPage[]
   order        Order?
 
   createdAt DateTime @default(now())
@@ -351,6 +353,30 @@ model OrderSession {
   expiresAt DateTime // 24hr TTL equivalent, enforced at query time / cleanup job
 
   @@map("order_sessions")
+}
+
+// The pages a session's book is made of, frozen when the session is created.
+// Pages the admin adds to the comic later belong only to sessions created after
+// them. `isPreviewPage` is frozen too, so flipping a page between free and paid
+// never changes a book already in progress. Page CONTENT (artwork, bubbles,
+// prompt) is deliberately not frozen — edits reach every session.
+//
+// Deleting a Page removes it from these rows (cascade). deletePage already
+// refuses once any session has generated the page, so only books that never
+// rendered it lose it.
+model SessionPage {
+  orderSessionId String
+  orderSession   OrderSession @relation(fields: [orderSessionId], references: [id], onDelete: Cascade)
+  pageId         String
+  page           Page         @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  isPreviewPage Boolean
+
+  createdAt DateTime @default(now())
+
+  @@id([orderSessionId, pageId])
+  @@index([pageId])
+  @@map("session_pages")
 }
 
 // ============================================================
@@ -468,12 +494,31 @@ model Order {
 
   printVendorOrderId String? // e.g. Gelato order reference
 
+  // Bill of Supply. Assigned once, in the payment-captured transaction, to
+  // INR orders only, and never changed — "BOS-26-00001" is serial 1 of FY
+  // 2026-27. billIssuedAt is the payment time, printed as the Date of Issue.
+  // The PDF itself is never stored; it is rebuilt from these on download.
+  billNumber   String?   @unique
+  billIssuedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   webhookEvents WebhookEvent[]
 
   @@map("orders")
+}
+
+// Running Bill of Supply serial, one row per Indian financial year (April to
+// March), keyed by the year it starts in: 2026 = FY 2026-27. Advanced with a
+// single atomic upsert inside the payment transaction, so concurrent payments
+// can never share a number and a rolled-back payment never burns one.
+model BillCounter {
+  financialYear Int      @id
+  lastSerial    Int
+  updatedAt     DateTime @updatedAt
+
+  @@map("bill_counters")
 }
 
 model SavedAddress {

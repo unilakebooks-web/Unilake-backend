@@ -243,13 +243,44 @@ export async function createOrderSession(
 
   const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS);
 
+  // Freeze the book's page list now. Pages added to the comic later belong
+  // only to sessions created after them — see the SessionPage model.
+  const pages = await prisma.page.findMany({
+    where: { comicId: input.comicId },
+    select: { id: true, isPreviewPage: true },
+  });
+
   return prisma.orderSession.create({
     data: {
       comicId: input.comicId,
       userId: userId ?? null,
       expiresAt,
+      sessionPages: {
+        create: pages.map((page) => ({
+          pageId: page.id,
+          isPreviewPage: page.isPreviewPage,
+        })),
+      },
     },
   });
+}
+
+/**
+ * The pages of one session's book — its frozen SessionPage list, not the
+ * comic's current pages — ordered by page number. `isPreviewPage` is the
+ * frozen value. Optionally narrowed to the free or the paid pages.
+ */
+export async function getSessionPages(
+  orderSessionId: string,
+  filter?: { isPreviewPage: boolean }
+) {
+  const rows = await prisma.sessionPage.findMany({
+    where: { orderSessionId, ...filter },
+    select: { isPreviewPage: true, page: true },
+    orderBy: { page: { pageNumber: "asc" } },
+  });
+
+  return rows.map((row) => ({ ...row.page, isPreviewPage: row.isPreviewPage }));
 }
 
 export async function updateOrderSession(
@@ -348,8 +379,10 @@ export const getOrderSessionId = async (sessionId: string) => {
     throw new NotFoundError("OrderSession not found");
   }
 
-  // Fetch all pages of the comic (not just preview ones). Frontend needs
-  // the full book structure to render locked pages with a paywall overlay.
+  // Fetch all pages of THIS session's book (not just preview ones) — its frozen
+  // SessionPage list, so a page the admin added after the session started never
+  // appears here. Frontend needs the full book structure to render locked pages
+  // with a paywall overlay.
   //
   // artworkUrl is returned for EVERY page, including locked ones, so the
   // paywall can show the real page blurred behind it rather than a blank box.
@@ -361,19 +394,7 @@ export const getOrderSessionId = async (sessionId: string) => {
   //
   // The dimensions travel with it so the client can reserve the correct
   // aspect-ratio box for a locked page instead of guessing at a square.
-  const allPages = await prisma.page.findMany({
-    where: { comicId: session.comicId },
-    orderBy: { pageNumber: "asc" },
-    select: {
-      id: true,
-      pageNumber: true,
-      isPreviewPage: true,
-      hasFace: true,
-      artworkUrl: true,
-      artworkWidth: true,
-      artworkHeight: true,
-    },
-  });
+  const allPages = await getSessionPages(sessionId);
 
   // Fetch every PageVersion for this session — includes all variants of
   // all pages that have been generated (or attempted) so far.
@@ -588,42 +609,25 @@ function isSessionCompleteForGeneration(
 }
 
 async function enqueuePreviewGenerationJobs(
-  orderSessionId: string,
-  comicId: string,
-  freePreviewPages: number
+  orderSessionId: string
 ): Promise<number> {
-  // STEP 1: Find the pages that are explicitly marked as preview pages.
+  // STEP 1: Find this session's preview pages.
   //
-  // `isPreviewPage` is the source of truth — the admin picks WHICH pages
-  // are free (could be any subset, not necessarily the first N). The
-  // `freePreviewPages` counter on Comic is just metadata; we use it below
-  // only as a sanity check for data-integrity drift.
-  const previewPages = await prisma.page.findMany({
-    where: { comicId, isPreviewPage: true },
-    orderBy: { pageNumber: "asc" },
+  // The session's frozen SessionPage list is the source of truth: the pages
+  // the comic had when the session was created, with the free/paid flag they
+  // had then. The admin picks WHICH pages are free (any subset, not
+  // necessarily the first N); Comic.freePreviewPages is admin-side metadata
+  // and plays no part here.
+  const previewPages = await getSessionPages(orderSessionId, {
+    isPreviewPage: true,
   });
 
   if (previewPages.length === 0) {
     logger.warn(
-      { orderSessionId, comicId },
-      "enqueuePreviewGenerationJobs: comic has no preview pages"
+      { orderSessionId },
+      "enqueuePreviewGenerationJobs: session has no preview pages"
     );
     return 0;
-  }
-
-  // Sanity check: the counter on Comic should match the number of pages
-  // flagged as preview. Frontend enforces this on publish, but a manual
-  // DB edit could break it. Log-only, don't fail — the truth is `isPreviewPage`.
-  if (previewPages.length !== freePreviewPages) {
-    logger.warn(
-      {
-        orderSessionId,
-        comicId,
-        expected: freePreviewPages,
-        actual: previewPages.length,
-      },
-      "enqueuePreviewGenerationJobs: Comic.freePreviewPages counter does not match the number of pages with isPreviewPage=true"
-    );
   }
 
   // Step 2: Recover any rows left behind by a previous failed attempt.
@@ -766,11 +770,7 @@ export async function triggerGeneration(sessionId: string) {
     );
   }
 
-  const jobsEnqueued = await enqueuePreviewGenerationJobs(
-    sessionId,
-    session.comicId,
-    session.comic.freePreviewPages
-  );
+  const jobsEnqueued = await enqueuePreviewGenerationJobs(sessionId);
 
   await prisma.orderSession.update({
     where: { id: sessionId },
@@ -799,13 +799,18 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
 
   await assertNotExpired(session);
 
-  const page = await prisma.page.findUnique({
-    where: { comicId_pageNumber: { comicId: session.comicId, pageNumber } },
+  // Only a page of THIS session's book can be regenerated — a page the admin
+  // added after the session started is not part of it.
+  const sessionPage = await prisma.sessionPage.findFirst({
+    where: { orderSessionId: sessionId, page: { pageNumber } },
+    select: { page: true },
   });
 
-  if (!page) {
-    throw new NotFoundError(`Page ${pageNumber} does not exist for this comic`);
+  if (!sessionPage) {
+    throw new NotFoundError(`Page ${pageNumber} is not part of this book`);
   }
+
+  const { page } = sessionPage;
 
   if (!REGENERATABLE_STATUSES.includes(session.status)) {
     throw new ConflictError(
@@ -913,19 +918,19 @@ export async function attachUserToSession(sessionId: string, userId: string) {
 }
 
 async function enqueuePaidGenerationJobs(
-  orderSessionId: string,
-  comicId: string
+  orderSessionId: string
 ): Promise<number> {
-  // Paid pages = every page NOT flagged as preview.
-  const paidPages = await prisma.page.findMany({
-    where: { comicId, isPreviewPage: false },
-    orderBy: { pageNumber: "asc" },
+  // Paid pages = every page of this session's book NOT flagged as preview —
+  // its frozen SessionPage list, so a page added after the session started is
+  // never generated for it.
+  const paidPages = await getSessionPages(orderSessionId, {
+    isPreviewPage: false,
   });
 
   if (paidPages.length === 0) {
     logger.warn(
-      { orderSessionId, comicId },
-      "enqueuePaidGenerationJobs: comic has no paid pages"
+      { orderSessionId },
+      "enqueuePaidGenerationJobs: session has no paid pages"
     );
     return 0;
   }
@@ -1026,17 +1031,21 @@ export { enqueuePaidGenerationJobs };
 type PaidReadyResult = "not-done" | "ready" | "failed";
 
 export async function maybeMarkPaidReady(
-  orderSessionId: string,
-  comicId: string
+  orderSessionId: string
 ): Promise<PaidReadyResult> {
-  // Paid pages = every Page for the comic that is NOT a free preview page.
-  // Same filter enqueuePaidGenerationJobs uses.
-  const totalPaidPages = await prisma.page.count({
-    where: { comicId, isPreviewPage: false },
-  });
+  // Paid pages = this session's frozen pages NOT flagged as preview. Same
+  // list enqueuePaidGenerationJobs uses — counting the comic's live pages
+  // instead would stall the session forever the moment the admin added one.
+  const paidPageIds = (
+    await prisma.sessionPage.findMany({
+      where: { orderSessionId, isPreviewPage: false },
+      select: { pageId: true },
+    })
+  ).map((row) => row.pageId);
 
-  // No paid pages configured for this comic means nothing was enqueued.
-  // Never flip.
+  const totalPaidPages = paidPageIds.length;
+
+  // No paid pages in this book means nothing was enqueued. Never flip.
   if (totalPaidPages === 0) return "not-done";
 
   // Every terminal PageVersion row for this session's paid pages. Same shape
@@ -1047,7 +1056,7 @@ export async function maybeMarkPaidReady(
     where: {
       orderSessionId,
       status: { in: ["SD_READY", "FAILED"] },
-      page: { isPreviewPage: false },
+      pageId: { in: paidPageIds },
     },
     select: { pageId: true, status: true },
   });
@@ -1113,7 +1122,7 @@ export async function maybeMarkPaidReady(
  * Flow:
  *  1. Fetch session + guards (exists, owned by user, correct status).
  *  2. If already CONFIRMED — jump to enqueue path (idempotent retry).
- *  3. Fetch comic (need pageCount) and validate selection count.
+ *  3. Validate the selection count against the session's own page count.
  *  4. Fetch every referenced PageVersion + check no in-flight variants exist.
  *  5. Transaction: mark selected variants isSelected=true, flip Session to
  *     CONFIRMED, flip Order to CONFIRMED.
@@ -1131,7 +1140,7 @@ export async function sendToPrint(
     where: { id: sessionId },
     include: {
       order: true,
-      comic: { select: { id: true, pageCount: true } },
+      _count: { select: { sessionPages: true } },
     },
   });
 
@@ -1185,10 +1194,14 @@ export async function sendToPrint(
     );
   }
 
-  // 3. Selection count must match total pages in the comic.
-  if (input.selections.length !== session.comic.pageCount) {
+  // 3. One selection per page of THIS session's book. Its frozen page list,
+  // not Comic.pageCount — that is the admin's planned total, and the comic may
+  // have gained pages since this session started.
+  const bookPageCount = session._count.sessionPages;
+
+  if (input.selections.length !== bookPageCount) {
     throw new ValidationError(
-      `Expected ${session.comic.pageCount} selections, got ${input.selections.length}`
+      `Expected ${bookPageCount} selections, got ${input.selections.length}`
     );
   }
 
@@ -1370,7 +1383,8 @@ export async function compilePdfForSession(
     where: { id: orderSessionId },
     include: {
       order: true,
-      comic: { select: { id: true, pageCount: true, title: true } },
+      comic: { select: { id: true, title: true } },
+      _count: { select: { sessionPages: true } },
     },
   });
 
@@ -1435,9 +1449,10 @@ export async function compilePdfForSession(
     orderBy: { page: { pageNumber: "asc" } },
   });
 
-  if (selectedVersions.length !== session.comic.pageCount) {
+  // Checked against the session's own page count — see sendToPrint step 3.
+  if (selectedVersions.length !== session._count.sessionPages) {
     throw new ConflictError(
-      `Expected ${session.comic.pageCount} selected variants for PDF, found ${selectedVersions.length}`
+      `Expected ${session._count.sessionPages} selected variants for PDF, found ${selectedVersions.length}`
     );
   }
 
