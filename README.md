@@ -442,9 +442,9 @@ unpaid here, by design. Shiprocket webhooks are set up the same way, with
 
 ## Quality checks
 
-There is no automated test suite. Before opening a PR:
+Tests cover the coupon feature (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host. Everything else has no automated tests yet. Before opening a PR:
 
-- `npx tsc --noEmit` passes.
+- `npx tsc --noEmit` passes, and `npm test` passes.
 - You have exercised the changed flow end to end against your dev database.
 - Any new environment variable is in `config/env.ts` **and** `.env.example`.
 - Any schema change ships with its migration and a regenerated client.

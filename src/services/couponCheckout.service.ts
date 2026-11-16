@@ -291,7 +291,7 @@ async function lookupListPrice(session: {
 export function assertSessionOwner(
   session: { userId: string | null },
   callerUserId: string | undefined
-) {
+): asserts callerUserId is string {
   if (!callerUserId)
     throw new UnauthorizedError("Please log in to use a coupon.");
   if (session.userId !== callerUserId) {
@@ -365,7 +365,7 @@ export async function previewCoupon(
 
   const { priced } = await priceCouponForSession(
     session,
-    callerUserId!,
+    callerUserId,
     rawCode,
     session.order?.id
   );
@@ -575,7 +575,7 @@ export async function repriceUnpaidOrder(args: {
   if (requested !== null) {
     ({ priced } = await priceCouponForSession(
       session,
-      callerUserId!,
+      callerUserId,
       requested,
       order.id
     ));
@@ -592,7 +592,7 @@ export async function repriceUnpaidOrder(args: {
           reserveCouponInTx(tx, {
             priced: priced!,
             orderId: order.id,
-            userId: callerUserId!,
+            userId: callerUserId,
           }),
         COUPON_TRANSACTION_OPTIONS
       );
@@ -618,7 +618,7 @@ export async function repriceUnpaidOrder(args: {
     });
   } catch (error: any) {
     logger.error(
-      { sessionId: session.id, error: error?.error || error?.message || error },
+      { sessionId: session.id, err: error?.error || error?.message || error },
       "Razorpay order creation failed while changing a coupon"
     );
     throw new Error(
@@ -656,7 +656,7 @@ export async function repriceUnpaidOrder(args: {
         await reserveCouponInTx(tx, {
           priced,
           orderId: order.id,
-          userId: callerUserId!,
+          userId: callerUserId,
         });
       } else {
         await releaseCouponInTx(tx, order.id, "coupon removed by the customer");

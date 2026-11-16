@@ -82,4 +82,7 @@ export const COUPON_MESSAGES = {
   CHANGED_RETRY: "This offer was just updated. Please try again.",
 } as const;
 
-export type CouponMessageKey = keyof typeof COUPON_MESSAGES;
+// Longest code text the API accepts from a customer. Longer than a real code (4 to 32
+// characters) so pasted spaces or typos still reach the "not valid" answer; the
+// checkout page's input uses the same limit.
+export const COUPON_CODE_INPUT_MAX = 64;

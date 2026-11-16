@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COUPON_CODE_INPUT_MAX } from "../config/coupon.js";
 
 // checkout is identified by the sessionId; the body is optional and only carries a coupon
 export const checkoutParamsSchema = z.object({
@@ -10,10 +11,10 @@ export const checkoutParamsSchema = z.object({
 //   couponCode "ABC"   -> apply (or replace with) that coupon
 //   couponCode null    -> remove the coupon
 export const checkoutBodySchema = z.object({
-  couponCode: z.string().trim().max(64).nullable().optional(),
+  couponCode: z.string().trim().max(COUPON_CODE_INPUT_MAX).nullable().optional(),
 });
 
 // Body of POST /sessions/:sessionId/coupon-preview
 export const couponPreviewBodySchema = z.object({
-  code: z.string().trim().min(1, "Enter a coupon code").max(64),
+  code: z.string().trim().min(1, "Enter a coupon code").max(COUPON_CODE_INPUT_MAX),
 });
