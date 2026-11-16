@@ -14,6 +14,20 @@ export const errorHandler = (
    logger.error(err, `Error caught on ${req.method}, ${req.originalUrl}`)
 
 
+   // A request body that is not valid JSON, or is too large, is the caller's mistake: answer 400 or 413, not 500.
+   const bodyErrorType = (err as { type?: string }).type;
+   if (bodyErrorType === "entity.parse.failed" || bodyErrorType === "entity.too.large") {
+       const tooLarge = bodyErrorType === "entity.too.large";
+       res.status(tooLarge ? 413 : 400).json({
+           success: false,
+           error: {
+               code: tooLarge ? "PAYLOAD_TOO_LARGE" : "INVALID_JSON",
+               message: tooLarge ? "The request body is too large." : "The request body is not valid JSON.",
+           },
+       });
+       return;
+   }
+
    // 2. Determine the status code or set the status coode to default 500 internal server error
    const statusCode = err instanceof AppError ? err.statusCode : 500;
 

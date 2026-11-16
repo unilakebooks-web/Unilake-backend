@@ -10,14 +10,21 @@ import { REPORTING_UTC_OFFSET } from "../config/stats.js";
  * they are unit-tested directly.
  */
 
-/** Trim and upper-case, so "  festive-25 " and "FESTIVE-25" are the same code. */
+/**
+ * Trim and upper-case, so "  festive-25 " and "FESTIVE-25" are the same code.
+ * Only a to z are upper-cased: full Unicode upper-casing rewrites some letters
+ * ("ß" becomes "SS"), which would store a different code than the one typed.
+ */
 export function normalizeCouponCode(raw: string): string {
-  return raw.trim().toUpperCase();
+  return raw.trim().replace(/[a-z]/g, (letter) => letter.toUpperCase());
 }
 
-/** True when an already-normalized code matches the allowed format. */
+/**
+ * True when an already-normalized code matches the allowed format and has at
+ * least one letter or digit (hyphens alone are not a code).
+ */
 export function isValidCouponCode(code: string): boolean {
-  return COUPON_CODE_PATTERN.test(code);
+  return COUPON_CODE_PATTERN.test(code) && /[A-Z0-9]/.test(code);
 }
 
 /**
@@ -58,6 +65,10 @@ function isRealCalendarDate(datePart: string): boolean {
   );
 }
 
+// Years an admin may enter; anything else is almost certainly a typo.
+const MIN_VALIDITY_YEAR = 2000;
+const MAX_VALIDITY_YEAR = 2100;
+
 /**
  * Turns what the admin entered into the UTC instant stored in the database.
  *
@@ -67,13 +78,17 @@ function isRealCalendarDate(datePart: string): boolean {
  * - A full date-time must carry an explicit offset ("...+05:30" or "Z"); one
  *   without is ambiguous and is refused.
  *
- * Returns null for anything that is not a real date (for example 2026-02-30).
+ * Returns null for anything that is not a real date (for example 2026-02-30)
+ * or whose year is outside 2000 to 2100.
  */
 export function parseValidityInput(
   input: string,
   edge: "start" | "end"
 ): Date | null {
   const value = input.trim();
+
+  const year = Number(value.slice(0, 4));
+  if (year < MIN_VALIDITY_YEAR || year > MAX_VALIDITY_YEAR) return null;
 
   if (DATE_ONLY.test(value)) {
     if (!isRealCalendarDate(value)) return null;

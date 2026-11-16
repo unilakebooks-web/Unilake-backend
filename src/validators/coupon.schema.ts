@@ -12,10 +12,15 @@ import {
 const hasAtMostTwoDecimals = (value: number) =>
   Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
 
+// Largest values the database columns hold: Decimal(10,2) and a 32-bit integer.
+const MAX_MONEY = 99999999.99;
+const MAX_LIMIT = 2147483647;
+
 const money = (label: string) =>
   z
     .number({ message: `${label} must be a number` })
     .positive(`${label} must be greater than 0`)
+    .max(MAX_MONEY, `${label} cannot be more than 99,999,999.99`)
     .refine(hasAtMostTwoDecimals, {
       message: `${label} can have at most 2 decimal places`,
     });
@@ -65,7 +70,7 @@ const validityDate = (edge: "start" | "end") =>
       ctx.addIssue({
         code: "custom",
         message:
-          "Use a real date as YYYY-MM-DD (read as IST), or a date-time with an offset",
+          "Use a real date (years 2000 to 2100) as YYYY-MM-DD (read as IST), or a date-time with an offset",
       });
       return z.NEVER;
     }
@@ -75,7 +80,16 @@ const validityDate = (edge: "start" | "end") =>
 const limitSchema = z
   .number({ message: "Limit must be a number" })
   .int("Limit must be a whole number")
-  .min(1, "Limit must be at least 1");
+  .min(1, "Limit must be at least 1")
+  .max(MAX_LIMIT, "Limit cannot be more than 2,147,483,647");
+
+// Repeats are dropped and the list is capped, so a request cannot store
+// thousands of copies of one value.
+const uniqueList = <T extends z.ZodType>(item: T, max: number, what: string) =>
+  z
+    .array(item)
+    .max(max, `Choose at most ${max} ${what}`)
+    .transform((values) => [...new Set(values)]);
 
 export const createCouponSchema = z.object({
   // Leave the code out to have one generated.
@@ -107,8 +121,8 @@ export const createCouponSchema = z.object({
 
   allComics: z.boolean().default(true),
   comicIds: z.array(z.string().uuid("comicIds must be UUIDs")).default([]),
-  countryCodes: z.array(countryCodeSchema).default([]),
-  coverTypes: z.array(coverTypeEnum).default([]),
+  countryCodes: uniqueList(countryCodeSchema, 250, "countries").default([]),
+  coverTypes: uniqueList(coverTypeEnum, 2, "cover types").default([]),
 
   combinable: z.boolean().default(false),
   isActive: z.boolean().default(true),
@@ -138,8 +152,8 @@ export const updateCouponSchema = z
 
     allComics: z.boolean().optional(),
     comicIds: z.array(z.string().uuid("comicIds must be UUIDs")).optional(),
-    countryCodes: z.array(countryCodeSchema).optional(),
-    coverTypes: z.array(coverTypeEnum).optional(),
+    countryCodes: uniqueList(countryCodeSchema, 250, "countries").optional(),
+    coverTypes: uniqueList(coverTypeEnum, 2, "cover types").optional(),
 
     combinable: z.boolean().optional(),
     isActive: z.boolean().optional(),
@@ -147,6 +161,12 @@ export const updateCouponSchema = z
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one field must be provided to update",
   });
+
+// Optional body of PATCH /admin/coupons/:id/status. With isActive the coupon is
+// set to exactly that; without it the status is flipped, as before.
+export const couponStatusBodySchema = z.object({
+  isActive: z.boolean({ message: "isActive must be true or false" }).optional(),
+});
 
 // Query schema — parsed in the controller, there is no validateQuery middleware.
 export const listCouponsQuerySchema = z.object({
@@ -160,6 +180,7 @@ export const listCouponsQuerySchema = z.object({
 
 export type CreateCouponInput = z.infer<typeof createCouponSchema>;
 export type UpdateCouponInput = z.infer<typeof updateCouponSchema>;
+export type CouponStatusBodyInput = z.infer<typeof couponStatusBodySchema>;
 export type ListCouponsQueryInput = z.infer<typeof listCouponsQuerySchema>;
 
 // Query of the customer search used when a coupon is reserved for one customer.

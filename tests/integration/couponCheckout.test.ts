@@ -28,7 +28,11 @@ import {
   reserveCouponInTx,
   type PricedCoupon,
 } from "../../src/services/couponCheckout.service.js";
-import { COUPON_TRANSACTION_OPTIONS } from "../../src/config/coupon.js";
+import {
+  COUPON_TRANSACTION_OPTIONS,
+  FAILED_COUPON_ATTEMPT_WINDOW_SECONDS,
+} from "../../src/config/coupon.js";
+import { recordFailedCouponAttempt } from "../../src/utils/attemptLimiter.js";
 import { acquireSlot } from "../../src/utils/keyedQueue.js";
 import { AppError } from "../../src/utils/errors.js";
 
@@ -275,7 +279,7 @@ describe("priceCoupon", () => {
       "COUPON_NOT_APPLICABLE"
     );
     expect(await refusal(price(customer, usd.code))).toBe(
-      "COUPON_NOT_APPLICABLE"
+      "COUPON_WRONG_CURRENCY"
     );
     expect(await refusal(price(customer, restricted.code))).toBe(
       "COUPON_INVALID"
@@ -384,6 +388,45 @@ describe("priceCoupon", () => {
     );
     // another customer is not affected
     expect((await price(customer, valid.code)).couponId).toBe(valid.id);
+  });
+
+  it("tells the customer how long to wait", async () => {
+    const guesser = await makeUser("waiter");
+    for (let i = 0; i < 10; i++) {
+      await refusal(price(guesser, `WRONG-${i}-WAIT`));
+    }
+    await expect(price(guesser, "WRONG-11-WAIT")).rejects.toThrow(
+      "Too many attempts. Please try again in about 10 minutes."
+    );
+  });
+
+  it("starts the counter and its expiry together, and does not restart the window on later failures", async () => {
+    const guesser = await makeUser("window");
+    const key = `coupon:failed-attempts:${guesser}`;
+    await recordFailedCouponAttempt(guesser);
+    expect(await redisClient.get(key)).toBe("1");
+    const ttl = await redisClient.ttl(key);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(FAILED_COUPON_ATTEMPT_WINDOW_SECONDS);
+
+    // 100 s left; another failure counts but must not extend the window
+    await redisClient.expire(key, 100);
+    await recordFailedCouponAttempt(guesser);
+    expect(await redisClient.get(key)).toBe("2");
+    expect(await redisClient.ttl(key)).toBeLessThanOrEqual(100);
+  });
+
+  it("counts every failure when many arrive at once", async () => {
+    const guesser = await makeUser("burst");
+    await Promise.all(
+      Array.from({ length: 5 }, () => recordFailedCouponAttempt(guesser))
+    );
+    expect(await redisClient.get(`coupon:failed-attempts:${guesser}`)).toBe(
+      "5"
+    );
+    expect(
+      await redisClient.ttl(`coupon:failed-attempts:${guesser}`)
+    ).toBeGreaterThan(0);
   });
 });
 

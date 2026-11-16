@@ -153,6 +153,31 @@ describe("couponShapeIssues", () => {
     ).toHaveLength(1);
   });
 
+  it("refuses a per-customer limit above the total limit", () => {
+    const issues = couponShapeIssues(
+      shape({ usageLimit: 2, perCustomerLimit: 5 })
+    );
+    expect(issues).toEqual([
+      "Uses per customer cannot be more than the total uses.",
+    ]);
+    expect(
+      couponShapeIssues(shape({ usageLimit: 5, perCustomerLimit: 5 }))
+    ).toEqual([]);
+    // no total limit: any per-customer limit is meaningful
+    expect(couponShapeIssues(shape({ perCustomerLimit: 5 }))).toEqual([]);
+  });
+
+  it("lets a single-use coupon have a per-customer limit of 1 but not 2", () => {
+    const single = { kind: "SINGLE_USE" as const, usageLimit: 1 };
+    expect(couponShapeIssues(shape({ ...single }))).toEqual([]);
+    expect(
+      couponShapeIssues(shape({ ...single, perCustomerLimit: 1 }))
+    ).toEqual([]);
+    expect(
+      couponShapeIssues(shape({ ...single, perCustomerLimit: 2 }))
+    ).toEqual(["Uses per customer cannot be more than the total uses."]);
+  });
+
   it("reports every problem at once", () => {
     const issues = couponShapeIssues(
       shape({

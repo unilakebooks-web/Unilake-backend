@@ -21,6 +21,7 @@ export type CouponRejection =
   | "EXPIRED"
   | "USED_UP"
   | "ALREADY_USED"
+  | "WRONG_CURRENCY"
   | "NOT_APPLICABLE";
 
 export interface CouponRules {
@@ -109,11 +110,13 @@ export function computeDiscount(
  * Decides whether this customer may use the coupon for this order.
  *
  * Checked in this order, and the first failure wins:
- *   1. inactive                 -> INVALID
- *   2. reserved for someone else -> INVALID   (before anything that would reveal
+ *   1. reserved for someone else -> INVALID   (before anything that would reveal
  *                                              the code exists, e.g. "expired")
- *   3. not started yet / expired
- *   4. currency, comic, country, cover type  -> NOT_APPLICABLE
+ *   2. past its end date        -> EXPIRED    (whether or not the switch is on:
+ *                                              the expiry sweep switches it off)
+ *   3. inactive                 -> INVALID
+ *      not started yet          -> NOT_STARTED
+ *   4. currency -> WRONG_CURRENCY; comic, country, cover type -> NOT_APPLICABLE
  *   5. total limit reached      -> USED_UP
  *   6. per-customer limit       -> ALREADY_USED
  *   7. the discount would be zero (price already at the minimum) -> NOT_APPLICABLE
@@ -125,8 +128,6 @@ export function evaluateCoupon(
   rules: CouponRules,
   ctx: CouponContext
 ): CouponEvaluation {
-  if (!rules.isActive) return { ok: false, reason: "INVALID" };
-
   if (
     rules.restrictedToUserId !== null &&
     rules.restrictedToUserId !== ctx.userId
@@ -134,18 +135,21 @@ export function evaluateCoupon(
     return { ok: false, reason: "INVALID" };
   }
 
-  if (rules.startsAt !== null && ctx.now < rules.startsAt) {
-    return { ok: false, reason: "NOT_STARTED" };
-  }
   if (rules.endsAt !== null && ctx.now > rules.endsAt) {
     return { ok: false, reason: "EXPIRED" };
+  }
+
+  if (!rules.isActive) return { ok: false, reason: "INVALID" };
+
+  if (rules.startsAt !== null && ctx.now < rules.startsAt) {
+    return { ok: false, reason: "NOT_STARTED" };
   }
 
   if (
     rules.currency !== null &&
     rules.currency.toUpperCase() !== ctx.currency.toUpperCase()
   ) {
-    return { ok: false, reason: "NOT_APPLICABLE" };
+    return { ok: false, reason: "WRONG_CURRENCY" };
   }
   if (!rules.allComics && !rules.comicIds.includes(ctx.comicId)) {
     return { ok: false, reason: "NOT_APPLICABLE" };

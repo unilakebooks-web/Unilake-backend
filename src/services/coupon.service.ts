@@ -85,6 +85,12 @@ function toCouponResponse(row: CouponRow, usage: Usage) {
   };
 }
 
+/**
+ * Makes a search text match literally: Prisma's `contains` passes % and _ to
+ * the database as wildcards, so they (and the escape character) are escaped.
+ */
+const escapeLike = (text: string) => text.replace(/[\\%_]/g, "\\$&");
+
 const toDecimal = (value: number | null | undefined) =>
   value === null || value === undefined ? null : new Prisma.Decimal(value);
 
@@ -121,6 +127,25 @@ async function assertCurrencyFitsCountries(
       ? `No country sells in ${currency}, so this coupon could never apply. Choose a currency that one of your countries uses.`
       : `None of the selected countries sells in ${currency}, so this coupon could never apply. Choose a country that uses it, or change the currency.`
   );
+}
+
+/** Every selected country must be a country in the database (active or not). */
+async function assertCountriesExist(
+  db: { country: typeof prisma.country },
+  countryCodes: string[]
+) {
+  if (countryCodes.length === 0) return;
+  const rows = await db.country.findMany({
+    where: { code: { in: countryCodes } },
+    select: { code: true },
+  });
+  const known = new Set(rows.map((row) => row.code));
+  const unknown = countryCodes.filter((code) => !known.has(code));
+  if (unknown.length > 0) {
+    throw new ValidationError(
+      `Unknown country code: ${unknown.slice(0, 5).join(", ")}`
+    );
+  }
 }
 
 /** The customer and comics a coupon points at must exist. */
@@ -188,6 +213,7 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
     comicCount: comicIds.length,
   });
   await assertReferencesExist(data.restrictedToUserId ?? null, comicIds);
+  await assertCountriesExist(prisma, data.countryCodes);
   await assertCurrencyFitsCountries(
     prisma,
     data.currency ?? null,
@@ -336,6 +362,9 @@ export async function updateCoupon(
         await assertReferencesExist(restrictedToUserId, comicIds);
       }
 
+      if (data.countryCodes !== undefined) {
+        await assertCountriesExist(tx, data.countryCodes);
+      }
       if (data.currency !== undefined || data.countryCodes !== undefined) {
         await assertCurrencyFitsCountries(
           tx,
@@ -439,13 +468,25 @@ export async function updateCoupon(
 // STATUS, DELETE, READ
 // ============================================================
 
-export async function toggleCouponStatus(id: string, adminId: string) {
+/**
+ * Flips the coupon on or off. With `isActive` it is set to exactly that instead,
+ * so two quick clicks, or a page that is out of date, cannot end in the wrong
+ * state.
+ */
+export async function toggleCouponStatus(
+  id: string,
+  adminId: string,
+  isActive?: boolean
+) {
   const row = await prisma.$transaction(async (tx) => {
     await lockCoupon(tx, id);
     const existing = await tx.coupon.findUniqueOrThrow({ where: { id } });
     return tx.coupon.update({
       where: { id },
-      data: { isActive: !existing.isActive, updatedById: adminId },
+      data: {
+        isActive: isActive ?? !existing.isActive,
+        updatedById: adminId,
+      },
       include: COUPON_INCLUDE,
     });
   });
@@ -487,8 +528,8 @@ export async function listCoupons(filters: ListCouponsQueryInput) {
   if (filters.kind) where.kind = filters.kind;
   if (filters.search) {
     where.OR = [
-      { code: { contains: filters.search, mode: "insensitive" } },
-      { name: { contains: filters.search, mode: "insensitive" } },
+      { code: { contains: escapeLike(filters.search), mode: "insensitive" } },
+      { name: { contains: escapeLike(filters.search), mode: "insensitive" } },
     ];
   }
 
@@ -529,8 +570,8 @@ export async function searchCouponCustomers(search: string) {
   return prisma.user.findMany({
     where: {
       OR: [
-        { name: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
+        { name: { contains: escapeLike(search), mode: "insensitive" } },
+        { email: { contains: escapeLike(search), mode: "insensitive" } },
       ],
     },
     select: { id: true, name: true, email: true },

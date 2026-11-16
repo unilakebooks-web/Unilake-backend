@@ -251,7 +251,7 @@ describe("evaluateCoupon", () => {
       ).toBe(true);
     });
 
-    it("refuses a different currency as NOT_APPLICABLE", () => {
+    it("refuses a different currency as WRONG_CURRENCY", () => {
       const r = rules({
         currency: "INR",
         percentOff: D(10),
@@ -259,7 +259,7 @@ describe("evaluateCoupon", () => {
       });
       expect(evaluateCoupon(r, ctx({ currency: "USD" }))).toEqual({
         ok: false,
-        reason: "NOT_APPLICABLE",
+        reason: "WRONG_CURRENCY",
       });
     });
   });
@@ -376,6 +376,45 @@ describe("evaluateCoupon", () => {
       expect(evaluateCoupon(r, ctx())).toEqual({
         ok: false,
         reason: "EXPIRED",
+      });
+    });
+
+    it("reports a coupon past its end date as EXPIRED even when it is switched off (the expiry sweep does that)", () => {
+      const r = rules({ isActive: false, endsAt: new Date(NOW.getTime() - 1) });
+      expect(evaluateCoupon(r, ctx())).toEqual({
+        ok: false,
+        reason: "EXPIRED",
+      });
+    });
+
+    it("reports a coupon switched off by hand, with an end date still ahead, as INVALID", () => {
+      const r = rules({ isActive: false, endsAt: new Date(NOW.getTime() + 1) });
+      expect(evaluateCoupon(r, ctx())).toEqual({
+        ok: false,
+        reason: "INVALID",
+      });
+    });
+
+    it("reports a switched-off coupon that has not started as INVALID, not NOT_STARTED", () => {
+      const r = rules({
+        isActive: false,
+        startsAt: new Date(NOW.getTime() + 1),
+      });
+      expect(evaluateCoupon(r, ctx())).toEqual({
+        ok: false,
+        reason: "INVALID",
+      });
+    });
+
+    it("keeps a coupon reserved for someone else INVALID even when it has expired", () => {
+      const r = rules({
+        restrictedToUserId: "someone-else",
+        isActive: false,
+        endsAt: new Date(NOW.getTime() - 1),
+      });
+      expect(evaluateCoupon(r, ctx())).toEqual({
+        ok: false,
+        reason: "INVALID",
       });
     });
   });

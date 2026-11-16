@@ -4,6 +4,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/response.js";
 import { ValidationError } from "../utils/errors.js";
 import {
+  couponStatusBodySchema,
   listCouponsQuerySchema,
   searchCustomersQuerySchema,
 } from "../validators/coupon.schema.js";
@@ -68,7 +69,19 @@ export const getCouponHandler = asyncHandler(
 export const toggleCouponStatusHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const { id } = req.params;
-    const coupon = await toggleCouponStatus(id as string, req.user!.id);
+    // The body is optional: with { isActive } the coupon is set to exactly that,
+    // without it the status is flipped.
+    const body = couponStatusBodySchema.safeParse(req.body ?? {});
+    if (!body.success) {
+      throw new ValidationError(
+        body.error.issues[0]?.message ?? "Invalid status"
+      );
+    }
+    const coupon = await toggleCouponStatus(
+      id as string,
+      req.user!.id,
+      body.data.isActive
+    );
     sendSuccess(res, 200, coupon);
   }
 );

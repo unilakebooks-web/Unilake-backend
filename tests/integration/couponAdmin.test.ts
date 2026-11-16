@@ -472,6 +472,37 @@ describe("toggleCouponStatus", () => {
   });
 });
 
+describe("toggleCouponStatus with an explicit state", () => {
+  it("sets exactly the requested state, whatever the current one is", async () => {
+    const c = await createCoupon(make(), ADMIN);
+    expect((await toggleCouponStatus(c.id, ADMIN, true)).isActive).toBe(true);
+    expect((await toggleCouponStatus(c.id, ADMIN, false)).isActive).toBe(false);
+    expect((await toggleCouponStatus(c.id, ADMIN, false)).isActive).toBe(false);
+    expect((await toggleCouponStatus(c.id, ADMIN, true)).isActive).toBe(true);
+  });
+
+  it("ends in the requested state when the same request arrives twice at once", async () => {
+    const c = await createCoupon(make(), ADMIN);
+    await Promise.all([
+      toggleCouponStatus(c.id, ADMIN, false),
+      toggleCouponStatus(c.id, ADMIN, false),
+    ]);
+    expect((await getCoupon(c.id)).isActive).toBe(false);
+    await Promise.all([
+      toggleCouponStatus(c.id, ADMIN, true),
+      toggleCouponStatus(c.id, ADMIN, true),
+    ]);
+    expect((await getCoupon(c.id)).isActive).toBe(true);
+  });
+
+  it("still flips when no state is given", async () => {
+    const c = await createCoupon(make(), ADMIN);
+    expect((await toggleCouponStatus(c.id, ADMIN, undefined)).isActive).toBe(
+      false
+    );
+  });
+});
+
 describe("deleteCoupon", () => {
   it("deletes an unused coupon", async () => {
     const c = await createCoupon(make({ allComics: false, comicIds }), ADMIN);
@@ -572,6 +603,168 @@ describe("listCoupons", () => {
       await listCoupons({ page: 1, pageSize: 20, search: tag })
     ).coupons.map((x) => x.id);
     expect(ids).toEqual([second.id, first.id]);
+  });
+});
+
+describe("search treats % _ and \\ literally", () => {
+  const find = async (search: string) =>
+    (await listCoupons({ page: 1, pageSize: 100, search })).coupons.map(
+      (x) => x.id
+    );
+
+  it("does not let % match everything", async () => {
+    const tag = `pct-${RUN}`;
+    const percent = await createCoupon(
+      make({ name: `${MARK} ${tag} 100% off` }),
+      ADMIN
+    );
+    const other = await createCoupon(
+      make({ name: `${MARK} ${tag} 100X off` }),
+      ADMIN
+    );
+    expect(await find(`${tag} 100% off`)).toEqual([percent.id]);
+    expect(await find(`${tag} 100X off`)).toEqual([other.id]);
+    const lone = await find("%");
+    expect(lone).toContain(percent.id);
+    expect(lone).not.toContain(other.id);
+  });
+
+  it("does not let _ match any single character", async () => {
+    const tag = `und-${RUN}`;
+    const under = await createCoupon(
+      make({ name: `${MARK} ${tag} a_b` }),
+      ADMIN
+    );
+    const plain = await createCoupon(
+      make({ name: `${MARK} ${tag} aXb` }),
+      ADMIN
+    );
+    expect(await find(`${tag} a_b`)).toEqual([under.id]);
+    expect(await find(`${tag} aXb`)).toEqual([plain.id]);
+  });
+
+  it("matches a backslash literally", async () => {
+    const tag = `bsl-${RUN}`;
+    const slash = await createCoupon(
+      make({ name: `${MARK} ${tag} a\\b` }),
+      ADMIN
+    );
+    await createCoupon(make({ name: `${MARK} ${tag} ab` }), ADMIN);
+    expect(await find(`${tag} a\\b`)).toEqual([slash.id]);
+  });
+
+  it("applies the same rule to the customer search", async () => {
+    // The test user's name is "Vitest Customer": a _ or % must not stand in for the space.
+    expect(
+      (await searchCouponCustomers("vitest_customer")).map((u) => u.id)
+    ).not.toContain(userId);
+    expect(
+      (await searchCouponCustomers("vitest%customer")).map((u) => u.id)
+    ).not.toContain(userId);
+    expect(
+      (await searchCouponCustomers("vitest customer")).map((u) => u.id)
+    ).toContain(userId);
+  });
+});
+
+describe("selected countries must exist", () => {
+  beforeAll(async () => {
+    await prisma.country.upsert({
+      where: { code: "ZV" },
+      update: { isActive: false },
+      create: {
+        code: "ZV",
+        name: `${MARK} ZV`,
+        currencyCode: "ZVC",
+        flagUrl: "x",
+        isActive: false,
+      },
+    });
+  });
+  afterAll(async () => {
+    await prisma.country.deleteMany({ where: { code: "ZV" } });
+  });
+
+  it("refuses a code that is not a country, with no currency set", async () => {
+    await expect(
+      createCoupon(make({ countryCodes: ["IN", "QQ"] }), ADMIN)
+    ).rejects.toThrow(/Unknown country code: QQ/);
+  });
+
+  it("accepts a country that is switched off", async () => {
+    const c = await createCoupon(make({ countryCodes: ["ZV"] }), ADMIN);
+    expect(c.countryCodes).toEqual(["ZV"]);
+  });
+
+  it("stores each selected country once", async () => {
+    const c = await createCoupon(
+      make({ countryCodes: ["in", "IN", "ZV", "zv"] }),
+      ADMIN
+    );
+    expect(c.countryCodes).toEqual(["IN", "ZV"]);
+  });
+
+  it("checks again on edit, and not when the countries are left alone", async () => {
+    const c = await createCoupon(make({ countryCodes: ["ZV"] }), ADMIN);
+    await expect(
+      updateCoupon(
+        c.id,
+        updateCouponSchema.parse({ countryCodes: ["QQ"] }),
+        ADMIN
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+    const renamed = await updateCoupon(
+      c.id,
+      updateCouponSchema.parse({ name: `${MARK} renamed again` }),
+      ADMIN
+    );
+    expect(renamed.countryCodes).toEqual(["ZV"]);
+  });
+});
+
+describe("rules across fields", () => {
+  it("refuses a per-customer limit above the total limit, on create and on edit", async () => {
+    await expect(
+      createCoupon(make({ usageLimit: 2, perCustomerLimit: 5 }), ADMIN)
+    ).rejects.toThrow("Uses per customer cannot be more than the total uses.");
+    await expect(
+      createCoupon(make({ kind: "SINGLE_USE", perCustomerLimit: 2 }), ADMIN)
+    ).rejects.toBeInstanceOf(ValidationError);
+    await createCoupon(
+      make({ kind: "SINGLE_USE", perCustomerLimit: 1 }),
+      ADMIN
+    );
+
+    const c = await createCoupon(
+      make({ usageLimit: 10, perCustomerLimit: 2 }),
+      ADMIN
+    );
+    await expect(
+      updateCoupon(c.id, updateCouponSchema.parse({ usageLimit: 1 }), ADMIN)
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      updateCoupon(
+        c.id,
+        updateCouponSchema.parse({ perCustomerLimit: 11 }),
+        ADMIN
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("stores the largest amount and limit the columns hold", async () => {
+    const c = await createCoupon(
+      make({
+        discountType: "FIXED",
+        percentOff: undefined,
+        amountOff: 99999999.99,
+        currency: "INR",
+        usageLimit: 2147483647,
+        perCustomerLimit: 2147483647,
+      }),
+      ADMIN
+    );
+    expect(c.amountOff?.toString()).toBe("99999999.99");
+    expect(c.usageLimit).toBe(2147483647);
   });
 });
 

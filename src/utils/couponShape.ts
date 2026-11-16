@@ -84,6 +84,14 @@ export function couponShapeIssues(coupon: CouponShape): string[] {
     issues.push("The per-customer limit must be at least 1.");
   }
 
+  if (
+    coupon.usageLimit !== null &&
+    coupon.perCustomerLimit !== null &&
+    coupon.perCustomerLimit > coupon.usageLimit
+  ) {
+    issues.push("Uses per customer cannot be more than the total uses.");
+  }
+
   if (coupon.kind === "SINGLE_USE" && coupon.usageLimit !== 1) {
     issues.push("A single-use coupon can be used exactly once.");
   }

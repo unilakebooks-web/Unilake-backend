@@ -162,6 +162,12 @@ async function handlePaymentCaptured(
         },
         "payment.captured on a SUPERSEDED Razorpay order — the customer paid an earlier amount, admin follow-up needed"
       );
+      // Attach the event to the order so the admin sees the payment on the order page.
+      await prisma.webhookEvent
+        .update({ where: { eventId }, data: { orderId: superseded.id } })
+        .catch((err) => {
+          logger.error({ err, eventId }, "Could not link the superseded payment event to its order");
+        });
       return;
     }
 

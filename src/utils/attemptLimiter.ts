@@ -34,13 +34,17 @@ export async function isCouponAttemptLimited(userId: string): Promise<boolean> {
 /** Counts one failed attempt; the window starts at the first failure. */
 export async function recordFailedCouponAttempt(userId: string): Promise<void> {
   try {
-    const count = await redisClient.incr(key(userId));
-    if (count === 1) {
-      await redisClient.expire(
-        key(userId),
-        FAILED_COUPON_ATTEMPT_WINDOW_SECONDS
-      );
-    }
+    // The key is created with its expiry in one command (NX: only when it does
+    // not exist yet), so a crash between two calls can never leave a counter
+    // that never expires. The window starts at the first failure.
+    await redisClient.set(
+      key(userId),
+      0,
+      "EX",
+      FAILED_COUPON_ATTEMPT_WINDOW_SECONDS,
+      "NX"
+    );
+    await redisClient.incr(key(userId));
   } catch (err) {
     logger.warn({ err }, "Could not record a failed coupon attempt");
   }

@@ -76,8 +76,9 @@ export const COUPON_MESSAGES = {
   EXPIRED: "This code has expired.",
   USED_UP: "This code has been used up.",
   ALREADY_USED: "You have already used this code.",
+  WRONG_CURRENCY: "This code is not valid for orders in this currency.",
   NOT_APPLICABLE: "This code does not apply to this book.",
-  TOO_MANY_ATTEMPTS: "Too many attempts. Please try again in a few minutes.",
+  TOO_MANY_ATTEMPTS: "Too many attempts. Please try again in about 10 minutes.",
   CHANGED_RETRY: "This offer was just updated. Please try again.",
 } as const;
 

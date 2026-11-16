@@ -13,6 +13,13 @@ describe("normalizeCouponCode", () => {
     expect(normalizeCouponCode("Diwali2026")).toBe("DIWALI2026");
   });
 
+  it("upper-cases only a to z, so other letters are not rewritten", () => {
+    expect(normalizeCouponCode("qaß99")).toBe("QAß99");
+    expect(normalizeCouponCode("ﬁﬁ-99")).toBe("ﬁﬁ-99");
+    expect(isValidCouponCode(normalizeCouponCode("qaß99"))).toBe(false);
+    expect(isValidCouponCode(normalizeCouponCode("ﬁﬁ-99"))).toBe(false);
+  });
+
   it("leaves an empty or whitespace-only string empty", () => {
     expect(normalizeCouponCode("")).toBe("");
     expect(normalizeCouponCode("   ")).toBe("");
@@ -24,6 +31,12 @@ describe("isValidCouponCode", () => {
     expect(isValidCouponCode("ABCD")).toBe(true);
     expect(isValidCouponCode("FESTIVE-25")).toBe(true);
     expect(isValidCouponCode("A".repeat(32))).toBe(true);
+  });
+
+  it("needs at least one letter or digit", () => {
+    expect(isValidCouponCode("-----")).toBe(false);
+    expect(isValidCouponCode("----A")).toBe(true);
+    expect(isValidCouponCode("---1")).toBe(true);
   });
 
   it("refuses too short, too long and empty codes", () => {
@@ -151,6 +164,18 @@ describe("parseValidityInput", () => {
     ]) {
       expect(parseValidityInput(bad, "start"), bad).toBeNull();
     }
+  });
+
+  it("accepts years 2000 to 2100 and refuses any other year", () => {
+    expect(parseValidityInput("2000-01-01", "start")).not.toBeNull();
+    expect(parseValidityInput("2100-12-31", "end")).not.toBeNull();
+    expect(
+      parseValidityInput("2100-12-31T10:00:00+05:30", "end")
+    ).not.toBeNull();
+    expect(parseValidityInput("1999-12-31", "start")).toBeNull();
+    expect(parseValidityInput("2101-01-01", "start")).toBeNull();
+    expect(parseValidityInput("9999-12-31", "end")).toBeNull();
+    expect(parseValidityInput("9999-12-31T10:00:00Z", "end")).toBeNull();
   });
 
   it("trims surrounding whitespace", () => {

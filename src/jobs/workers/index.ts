@@ -15,9 +15,9 @@ const EXPIRY_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const STUCK_PAGE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STUCK_PAGE_FIRST_SWEEP_MS = 60 * 1000; // 1 minute
 // Switches off coupons whose end date has passed. Checkout checks the date itself,
-// so this only keeps the admin list honest; a coupon ending at midnight IST is
-// switched off within one interval.
-const COUPON_EXPIRY_SWEEP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+// so this only keeps the admin list honest. Coupons end at the end of a day, so a
+// check every few hours is enough: an expired coupon is switched off within 4 hours.
+const COUPON_EXPIRY_SWEEP_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const COUPON_EXPIRY_FIRST_SWEEP_MS = 60 * 1000; // 1 minute after boot
 /**
  * Initializes all background workers and registers graceful shutdown handlers.

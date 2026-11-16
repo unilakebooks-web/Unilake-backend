@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  couponStatusBodySchema,
   createCouponSchema,
   searchCustomersQuerySchema,
   listCouponsQuerySchema,
@@ -280,5 +281,140 @@ describe("listCouponsQuerySchema", () => {
     expect(listCouponsQuerySchema.safeParse({ search: "   " }).success).toBe(
       false
     );
+  });
+});
+
+describe("column size limits", () => {
+  const message = (data: object) => {
+    const result = createCouponSchema.safeParse({ ...base, ...data });
+    return result.success ? null : result.error.issues[0]?.message;
+  };
+
+  it("accepts the largest amount and refuses one cent more, with a plain message", () => {
+    const fixed = { discountType: "FIXED", percentOff: undefined };
+    expect(
+      createCouponSchema.safeParse({
+        ...base,
+        ...fixed,
+        amountOff: 99999999.99,
+      }).success
+    ).toBe(true);
+    expect(message({ ...fixed, amountOff: 100000000 })).toBe(
+      "Amount cannot be more than 99,999,999.99"
+    );
+    expect(message({ ...fixed, amountOff: 1000000000 })).toBe(
+      "Amount cannot be more than 99,999,999.99"
+    );
+  });
+
+  it("applies the same limit to the maximum discount", () => {
+    expect(
+      createCouponSchema.safeParse({ ...base, maxDiscount: 99999999.99 })
+        .success
+    ).toBe(true);
+    expect(message({ maxDiscount: 1e12 })).toBe(
+      "Maximum discount cannot be more than 99,999,999.99"
+    );
+  });
+
+  it("accepts a limit of 2,147,483,647 and refuses one more", () => {
+    for (const field of ["usageLimit", "perCustomerLimit"]) {
+      expect(
+        createCouponSchema.safeParse({ ...base, [field]: 2147483647 }).success,
+        field
+      ).toBe(true);
+      expect(message({ [field]: 2147483648 }), field).toBe(
+        "Limit cannot be more than 2,147,483,647"
+      );
+    }
+  });
+
+  it("applies the same limits on update", () => {
+    expect(updateCouponSchema.safeParse({ amountOff: 100000000 }).success).toBe(
+      false
+    );
+    expect(
+      updateCouponSchema.safeParse({ usageLimit: 2147483648 }).success
+    ).toBe(false);
+    expect(
+      updateCouponSchema.safeParse({ usageLimit: 2147483647 }).success
+    ).toBe(true);
+  });
+});
+
+describe("countries and cover types", () => {
+  it("drops repeats and keeps the order", () => {
+    const parsed = createCouponSchema.parse({
+      ...base,
+      countryCodes: ["us", "IN", "US", "in"],
+      coverTypes: ["HARDCOVER", "HARDCOVER"],
+    });
+    expect(parsed.countryCodes).toEqual(["US", "IN"]);
+    expect(parsed.coverTypes).toEqual(["HARDCOVER"]);
+    expect(
+      updateCouponSchema.parse({ countryCodes: ["IN", "IN"] }).countryCodes
+    ).toEqual(["IN"]);
+  });
+
+  it("caps the lists at 250 countries and 2 cover types", () => {
+    const codes = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        String.fromCharCode(65 + (Math.floor(i / 26) % 26), 65 + (i % 26))
+      );
+    expect(
+      createCouponSchema.safeParse({ ...base, countryCodes: codes(250) })
+        .success
+    ).toBe(true);
+    expect(
+      createCouponSchema.safeParse({ ...base, countryCodes: codes(251) })
+        .success
+    ).toBe(false);
+    expect(
+      createCouponSchema.safeParse({
+        ...base,
+        countryCodes: Array(5000).fill("US"),
+      }).success
+    ).toBe(false);
+    expect(
+      createCouponSchema.safeParse({
+        ...base,
+        coverTypes: ["HARDCOVER", "SOFTCOVER", "HARDCOVER"],
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe("validity years", () => {
+  it("refuses a start or end outside 2000 to 2100", () => {
+    expect(
+      createCouponSchema.safeParse({ ...base, endsAt: "9999-12-31" }).success
+    ).toBe(false);
+    expect(
+      createCouponSchema.safeParse({ ...base, startsAt: "1999-12-31" }).success
+    ).toBe(false);
+    expect(
+      createCouponSchema.safeParse({ ...base, endsAt: "2100-12-31" }).success
+    ).toBe(true);
+    expect(updateCouponSchema.safeParse({ endsAt: "9999-01-01" }).success).toBe(
+      false
+    );
+  });
+});
+
+describe("couponStatusBodySchema", () => {
+  it("accepts no field, true or false, and refuses anything else", () => {
+    expect(couponStatusBodySchema.parse({})).toEqual({});
+    expect(couponStatusBodySchema.parse({ isActive: false })).toEqual({
+      isActive: false,
+    });
+    expect(couponStatusBodySchema.parse({ isActive: true })).toEqual({
+      isActive: true,
+    });
+    for (const isActive of ["false", 0, 1, null]) {
+      expect(
+        couponStatusBodySchema.safeParse({ isActive }).success,
+        String(isActive)
+      ).toBe(false);
+    }
   });
 });
