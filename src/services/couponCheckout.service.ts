@@ -373,8 +373,8 @@ export async function previewCoupon(
   });
   if (!session) throw new NotFoundError("Session not found");
 
-  await assertNotExpired(session);
   assertSessionOwner(session, callerUserId);
+  await assertNotExpired(session);
 
   if (!isPriceableStatus(session.status)) {
     throw new ConflictError(
@@ -675,14 +675,14 @@ export async function redeemCouponInTx(
   const redemption = await tx.couponRedemption.findUnique({
     where: { orderId },
   });
-  if (!redemption || redemption.status === "REDEEMED") return;
+  // A RELEASED use means the customer removed the coupon, so the order was paid
+  // at full price: it must not be counted as a use of the coupon.
+  if (!redemption || redemption.status !== "RESERVED") return;
 
-  const lapsed =
-    redemption.status === "RELEASED" ||
-    redemption.createdAt <= reservationCutoff(new Date());
+  const lapsed = redemption.createdAt <= reservationCutoff(new Date());
 
   await tx.couponRedemption.updateMany({
-    where: { orderId, status: { in: ["RESERVED", "RELEASED"] } },
+    where: { orderId, status: "RESERVED" },
     data: {
       status: "REDEEMED",
       redeemedAt: new Date(),
@@ -696,7 +696,6 @@ export async function redeemCouponInTx(
       {
         orderId,
         couponId: redemption.couponId,
-        previousStatus: redemption.status,
       },
       "Coupon redeemed by a payment after its reservation had lapsed; its usage limit may now be exceeded"
     );

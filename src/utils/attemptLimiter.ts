@@ -17,10 +17,26 @@ import {
 
 const key = (userId: string) => `coupon:failed-attempts:${userId}`;
 
+// With Redis down the client queues commands until it reconnects (the queue
+// connection needs that), so a plain await would hang the customer's request.
+// Give up after this long and treat it as "Redis unavailable".
+const REDIS_WAIT_MS = 500;
+
+function withinLimit<T>(command: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Redis did not answer in time")),
+      REDIS_WAIT_MS
+    );
+  });
+  return Promise.race([command, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** True when this customer has used up their failed attempts for the window. */
 export async function isCouponAttemptLimited(userId: string): Promise<boolean> {
   try {
-    const count = Number(await redisClient.get(key(userId)));
+    const count = Number(await withinLimit(redisClient.get(key(userId))));
     return count >= MAX_FAILED_COUPON_ATTEMPTS;
   } catch (err) {
     logger.warn(
@@ -37,14 +53,16 @@ export async function recordFailedCouponAttempt(userId: string): Promise<void> {
     // The key is created with its expiry in one command (NX: only when it does
     // not exist yet), so a crash between two calls can never leave a counter
     // that never expires. The window starts at the first failure.
-    await redisClient.set(
-      key(userId),
-      0,
-      "EX",
-      FAILED_COUPON_ATTEMPT_WINDOW_SECONDS,
-      "NX"
+    await withinLimit(
+      redisClient.set(
+        key(userId),
+        0,
+        "EX",
+        FAILED_COUPON_ATTEMPT_WINDOW_SECONDS,
+        "NX"
+      )
     );
-    await redisClient.incr(key(userId));
+    await withinLimit(redisClient.incr(key(userId)));
   } catch (err) {
     logger.warn({ err }, "Could not record a failed coupon attempt");
   }

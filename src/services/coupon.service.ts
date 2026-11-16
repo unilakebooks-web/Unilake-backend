@@ -151,18 +151,19 @@ async function assertCountriesExist(
 
 /** The customer and comics a coupon points at must exist. */
 async function assertReferencesExist(
+  db: Prisma.TransactionClient | typeof prisma,
   restrictedToUserId: string | null,
   comicIds: string[]
 ) {
   if (restrictedToUserId !== null) {
-    const user = await prisma.user.findUnique({
+    const user = await db.user.findUnique({
       where: { id: restrictedToUserId },
       select: { id: true },
     });
     if (!user) throw new ValidationError("The selected customer was not found");
   }
   if (comicIds.length > 0) {
-    const found = await prisma.comic.count({ where: { id: { in: comicIds } } });
+    const found = await db.comic.count({ where: { id: { in: comicIds } } });
     if (found !== new Set(comicIds).size) {
       throw new ValidationError("One or more selected comics were not found");
     }
@@ -222,7 +223,11 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
     showAtCheckout: data.showAtCheckout,
     firstOrderOnly: data.firstOrderOnly,
   });
-  await assertReferencesExist(data.restrictedToUserId ?? null, comicIds);
+  await assertReferencesExist(
+    prisma,
+    data.restrictedToUserId ?? null,
+    comicIds
+  );
   await assertCountriesExist(prisma, data.countryCodes);
   await assertCurrencyFitsCountries(
     prisma,
@@ -377,7 +382,7 @@ export async function updateCoupon(
         data.restrictedToUserId !== undefined ||
         data.comicIds !== undefined
       ) {
-        await assertReferencesExist(restrictedToUserId, comicIds);
+        await assertReferencesExist(tx, restrictedToUserId, comicIds);
       }
 
       if (data.countryCodes !== undefined) {

@@ -586,7 +586,7 @@ describe("redeemCouponInTx and releaseCouponInTx", () => {
     ).not.toBeNull();
   });
 
-  it("still redeems when the reservation had lapsed or been released: the customer already paid", async () => {
+  it("redeems a lapsed reservation (the customer already paid) but never a released one (the customer removed the coupon and paid full price)", async () => {
     const c = await createCoupon(make({ usageLimit: 1 }), ADMIN);
     const a = await makeUser("lapsed");
     const b = await makeUser("released-then-paid");
@@ -603,7 +603,7 @@ describe("redeemCouponInTx and releaseCouponInTx", () => {
     await prisma.$transaction((tx) => redeemCouponInTx(tx, oa.orderId));
     await prisma.$transaction((tx) => redeemCouponInTx(tx, ob.orderId));
     expect(await status(oa.orderId)).toBe("REDEEMED");
-    expect(await status(ob.orderId)).toBe("REDEEMED");
+    expect(await status(ob.orderId)).toBe("RELEASED");
   });
 
   it("does nothing for an order without a coupon, and is safe to repeat", async () => {
