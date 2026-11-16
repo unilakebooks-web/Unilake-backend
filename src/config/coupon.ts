@@ -11,12 +11,14 @@
 // coupons.code, so changing it here means changing the database as well.
 export const COUPON_CODE_PATTERN = /^[A-Z0-9-]{4,32}$/;
 
+// The length bounds in COUPON_CODE_PATTERN, for messages and range checks.
+export const COUPON_CODE_MIN = 4;
+export const COUPON_CODE_MAX = 32;
+
 // Alphabet for generated (single-use) codes. Leaves out 0, O, 1 and I so a code
 // read out loud or copied from a screenshot cannot be mistaken for another.
 export const GENERATED_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const GENERATED_CODE_LENGTH = 8;
-
-// Most single-use codes one bulk request may create.
 
 // ============================================================
 // RESERVATIONS

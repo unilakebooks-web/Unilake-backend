@@ -5,7 +5,25 @@ import {
   normalizeCouponCode,
   parseValidityInput,
 } from "../../src/utils/couponCode.js";
-import { GENERATED_CODE_ALPHABET } from "../../src/config/coupon.js";
+import {
+  COUPON_CODE_MAX,
+  COUPON_CODE_MIN,
+  COUPON_CODE_PATTERN,
+  GENERATED_CODE_ALPHABET,
+} from "../../src/config/coupon.js";
+
+describe("COUPON_CODE_PATTERN", () => {
+  it("accepts the minimum and maximum lengths and nothing outside them", () => {
+    expect(COUPON_CODE_PATTERN.test("A".repeat(COUPON_CODE_MIN))).toBe(true);
+    expect(COUPON_CODE_PATTERN.test("A".repeat(COUPON_CODE_MAX))).toBe(true);
+    expect(COUPON_CODE_PATTERN.test("A".repeat(COUPON_CODE_MIN - 1))).toBe(
+      false
+    );
+    expect(COUPON_CODE_PATTERN.test("A".repeat(COUPON_CODE_MAX + 1))).toBe(
+      false
+    );
+  });
+});
 
 describe("normalizeCouponCode", () => {
   it("trims and upper-cases", () => {

@@ -56,7 +56,7 @@ import { assertNotExpired } from "./session.service.js";
 type Db = Prisma.TransactionClient | typeof prisma;
 
 /** Refusal with the customer-facing message and a stable code the frontend can read. */
-export function couponError(reason: CouponRejection): AppError {
+function couponError(reason: CouponRejection): AppError {
   return new AppError(COUPON_MESSAGES[reason], 400, `COUPON_${reason}`);
 }
 
@@ -240,6 +240,11 @@ export async function priceCoupon(
   };
 }
 
+// A session can be priced (previewed, checked out) only in these two states.
+function isPriceableStatus(status: string) {
+  return status === "PREVIEW_READY" || status === "AWAITING_PAYMENT";
+}
+
 /**
  * The price list lookup `initiateCheckout` does (the country by ISO code, then
  * the pricing rule for the comic, country and cover type), repeated here so a
@@ -344,10 +349,7 @@ export async function previewCoupon(
   await assertNotExpired(session);
   assertSessionOwner(session, callerUserId);
 
-  if (
-    session.status !== "PREVIEW_READY" &&
-    session.status !== "AWAITING_PAYMENT"
-  ) {
+  if (!isPriceableStatus(session.status)) {
     throw new ConflictError(
       `Session must be ready for checkout. Current: ${session.status}`
     );
@@ -411,10 +413,12 @@ export async function listCouponOffers(
 
   assertSessionOwner(session, callerUserId);
 
+  // The expiry check is done inline rather than with assertNotExpired: that
+  // function writes to the session, and listing offers is a GET, which must
+  // never write.
   const now = new Date();
   if (
-    (session.status !== "PREVIEW_READY" &&
-      session.status !== "AWAITING_PAYMENT") ||
+    !isPriceableStatus(session.status) ||
     (session.status === "PREVIEW_READY" && session.expiresAt < now) ||
     !session.coverType ||
     !session.shippingCountry
@@ -423,9 +427,10 @@ export async function listCouponOffers(
   }
 
   // The same price as lookupListPrice, found with the candidates in one round
-  // trip; no active country or no price means no offers. A coupon for specific
-  // comics is only fetched when it names this one, so its comics need no
-  // further query.
+  // trip; no active country or no price means no offers. If the lookup in
+  // lookupListPrice changes, change this with it. A coupon for specific comics
+  // is only fetched when it names this one, so its comics need no further
+  // query.
   const [country, pricingRule, rows] = await Promise.all([
     prisma.country.findUnique({ where: { code: session.shippingCountry } }),
     prisma.pricingRule.findFirst({

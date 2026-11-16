@@ -1,8 +1,10 @@
+import { REPORTING_TIMEZONE, REPORTING_UTC_OFFSET } from "../config/stats.js";
+
 /**
- * Cross-field rules for a coupon, with no I/O. The same rules the CHECK
- * constraints in the coupons migration enforce, applied first so the admin gets
- * a clear message instead of a database error. Used for create (the input) and
- * for update (the stored coupon merged with the changes).
+ * Cross-field rules for a coupon, with no I/O. Mirrors the CHECK
+ * constraints in the coupons migration where one exists, applied first so the
+ * admin gets a clear message instead of a database error. Used for create (the
+ * input) and for update (the stored coupon merged with the changes).
  */
 
 export interface CouponShape {
@@ -114,8 +116,6 @@ export function couponShapeIssues(coupon: CouponShape): string[] {
   return issues;
 }
 
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-
 /**
  * Dates a coupon may not be given: a start before today (Indian time) or an end
  * that has already passed. Only dates being set or changed are checked, so an
@@ -131,17 +131,23 @@ export function pastDateIssues(
   const changed = (next: Date | null, before: Date | null | undefined) =>
     next !== null && next.getTime() !== (before?.getTime() ?? NaN);
 
-  if (changed(coupon.startsAt, previous?.startsAt)) {
-    const todayIst = new Date(now.getTime() + IST_OFFSET_MS)
-      .toISOString()
-      .slice(0, 10);
-    const startOfToday = new Date(`${todayIst}T00:00:00.000+05:30`);
-    if (coupon.startsAt!.getTime() < startOfToday.getTime()) {
+  const { startsAt, endsAt } = coupon;
+  if (startsAt !== null && changed(startsAt, previous?.startsAt)) {
+    const todayIst = new Intl.DateTimeFormat("en-CA", {
+      timeZone: REPORTING_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    const startOfToday = new Date(
+      `${todayIst}T00:00:00.000${REPORTING_UTC_OFFSET}`
+    );
+    if (startsAt.getTime() < startOfToday.getTime()) {
       issues.push("The start date cannot be before today.");
     }
   }
-  if (changed(coupon.endsAt, previous?.endsAt)) {
-    if (coupon.endsAt!.getTime() <= now.getTime()) {
+  if (endsAt !== null && changed(endsAt, previous?.endsAt)) {
+    if (endsAt.getTime() <= now.getTime()) {
       issues.push("The end date cannot be in the past.");
     }
   }

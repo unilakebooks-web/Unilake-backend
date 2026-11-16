@@ -573,7 +573,7 @@ enum CouponRedemptionStatus {
 model Coupon {
   id          String     @id @default(uuid())
   code        String     @unique // upper-case, 4 to 32 characters of A-Z, 0-9 and "-"
-  name        String // admin-chosen label; the checkout API returns it, the pages do not show it
+  name        String // admin-chosen label; shown to customers in the applied-coupon card and the offers list at checkout
   description String?    @db.Text
   kind        CouponKind @default(PUBLIC)
 

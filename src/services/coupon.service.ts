@@ -36,7 +36,7 @@ const COUPON_INCLUDE = {
 type CouponRow = Prisma.CouponGetPayload<{ include: typeof COUPON_INCLUDE }>;
 
 // How many times a generated code is retried when it collides with an existing
-// one. The code space is 32^8, so a collision is very rare.
+// one. The longer the code, the rarer a collision; the retries are a safety net.
 const CODE_ATTEMPTS = 5;
 
 type Usage = { redeemed: number; reserved: number };
@@ -327,11 +327,7 @@ export async function updateCoupon(
 
       // Switching to single-use sets the limit to 1 unless one was given.
       let usageLimit = pick(data.usageLimit, existing.usageLimit);
-      if (
-        kind === "SINGLE_USE" &&
-        data.kind === "SINGLE_USE" &&
-        data.usageLimit === undefined
-      ) {
+      if (data.kind === "SINGLE_USE" && data.usageLimit === undefined) {
         usageLimit = 1;
       }
 

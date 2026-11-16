@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COUPON_CODE_MAX, COUPON_CODE_MIN } from "../config/coupon.js";
 import {
   isValidCouponCode,
   normalizeCouponCode,
@@ -29,8 +30,7 @@ const couponCodeSchema = z
   .string()
   .transform(normalizeCouponCode)
   .refine(isValidCouponCode, {
-    message:
-      "Code must be 4 to 32 characters: letters, digits and hyphens only",
+    message: `Code must be ${COUPON_CODE_MIN} to ${COUPON_CODE_MAX} characters: letters, digits and hyphens only`,
   });
 
 const discountTypeEnum = z.enum(["PERCENT", "FIXED"], {
@@ -98,11 +98,19 @@ export const createCouponSchema = z.object({
   codeLength: z
     .number({ message: "Code length must be a number" })
     .int("Code length must be a whole number")
-    .min(4, "Code length must be at least 4")
-    .max(32, "Code length cannot be more than 32")
+    .min(COUPON_CODE_MIN, `Code length must be at least ${COUPON_CODE_MIN}`)
+    .max(COUPON_CODE_MAX, `Code length cannot be more than ${COUPON_CODE_MAX}`)
     .optional(),
-  name: z.string().trim().min(1, "Name is required").max(100),
-  description: z.string().trim().max(500).optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "Name can be at most 100 characters"),
+  description: z
+    .string()
+    .trim()
+    .max(500, "Description can be at most 500 characters")
+    .optional(),
   kind: kindEnum.default("PUBLIC"),
 
   discountType: discountTypeEnum,
@@ -133,8 +141,18 @@ export const createCouponSchema = z.object({
 export const updateCouponSchema = z
   .object({
     code: couponCodeSchema.optional(),
-    name: z.string().trim().min(1, "Name cannot be empty").max(100).optional(),
-    description: z.string().trim().max(500).nullable().optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1, "Name cannot be empty")
+      .max(100, "Name can be at most 100 characters")
+      .optional(),
+    description: z
+      .string()
+      .trim()
+      .max(500, "Description can be at most 500 characters")
+      .nullable()
+      .optional(),
     kind: kindEnum.optional(),
 
     discountType: discountTypeEnum.optional(),

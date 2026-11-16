@@ -10,6 +10,33 @@ import {
 const base = { name: "Festive offer", discountType: "PERCENT", percentOff: 20 };
 const UUID = "11111111-1111-4111-8111-111111111111";
 
+describe("coupon name and description limits", () => {
+  const messages = (result: {
+    success: boolean;
+    error?: { issues: { message: string }[] };
+  }) => result.error?.issues.map((i) => i.message) ?? [];
+
+  it("gives plain messages on create", () => {
+    expect(
+      messages(createCouponSchema.safeParse({ ...base, name: "n".repeat(101) }))
+    ).toContain("Name can be at most 100 characters");
+    expect(
+      messages(
+        createCouponSchema.safeParse({ ...base, description: "d".repeat(501) })
+      )
+    ).toContain("Description can be at most 500 characters");
+  });
+
+  it("gives plain messages on update", () => {
+    expect(
+      messages(updateCouponSchema.safeParse({ name: "n".repeat(101) }))
+    ).toContain("Name can be at most 100 characters");
+    expect(
+      messages(updateCouponSchema.safeParse({ description: "d".repeat(501) }))
+    ).toContain("Description can be at most 500 characters");
+  });
+});
+
 describe("createCouponSchema", () => {
   it("applies the defaults", () => {
     const parsed = createCouponSchema.parse(base);
