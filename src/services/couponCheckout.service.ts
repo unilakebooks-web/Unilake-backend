@@ -585,12 +585,13 @@ export async function repriceUnpaidOrder(args: {
   // Same code, lapsed reservation, and the amount did not move: just refresh the
   // reservation in place; the existing Razorpay order is still right.
   if (priced && requested === existing && finalAmount.equals(order.amount)) {
+    const pricedNow = priced; // a copy, so the callback below keeps the narrowed type
     const slot = await acquireSlot(`coupon:${priced.couponId}`);
     try {
       await prisma.$transaction(
         (tx) =>
           reserveCouponInTx(tx, {
-            priced: priced!,
+            priced: pricedNow,
             orderId: order.id,
             userId: callerUserId,
           }),
@@ -639,6 +640,7 @@ export async function repriceUnpaidOrder(args: {
         },
         data: {
           razorpayOrderId: razorpayOrder.id,
+          // Never null here: the update above matched on this id and an order in CREATED has one.
           supersededRazorpayOrderIds: { push: order.razorpayOrderId! },
           amount: finalAmount,
           listAmount: priced ? listPrice : null,
