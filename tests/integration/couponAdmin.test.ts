@@ -574,6 +574,95 @@ describe("listCoupons", () => {
   });
 });
 
+describe("a currency must fit the countries", () => {
+  // Throwaway countries, so these tests do not depend on what the database holds.
+  beforeAll(async () => {
+    for (const [code, currencyCode] of [
+      ["ZY", "ZYC"],
+      ["ZX", "ZXC"],
+    ] as const) {
+      await prisma.country.upsert({
+        where: { code },
+        update: { currencyCode, isActive: true },
+        create: { code, name: `${MARK} ${code}`, currencyCode, flagUrl: "x" },
+      });
+    }
+  });
+  afterAll(async () => {
+    await prisma.country.deleteMany({ where: { code: { in: ["ZY", "ZX"] } } });
+  });
+
+  const fixed = (overrides: Record<string, unknown>) =>
+    make({
+      discountType: "FIXED",
+      percentOff: undefined,
+      amountOff: 10,
+      currency: "ZYC",
+      ...overrides,
+    });
+
+  it("accepts a currency that a selected country uses, or that any country uses when none is selected", async () => {
+    await createCoupon(fixed({ countryCodes: ["ZY"] }), ADMIN);
+    await createCoupon(fixed({ countryCodes: ["ZY", "ZX"] }), ADMIN);
+    await createCoupon(fixed({ countryCodes: [] }), ADMIN);
+  });
+
+  it("refuses a currency that none of the selected countries uses", async () => {
+    await expect(
+      createCoupon(fixed({ countryCodes: ["ZX"] }), ADMIN)
+    ).rejects.toThrow(/None of the selected countries sells in ZYC/);
+  });
+
+  it("refuses a currency that no country uses, such as a made-up one", async () => {
+    await expect(
+      createCoupon(fixed({ currency: "QQQ" }), ADMIN)
+    ).rejects.toThrow(/No country sells in QQQ/);
+  });
+
+  it("does not count a country that is switched off", async () => {
+    await prisma.country.update({
+      where: { code: "ZX" },
+      data: { isActive: false },
+    });
+    await expect(
+      createCoupon(fixed({ currency: "ZXC", countryCodes: ["ZX"] }), ADMIN)
+    ).rejects.toBeInstanceOf(ValidationError);
+    await prisma.country.update({
+      where: { code: "ZX" },
+      data: { isActive: true },
+    });
+  });
+
+  it("checks again on edit when the currency or the countries change, but not for other edits", async () => {
+    const c = await createCoupon(fixed({ countryCodes: ["ZY"] }), ADMIN);
+    await expect(
+      updateCoupon(
+        c.id,
+        updateCouponSchema.parse({ countryCodes: ["ZX"] }),
+        ADMIN
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      updateCoupon(c.id, updateCouponSchema.parse({ currency: "QQQ" }), ADMIN)
+    ).rejects.toBeInstanceOf(ValidationError);
+    // an unrelated edit still works, and the coupon is unchanged by the refusals
+    const renamed = await updateCoupon(
+      c.id,
+      updateCouponSchema.parse({ name: `${MARK} renamed` }),
+      ADMIN
+    );
+    expect(renamed.countryCodes).toEqual(["ZY"]);
+    expect(renamed.currency).toBe("ZYC");
+  });
+
+  it("leaves a percentage coupon without a currency alone", async () => {
+    await createCoupon(
+      createCouponSchema.parse(make({ countryCodes: ["ZX"] })),
+      ADMIN
+    );
+  });
+});
+
 describe("code length", () => {
   it("makes a generated code of the length the admin chose", async () => {
     for (const codeLength of [4, 8, 12, 32]) {

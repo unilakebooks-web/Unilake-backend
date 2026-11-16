@@ -95,6 +95,34 @@ async function lockCoupon(tx: Prisma.TransactionClient, id: string) {
   if (rows.length === 0) throw new NotFoundError("Coupon not found");
 }
 
+/**
+ * A coupon in a currency must be able to apply somewhere: some country, among
+ * the selected ones (or any, when none are selected), has to sell in that
+ * currency. Otherwise every customer would be told it does not apply.
+ */
+async function assertCurrencyFitsCountries(
+  db: { country: typeof prisma.country },
+  currency: string | null,
+  countryCodes: string[]
+) {
+  if (currency === null) return;
+  const rows = await db.country.findMany({
+    where: { currencyCode: currency, isActive: true },
+    select: { code: true },
+  });
+  const usingIt = new Set(rows.map((row) => row.code));
+  const fits =
+    countryCodes.length === 0
+      ? usingIt.size > 0
+      : countryCodes.some((code) => usingIt.has(code));
+  if (fits) return;
+  throw new ValidationError(
+    countryCodes.length === 0
+      ? `No country sells in ${currency}, so this coupon could never apply. Choose a currency that one of your countries uses.`
+      : `None of the selected countries sells in ${currency}, so this coupon could never apply. Choose a country that uses it, or change the currency.`
+  );
+}
+
 /** The customer and comics a coupon points at must exist. */
 async function assertReferencesExist(
   restrictedToUserId: string | null,
@@ -160,6 +188,11 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
     comicCount: comicIds.length,
   });
   await assertReferencesExist(data.restrictedToUserId ?? null, comicIds);
+  await assertCurrencyFitsCountries(
+    prisma,
+    data.currency ?? null,
+    data.countryCodes
+  );
 
   // A code the admin typed that is taken is an error; a generated one is retried.
   const attempts = data.code === undefined ? CODE_ATTEMPTS : 1;
@@ -301,6 +334,14 @@ export async function updateCoupon(
         data.comicIds !== undefined
       ) {
         await assertReferencesExist(restrictedToUserId, comicIds);
+      }
+
+      if (data.currency !== undefined || data.countryCodes !== undefined) {
+        await assertCurrencyFitsCountries(
+          tx,
+          merged.currency,
+          pick(data.countryCodes, existing.countryCodes)
+        );
       }
 
       // A code that customers may already hold or have used is not renamed.
