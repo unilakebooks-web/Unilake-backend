@@ -11,6 +11,7 @@ import {
   createCoupon,
   deleteCoupon,
   searchCouponCustomers,
+  sweepExpiredCoupons,
   getCoupon,
   listCoupons,
   toggleCouponStatus,
@@ -660,6 +661,54 @@ describe("a currency must fit the countries", () => {
       createCouponSchema.parse(make({ countryCodes: ["ZX"] })),
       ADMIN
     );
+  });
+});
+
+describe("sweepExpiredCoupons", () => {
+  const pastEnd = new Date(Date.now() - 60 * 60 * 1000);
+
+  it("switches off an active coupon whose end date has passed, and leaves every other coupon alone", async () => {
+    // the service refuses past dates, so move the end date back after creating
+    const expired = await createCoupon(make(), ADMIN);
+    await prisma.coupon.update({
+      where: { id: expired.id },
+      data: { endsAt: pastEnd },
+    });
+    const future = await createCoupon(make({ endsAt: "2099-01-01" }), ADMIN);
+    const noEnd = await createCoupon(make(), ADMIN);
+    const alreadyOff = await createCoupon(make({ isActive: false }), ADMIN);
+    await prisma.coupon.update({
+      where: { id: alreadyOff.id },
+      data: { endsAt: pastEnd },
+    });
+
+    const count = await sweepExpiredCoupons();
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    const state = async (id: string) =>
+      (await prisma.coupon.findUniqueOrThrow({ where: { id } })).isActive;
+    expect(await state(expired.id)).toBe(false);
+    expect(await state(future.id)).toBe(true);
+    expect(await state(noEnd.id)).toBe(true);
+    expect(await state(alreadyOff.id)).toBe(false);
+  });
+
+  it("does nothing the second time, and an extended end date keeps the coupon on", async () => {
+    const c = await createCoupon(make(), ADMIN);
+    await prisma.coupon.update({
+      where: { id: c.id },
+      data: { endsAt: pastEnd },
+    });
+    await prisma.coupon.update({
+      where: { id: c.id },
+      data: { endsAt: new Date(Date.now() + 24 * 60 * 60 * 1000) },
+    });
+    await sweepExpiredCoupons();
+    expect(
+      (await prisma.coupon.findUniqueOrThrow({ where: { id: c.id } })).isActive
+    ).toBe(true);
+    const again = await sweepExpiredCoupons();
+    expect(again).toBe(0);
   });
 });
 

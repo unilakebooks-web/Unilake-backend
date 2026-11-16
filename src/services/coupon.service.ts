@@ -538,3 +538,28 @@ export async function searchCouponCustomers(search: string) {
     take: 10,
   });
 }
+
+// ============================================================
+// SWITCH OFF EXPIRED COUPONS
+// ============================================================
+
+/**
+ * Turns off every active coupon whose end date has passed, so the admin list
+ * shows it as off without anyone having to do it by hand. Run on a timer from
+ * jobs/workers/index.ts. Checkout does not depend on this: it compares the end
+ * date itself, so a coupon is refused the moment it expires even if this has
+ * not run yet. Safe to run twice or from two servers (the update only matches
+ * coupons that are still on and expired). If an admin extends the end date at
+ * the same moment, the database re-checks the condition after the admin's change
+ * and leaves the coupon alone.
+ *
+ * Returns how many coupons were switched off.
+ */
+export async function sweepExpiredCoupons(): Promise<number> {
+  const { count } = await prisma.coupon.updateMany({
+    where: { isActive: true, endsAt: { lt: new Date() } },
+    data: { isActive: false },
+  });
+  if (count > 0) logger.info({ count }, "Expired coupons switched off");
+  return count;
+}
