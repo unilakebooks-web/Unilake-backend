@@ -3,13 +3,16 @@ import { ZodError } from "zod";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/response.js";
 import { ValidationError } from "../utils/errors.js";
-import { listCouponsQuerySchema } from "../validators/coupon.schema.js";
+import {
+  listCouponsQuerySchema,
+  searchCustomersQuerySchema,
+} from "../validators/coupon.schema.js";
 import {
   createCoupon,
   deleteCoupon,
-  generateCoupons,
   getCoupon,
   listCoupons,
+  searchCouponCustomers,
   toggleCouponStatus,
   updateCoupon,
 } from "../services/coupon.service.js";
@@ -35,13 +38,6 @@ export const createCouponHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const coupon = await createCoupon(req.body, req.user!.id);
     sendSuccess(res, 201, coupon);
-  }
-);
-
-export const generateCouponsHandler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const coupons = await generateCoupons(req.body, req.user!.id);
-    sendSuccess(res, 201, coupons);
   }
 );
 
@@ -82,5 +78,13 @@ export const deleteCouponHandler = asyncHandler(
     const { id } = req.params;
     await deleteCoupon(id as string);
     res.status(204).send();
+  }
+);
+
+export const searchCouponCustomersHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { search } = parseQueryOrThrow(searchCustomersQuerySchema, req.query);
+    const customers = await searchCouponCustomers(search);
+    sendSuccess(res, 200, customers);
   }
 );

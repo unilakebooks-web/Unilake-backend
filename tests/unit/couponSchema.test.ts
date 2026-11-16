@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createCouponSchema,
-  generateCouponsSchema,
+  searchCustomersQuerySchema,
   listCouponsQuerySchema,
   updateCouponSchema,
 } from "../../src/validators/coupon.schema.js";
@@ -212,36 +212,36 @@ describe("updateCouponSchema", () => {
   });
 });
 
-describe("generateCouponsSchema", () => {
-  it("accepts a count from 1 to 100", () => {
-    expect(generateCouponsSchema.safeParse({ ...base, count: 1 }).success).toBe(
-      true
-    );
-    expect(
-      generateCouponsSchema.safeParse({ ...base, count: 100 }).success
-    ).toBe(true);
-  });
-
-  it("rejects a count of 0, above 100, or not a whole number", () => {
-    for (const count of [0, 101, 2.5, -3, "10"]) {
+describe("code length", () => {
+  it("accepts a length from 4 to 32 and leaves it out by default", () => {
+    expect(createCouponSchema.parse(base)).not.toHaveProperty("codeLength");
+    for (const codeLength of [4, 8, 32]) {
       expect(
-        generateCouponsSchema.safeParse({ ...base, count }).success,
-        String(count)
-      ).toBe(false);
+        createCouponSchema.safeParse({ ...base, codeLength }).success,
+        String(codeLength)
+      ).toBe(true);
     }
   });
 
-  it("ignores a code, a kind or a usage limit: the service fixes those", () => {
-    const parsed = generateCouponsSchema.parse({
-      ...base,
-      count: 3,
-      code: "SNEAKY-1",
-      kind: "PUBLIC",
-      usageLimit: 50,
-    });
-    expect(parsed).not.toHaveProperty("code");
-    expect(parsed).not.toHaveProperty("kind");
-    expect(parsed).not.toHaveProperty("usageLimit");
+  it("rejects a length below 4, above 32, or not a whole number", () => {
+    for (const codeLength of [0, 3, 33, 8.5, -1, "8"]) {
+      expect(
+        createCouponSchema.safeParse({ ...base, codeLength }).success,
+        String(codeLength)
+      ).toBe(false);
+    }
+  });
+});
+
+describe("searchCustomersQuerySchema", () => {
+  it("needs at least two characters and trims the text", () => {
+    expect(searchCustomersQuerySchema.safeParse({ search: "a" }).success).toBe(
+      false
+    );
+    expect(searchCustomersQuerySchema.safeParse({}).success).toBe(false);
+    expect(searchCustomersQuerySchema.parse({ search: "  ab " }).search).toBe(
+      "ab"
+    );
   });
 });
 

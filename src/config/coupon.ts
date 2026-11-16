@@ -17,7 +17,6 @@ export const GENERATED_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const GENERATED_CODE_LENGTH = 8;
 
 // Most single-use codes one bulk request may create.
-export const MAX_BULK_GENERATE = 100;
 
 // ============================================================
 // RESERVATIONS

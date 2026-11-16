@@ -5,13 +5,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import {
   createCouponSchema,
-  generateCouponsSchema,
   updateCouponSchema,
 } from "../../src/validators/coupon.schema.js";
 import {
   createCoupon,
   deleteCoupon,
-  generateCoupons,
+  searchCouponCustomers,
   getCoupon,
   listCoupons,
   toggleCouponStatus,
@@ -404,6 +403,28 @@ describe("updateCoupon", () => {
     ).rejects.toBeInstanceOf(ConflictError);
   });
 
+  it("does not let the total limit drop below the uses already counted", async () => {
+    const c = await createCoupon(make({ usageLimit: 10 }), ADMIN);
+    await redeem(c.id, "REDEEMED");
+    await redeem(c.id, "RESERVED");
+    await expect(
+      updateCoupon(c.id, updateCouponSchema.parse({ usageLimit: 1 }), ADMIN)
+    ).rejects.toBeInstanceOf(ValidationError);
+    // exactly the counted uses is fine, and so is removing the limit
+    const ok = await updateCoupon(
+      c.id,
+      updateCouponSchema.parse({ usageLimit: 2 }),
+      ADMIN
+    );
+    expect(ok.usageLimit).toBe(2);
+    const open = await updateCoupon(
+      c.id,
+      updateCouponSchema.parse({ usageLimit: null }),
+      ADMIN
+    );
+    expect(open.usageLimit).toBeNull();
+  });
+
   it("answers NotFound for an unknown coupon", async () => {
     await expect(
       updateCoupon("missing", updateCouponSchema.parse({ name: "x" }), ADMIN)
@@ -553,60 +574,52 @@ describe("listCoupons", () => {
   });
 });
 
-describe("generateCoupons", () => {
-  it("creates the requested number of unique single-use coupons sharing one set of rules", async () => {
-    const input = generateCouponsSchema.parse({
-      name: `${MARK} batch`,
-      discountType: "FIXED",
-      amountOff: 100,
-      currency: "INR",
-      count: 12,
-      endsAt: "2026-12-31",
-      restrictedToUserId: userId,
-    });
-    const created = await generateCoupons(input, ADMIN);
-    expect(created).toHaveLength(12);
-    expect(new Set(created.map((c) => c.code)).size).toBe(12);
-    for (const c of created) {
+describe("code length", () => {
+  it("makes a generated code of the length the admin chose", async () => {
+    for (const codeLength of [4, 8, 12, 32]) {
+      const c = await createCoupon(
+        createCouponSchema.parse({ ...make(), code: undefined, codeLength }),
+        ADMIN
+      );
+      expect(c.code).toHaveLength(codeLength);
       expect(isValidCouponCode(c.code)).toBe(true);
-      expect(c.kind).toBe("SINGLE_USE");
-      expect(c.usageLimit).toBe(1);
-      expect(c.amountOff?.toString()).toBe("100");
-      expect(c.restrictedToUser?.id).toBe(userId);
-      expect(c.endsAt?.toISOString()).toBe("2026-12-31T18:29:59.999Z");
     }
   });
 
-  it("refuses rules that do not fit together, creating nothing", async () => {
-    const before = await prisma.coupon.count({
-      where: { name: { startsWith: `${MARK} badbatch` } },
-    });
-    const input = generateCouponsSchema.parse({
-      name: `${MARK} badbatch`,
-      discountType: "FIXED",
-      amountOff: 100,
-      count: 3,
-    }); // no currency
-    await expect(generateCoupons(input, ADMIN)).rejects.toBeInstanceOf(
-      ValidationError
-    );
-    expect(
-      await prisma.coupon.count({
-        where: { name: { startsWith: `${MARK} badbatch` } },
-      })
-    ).toBe(before);
-  });
-
-  it("creates a single coupon for a count of 1", async () => {
-    const created = await generateCoupons(
-      generateCouponsSchema.parse({
-        name: `${MARK} one`,
-        discountType: "PERCENT",
-        percentOff: 5,
-        count: 1,
-      }),
+  it("uses the default length when none is given, and ignores the length for a typed code", async () => {
+    const generated = await createCoupon(
+      createCouponSchema.parse({ ...make(), code: undefined }),
       ADMIN
     );
-    expect(created).toHaveLength(1);
+    expect(generated.code).toHaveLength(8);
+    const typed = await createCoupon(
+      createCouponSchema.parse({ ...make(), code: code(), codeLength: 12 }),
+      ADMIN
+    );
+    expect(typed.code).toHaveLength(code().length);
+  });
+});
+
+describe("searchCouponCustomers", () => {
+  it("finds registered users who have never ordered, by name or email, in any case", async () => {
+    // the test user has no order at all
+    const byEmail = await searchCouponCustomers(
+      userId.toUpperCase().slice(0, 20)
+    );
+    expect(byEmail.map((u) => u.id)).toContain(userId);
+    const byName = await searchCouponCustomers("vitest customer");
+    expect(byName.map((u) => u.id)).toContain(userId);
+    expect(byName[0]).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        name: expect.any(String),
+        email: expect.any(String),
+      })
+    );
+  });
+
+  it("returns at most 10 and nothing for text that matches nobody", async () => {
+    expect((await searchCouponCustomers("vi")).length).toBeLessThanOrEqual(10);
+    expect(await searchCouponCustomers("zzzz-nobody-has-this-xyz")).toEqual([]);
   });
 });

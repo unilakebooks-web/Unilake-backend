@@ -239,10 +239,15 @@ describe("priceCoupon", () => {
   it("answers each reason with its own code", async () => {
     const day = 24 * 60 * 60 * 1000;
     const inactive = await createCoupon(make({ isActive: false }), ADMIN);
-    const expired = await createCoupon(
-      make({ startsAt: "2020-01-01", endsAt: "2020-01-31" }),
-      ADMIN
-    );
+    // The service refuses dates in the past, so move the dates back after creating it.
+    const expired = await createCoupon(make(), ADMIN);
+    await prisma.coupon.update({
+      where: { id: expired.id },
+      data: {
+        startsAt: new Date("2020-01-01T00:00:00.000+05:30"),
+        endsAt: new Date("2020-01-31T23:59:59.999+05:30"),
+      },
+    });
     const future = await createCoupon(make({ startsAt: "2099-01-01" }), ADMIN);
     const otherComic = await createCoupon(
       make({ allComics: false, comicIds: [OTHER_COMIC_ID] }),

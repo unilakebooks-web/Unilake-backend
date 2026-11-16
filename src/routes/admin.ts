@@ -229,15 +229,14 @@ import {
 import {
   createCouponHandler,
   deleteCouponHandler,
-  generateCouponsHandler,
   getAllCouponsHandler,
   getCouponHandler,
+  searchCouponCustomersHandler,
   toggleCouponStatusHandler,
   updateCouponHandler,
 } from "../controllers/coupon.controller.js";
 import {
   createCouponSchema,
-  generateCouponsSchema,
   updateCouponSchema,
 } from "../validators/coupon.schema.js";
 
@@ -614,16 +613,11 @@ router.patch(
 router.delete("/contact-enquiries/:id", deleteContactEnquiryHandler);
 
 // coupons
-// NOTE: POST /coupons/generate is a different path from POST /coupons, and the
-// :id routes use other methods or longer paths, so nothing here can shadow
-// another route.
+// NOTE: GET /coupons/customers must stay above GET /coupons/:id, or "customers"
+// would be read as a coupon id.
 router.get("/coupons", getAllCouponsHandler);
 router.post("/coupons", validateBody(createCouponSchema), createCouponHandler);
-router.post(
-  "/coupons/generate",
-  validateBody(generateCouponsSchema),
-  generateCouponsHandler
-);
+router.get("/coupons/customers", searchCouponCustomersHandler);
 router.get("/coupons/:id", getCouponHandler);
 router.patch(
   "/coupons/:id",

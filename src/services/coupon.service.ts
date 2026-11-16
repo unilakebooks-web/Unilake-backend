@@ -9,12 +9,11 @@ import {
   ValidationError,
 } from "../utils/errors.js";
 import { generateCouponCode } from "../utils/couponCode.js";
-import { couponShapeIssues } from "../utils/couponShape.js";
+import { couponShapeIssues, pastDateIssues } from "../utils/couponShape.js";
 import type { CouponShape } from "../utils/couponShape.js";
 import { reservationCutoff } from "../utils/couponPricing.js";
 import type {
   CreateCouponInput,
-  GenerateCouponsInput,
   ListCouponsQueryInput,
   UpdateCouponInput,
 } from "../validators/coupon.schema.js";
@@ -116,16 +115,22 @@ async function assertReferencesExist(
   }
 }
 
-function assertWellFormed(shape: CouponShape) {
-  const issues = couponShapeIssues(shape);
+function assertWellFormed(
+  shape: CouponShape,
+  previous?: { startsAt: Date | null; endsAt: Date | null }
+) {
+  const issues = [
+    ...couponShapeIssues(shape),
+    ...pastDateIssues(shape, new Date(), previous),
+  ];
   if (issues.length > 0) throw new ValidationError(issues.join(" "));
 }
 
 const duplicateCodeError = () =>
   new ConflictError("A coupon with this code already exists");
 
-function randomCode() {
-  return generateCouponCode((max) => randomInt(max));
+function randomCode(length?: number) {
+  return generateCouponCode((max) => randomInt(max), length);
 }
 
 // ============================================================
@@ -163,7 +168,7 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
     try {
       const row = await prisma.coupon.create({
         data: {
-          code: data.code ?? randomCode(),
+          code: data.code ?? randomCode(data.codeLength),
           name: data.name,
           description: data.description ?? null,
           kind: data.kind,
@@ -200,96 +205,6 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
 
   // Unreachable: the loop either returns or throws.
   throw duplicateCodeError();
-}
-
-// ============================================================
-// BULK GENERATE SINGLE-USE CODES
-// ============================================================
-
-export async function generateCoupons(
-  data: GenerateCouponsInput,
-  adminId: string
-) {
-  const { count, ...shared } = data;
-  const allComics = shared.allComics;
-  const comicIds = allComics ? [] : [...new Set(shared.comicIds)];
-
-  assertWellFormed({
-    kind: "SINGLE_USE",
-    discountType: shared.discountType,
-    percentOff: shared.percentOff ?? null,
-    amountOff: shared.amountOff ?? null,
-    maxDiscount: shared.maxDiscount ?? null,
-    currency: shared.currency ?? null,
-    startsAt: shared.startsAt ?? null,
-    endsAt: shared.endsAt ?? null,
-    usageLimit: 1,
-    perCustomerLimit: shared.perCustomerLimit ?? null,
-    allComics,
-    comicCount: comicIds.length,
-  });
-  await assertReferencesExist(shared.restrictedToUserId ?? null, comicIds);
-
-  // Codes unique within this batch and not already in use. Each round draws
-  // what is still missing and drops any that exist; one round is the norm.
-  const codes = new Set<string>();
-  while (codes.size < count) {
-    const candidates = new Set<string>();
-    while (codes.size + candidates.size < count) candidates.add(randomCode());
-    const taken = await prisma.coupon.findMany({
-      where: { code: { in: [...candidates] } },
-      select: { code: true },
-    });
-    const takenCodes = new Set(taken.map((t) => t.code));
-    for (const code of candidates) if (!takenCodes.has(code)) codes.add(code);
-  }
-
-  try {
-    const rows = await prisma.$transaction(
-      [...codes].map((code) =>
-        prisma.coupon.create({
-          data: {
-            code,
-            name: shared.name,
-            description: shared.description ?? null,
-            kind: "SINGLE_USE",
-            discountType: shared.discountType,
-            percentOff: toDecimal(shared.percentOff),
-            amountOff: toDecimal(shared.amountOff),
-            maxDiscount: toDecimal(shared.maxDiscount),
-            currency: shared.currency ?? null,
-            startsAt: shared.startsAt ?? null,
-            endsAt: shared.endsAt ?? null,
-            usageLimit: 1,
-            perCustomerLimit: shared.perCustomerLimit ?? null,
-            restrictedToUserId: shared.restrictedToUserId ?? null,
-            allComics,
-            comics: { create: comicIds.map((comicId) => ({ comicId })) },
-            countryCodes: shared.countryCodes,
-            coverTypes: shared.coverTypes as CoverType[],
-            combinable: shared.combinable,
-            isActive: shared.isActive,
-            createdById: adminId,
-            updatedById: adminId,
-          },
-          include: COUPON_INCLUDE,
-        })
-      )
-    );
-
-    logger.info({ count: rows.length }, "Single-use coupons generated");
-    return rows.map((row) =>
-      toCouponResponse(row, { redeemed: 0, reserved: 0 })
-    );
-  } catch (error: any) {
-    // All-or-nothing: a rare collision with a code created a moment ago.
-    if (error.code === "P2002") {
-      throw new ConflictError(
-        "Some generated codes were already taken. Please try again"
-      );
-    }
-    throw error;
-  }
 }
 
 // ============================================================
@@ -375,7 +290,7 @@ export async function updateCoupon(
         allComics,
         comicCount: comicIds.length,
       };
-      assertWellFormed(merged);
+      assertWellFormed(merged, existing);
 
       const restrictedToUserId = pick(
         data.restrictedToUserId,
@@ -396,6 +311,28 @@ export async function updateCoupon(
         if (used > 0) {
           throw new ConflictError(
             "The code of a coupon that has been used cannot be changed. Create a new coupon instead"
+          );
+        }
+      }
+
+      // The total limit cannot be set below the uses already counted: redeemed ones
+      // and reservations still inside the window.
+      if (data.usageLimit !== undefined && merged.usageLimit !== null) {
+        const counted = await tx.couponRedemption.count({
+          where: {
+            couponId: id,
+            OR: [
+              { status: "REDEEMED" },
+              {
+                status: "RESERVED",
+                createdAt: { gt: reservationCutoff(new Date()) },
+              },
+            ],
+          },
+        });
+        if (merged.usageLimit < counted) {
+          throw new ValidationError(
+            `This coupon has already been used or reserved ${counted} times, so the total limit cannot be lower than ${counted}.`
           );
         }
       }
@@ -536,4 +473,27 @@ export async function listCoupons(filters: ListCouponsQueryInput) {
       totalPages: Math.ceil(total / filters.pageSize),
     },
   };
+}
+
+// ============================================================
+// FIND A CUSTOMER FOR A CUSTOMER-ONLY COUPON
+// ============================================================
+
+/**
+ * Registered users matching a name or email, for choosing who a coupon is
+ * reserved for. Searches every account, not only customers who have paid: a
+ * coupon is often a welcome offer for someone who has not ordered yet.
+ */
+export async function searchCouponCustomers(search: string) {
+  return prisma.user.findMany({
+    where: {
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: "asc" },
+    take: 10,
+  });
 }

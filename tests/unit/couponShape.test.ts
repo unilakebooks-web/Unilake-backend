@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   couponShapeIssues,
+  pastDateIssues,
   type CouponShape,
 } from "../../src/utils/couponShape.js";
 
@@ -162,5 +163,84 @@ describe("couponShapeIssues", () => {
       })
     );
     expect(issues.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("pastDateIssues", () => {
+  // 12:00 IST on 16 Nov 2026
+  const now = new Date("2026-11-16T06:30:00.000Z");
+  const at = (iso: string) => new Date(iso);
+
+  it("accepts a start today (from midnight IST) and an end later today", () => {
+    expect(
+      pastDateIssues(
+        {
+          startsAt: at("2026-11-15T18:30:00.000Z"), // 00:00 IST 16 Nov
+          endsAt: at("2026-11-16T18:29:59.999Z"), // 23:59:59 IST 16 Nov
+        },
+        now
+      )
+    ).toEqual([]);
+  });
+
+  it("refuses a start on an earlier day, by one millisecond", () => {
+    expect(
+      pastDateIssues(
+        { startsAt: at("2026-11-15T18:29:59.999Z"), endsAt: null },
+        now
+      )
+    ).toEqual(["The start date cannot be before today."]);
+  });
+
+  it("refuses an end that has already passed, and an end exactly now", () => {
+    expect(
+      pastDateIssues(
+        { startsAt: null, endsAt: at("2026-11-16T06:29:59.000Z") },
+        now
+      )
+    ).toEqual(["The end date cannot be in the past."]);
+    expect(pastDateIssues({ startsAt: null, endsAt: now }, now)).toEqual([
+      "The end date cannot be in the past.",
+    ]);
+  });
+
+  it("allows no dates at all", () => {
+    expect(pastDateIssues({ startsAt: null, endsAt: null }, now)).toEqual([]);
+  });
+
+  it("uses the Indian date, not the UTC date, around midnight", () => {
+    // 00:30 IST on 17 Nov is still 16 Nov in UTC
+    const lateNow = new Date("2026-11-16T19:00:00.000Z");
+    expect(
+      pastDateIssues(
+        { startsAt: at("2026-11-16T18:30:00.000Z"), endsAt: null },
+        lateNow
+      )
+    ).toEqual([]); // 00:00 IST 17 Nov = today in India
+    expect(
+      pastDateIssues(
+        { startsAt: at("2026-11-15T18:30:00.000Z"), endsAt: null },
+        lateNow
+      )
+    ).toEqual(["The start date cannot be before today."]); // 16 Nov IST is yesterday
+  });
+
+  it("on edit, leaves dates alone that did not change, even if they are in the past", () => {
+    const stored = {
+      startsAt: at("2026-01-01T00:00:00.000Z"),
+      endsAt: at("2026-11-10T00:00:00.000Z"),
+    };
+    expect(pastDateIssues({ ...stored }, now, stored)).toEqual([]);
+  });
+
+  it("on edit, checks a date that was changed", () => {
+    const stored = { startsAt: at("2026-01-01T00:00:00.000Z"), endsAt: null };
+    expect(
+      pastDateIssues(
+        { startsAt: at("2026-02-01T00:00:00.000Z"), endsAt: null },
+        now,
+        stored
+      )
+    ).toEqual(["The start date cannot be before today."]);
   });
 });

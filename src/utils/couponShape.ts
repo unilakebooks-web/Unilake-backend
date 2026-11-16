@@ -90,3 +90,37 @@ export function couponShapeIssues(coupon: CouponShape): string[] {
 
   return issues;
 }
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/**
+ * Dates a coupon may not be given: a start before today (Indian time) or an end
+ * that has already passed. Only dates being set or changed are checked, so an
+ * already-running coupon can still be edited (its old start date is in the past).
+ * `previous` holds the stored dates when editing; leave it out on create.
+ */
+export function pastDateIssues(
+  coupon: { startsAt: Date | null; endsAt: Date | null },
+  now: Date,
+  previous?: { startsAt: Date | null; endsAt: Date | null }
+): string[] {
+  const issues: string[] = [];
+  const changed = (next: Date | null, before: Date | null | undefined) =>
+    next !== null && next.getTime() !== (before?.getTime() ?? NaN);
+
+  if (changed(coupon.startsAt, previous?.startsAt)) {
+    const todayIst = new Date(now.getTime() + IST_OFFSET_MS)
+      .toISOString()
+      .slice(0, 10);
+    const startOfToday = new Date(`${todayIst}T00:00:00.000+05:30`);
+    if (coupon.startsAt!.getTime() < startOfToday.getTime()) {
+      issues.push("The start date cannot be before today.");
+    }
+  }
+  if (changed(coupon.endsAt, previous?.endsAt)) {
+    if (coupon.endsAt!.getTime() <= now.getTime()) {
+      issues.push("The end date cannot be in the past.");
+    }
+  }
+  return issues;
+}

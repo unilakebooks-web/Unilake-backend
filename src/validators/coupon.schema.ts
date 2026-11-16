@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { MAX_BULK_GENERATE } from "../config/coupon.js";
 import {
   isValidCouponCode,
   normalizeCouponCode,
@@ -81,6 +80,13 @@ const limitSchema = z
 export const createCouponSchema = z.object({
   // Leave the code out to have one generated.
   code: couponCodeSchema.optional(),
+  // How long a generated code is (used only when no code is given).
+  codeLength: z
+    .number({ message: "Code length must be a number" })
+    .int("Code length must be a whole number")
+    .min(4, "Code length must be at least 4")
+    .max(32, "Code length cannot be more than 32")
+    .optional(),
   name: z.string().trim().min(1, "Name is required").max(100),
   description: z.string().trim().max(500).optional(),
   kind: kindEnum.default("PUBLIC"),
@@ -142,18 +148,6 @@ export const updateCouponSchema = z
     message: "At least one field must be provided to update",
   });
 
-// Bulk creation of single-use codes: the same rules for every code, a count in
-// place of a code, and the kind and usage limit fixed by the service.
-export const generateCouponsSchema = createCouponSchema
-  .omit({ code: true, kind: true, usageLimit: true })
-  .extend({
-    count: z
-      .number({ message: "count must be a number" })
-      .int("count must be a whole number")
-      .min(1, "count must be at least 1")
-      .max(MAX_BULK_GENERATE, `count cannot be more than ${MAX_BULK_GENERATE}`),
-  });
-
 // Query schema — parsed in the controller, there is no validateQuery middleware.
 export const listCouponsQuerySchema = z.object({
   // Query strings arrive as strings; coerce to number and default.
@@ -166,5 +160,9 @@ export const listCouponsQuerySchema = z.object({
 
 export type CreateCouponInput = z.infer<typeof createCouponSchema>;
 export type UpdateCouponInput = z.infer<typeof updateCouponSchema>;
-export type GenerateCouponsInput = z.infer<typeof generateCouponsSchema>;
 export type ListCouponsQueryInput = z.infer<typeof listCouponsQuerySchema>;
+
+// Query of the customer search used when a coupon is reserved for one customer.
+export const searchCustomersQuerySchema = z.object({
+  search: z.string().trim().min(2, "Type at least 2 characters"),
+});
