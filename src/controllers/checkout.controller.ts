@@ -1,9 +1,14 @@
 import type { Request, Response } from "express";
+import { fromNodeHeaders } from "better-auth/node";
+import { auth } from "../lib/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationError } from "../utils/errors.js";
 import { sendSuccess } from "../utils/response.js";
 import { initiateCheckout } from "../services/checkout.service.js";
-import { checkoutParamsSchema } from "../validators/checkout.schema.js";
+import {
+  checkoutBodySchema,
+  checkoutParamsSchema,
+} from "../validators/checkout.schema.js";
 
 export const initiateCheckoutHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -14,7 +19,29 @@ export const initiateCheckoutHandler = asyncHandler(
       throw new ValidationError(firstIssue?.message ?? "Invalid checkout params");
     }
 
-    const result = await initiateCheckout(parsed.data.sessionId);
+    // The body is optional; a checkout with no body behaves exactly as before.
+    const body = checkoutBodySchema.safeParse(req.body ?? {});
+    if (!body.success) {
+      const firstIssue = body.error.issues[0];
+      throw new ValidationError(firstIssue?.message ?? "Invalid checkout body");
+    }
+
+    // Checkout itself does not require a login (the session's owner was set
+    // earlier), but changing a coupon does, so read the caller if there is one.
+    let callerUserId: string | undefined;
+    try {
+      const sessionData = await auth.api.getSession({
+        headers: fromNodeHeaders(req.headers),
+      });
+      if (sessionData?.user) callerUserId = sessionData.user.id;
+    } catch {
+      // No valid session: the caller stays anonymous.
+    }
+
+    const result = await initiateCheckout(parsed.data.sessionId, {
+      couponCode: body.data.couponCode,
+      callerUserId,
+    });
 
     sendSuccess(res, 200, result, "Checkout initiated");
   }

@@ -7,6 +7,10 @@ import { config } from "../config/env.js";
 import { processShiprocketStatusUpdate } from "./shiprocket.service.js";
 import { notifyPaymentReceived } from "./notification.service.js";
 import { assignBillNumber } from "./billOfSupply.service.js";
+import {
+  findOrderBySupersededRazorpayOrderId,
+  redeemCouponInTx,
+} from "./couponCheckout.service.js";
 
 /**
  * Handle an incoming Razorpay webhook.
@@ -145,6 +149,22 @@ async function handlePaymentCaptured(
   });
 
   if (!order) {
+    // A customer who changed or removed a coupon after starting checkout got a
+    // new Razorpay order; a payment on the replaced one is not an unknown order.
+    const superseded = await findOrderBySupersededRazorpayOrderId(razorpayOrderId);
+    if (superseded) {
+      logger.error(
+        {
+          razorpayOrderId,
+          razorpayPaymentId,
+          orderId: superseded.id,
+          currentRazorpayOrderId: superseded.razorpayOrderId,
+        },
+        "payment.captured on a SUPERSEDED Razorpay order — the customer paid an earlier amount, admin follow-up needed"
+      );
+      return;
+    }
+
     logger.error(
       { razorpayOrderId, razorpayPaymentId },
       "payment.captured: no local Order found for Razorpay order — orphan payment, admin follow-up needed"
@@ -191,6 +211,12 @@ async function handlePaymentCaptured(
     // second number. In this transaction so a rollback takes none.
     if (orderFlipped === 1 && order.currency === "INR") {
       await assignBillNumber(tx, order.id, new Date());
+    }
+
+    // A coupon reserved for this order becomes redeemed with the payment, in the
+    // same transaction. Orders without a coupon do nothing here.
+    if (orderFlipped === 1) {
+      await redeemCouponInTx(tx, order.id);
     }
 
     await tx.orderSession.updateMany({

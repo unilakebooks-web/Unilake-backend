@@ -27,6 +27,7 @@ import {
 import { pdfCompilationQueue } from "../jobs/queues.js";
 import type { SendToPrintInput } from "../validators/sendToPrint.schema.js";
 import { notifySentToPrint } from "./notification.service.js";
+import { couponSummary } from "../utils/couponSummary.js";
 import {
   buildAttachmentContentDisposition,
   buildPdfDownloadFilename,
@@ -372,6 +373,18 @@ export const getOrderSessionId = async (sessionId: string) => {
           coverThumbnailUrls: true,
         },
       },
+      // Only what the coupon summary needs, so a returning customer sees the
+      // coupon applied to their unpaid order.
+      order: {
+        select: {
+          couponCode: true,
+          discountAmount: true,
+          listAmount: true,
+          amount: true,
+          currency: true,
+          couponRedemption: { select: { coupon: { select: { name: true } } } },
+        },
+      },
     },
   });
 
@@ -488,6 +501,7 @@ export const getOrderSessionId = async (sessionId: string) => {
     isExpired,
     comic: session.comic,
     pages,
+    coupon: couponSummary(session.order),
   };
 };
 

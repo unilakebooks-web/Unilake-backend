@@ -33,6 +33,16 @@ export const MAX_BULK_GENERATE = 100;
 // therefore be exceeded by the few who pay late.
 export const RESERVATION_WINDOW_MINUTES = 60;
 
+// Options for the one transaction that reserves a coupon use. Waiting on the
+// coupon's row lock can take a few seconds when many customers use the same
+// coupon at once (about 0.35 s each from India to Neon), and Prisma's defaults
+// (2 s to start, 5 s to finish) failed 4 of 20 in a burst. Only this
+// transaction gets the longer limits.
+export const COUPON_TRANSACTION_OPTIONS = {
+  maxWait: 15000,
+  timeout: 30000,
+} as const;
+
 // ============================================================
 // PAYMENT MINIMUM
 // ============================================================
