@@ -53,6 +53,7 @@ export const COUPON_TRANSACTION_OPTIONS = {
 // 1.00 (100 paise) and 1.00 was accepted for INR, USD, EUR, GBP, AED and SGD.
 // Zero-decimal and three-decimal currencies are not verified; 1 major unit is a
 // deliberately safe floor for them too.
+// ⚠️ also in unilake-frontend/components/checkout/couponOffers.ts (PAYMENT_MINIMUM)
 export const MIN_PAYABLE_MAJOR_UNITS = 1;
 
 // ============================================================

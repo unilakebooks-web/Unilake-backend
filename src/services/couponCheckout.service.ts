@@ -56,6 +56,7 @@ import { REVENUE_STATUSES } from "../config/stats.js";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
+// ⚠️ The COUPON_ codes below are also listed in unilake-frontend/components/checkout/couponErrors.ts
 /** Refusal with the customer-facing message and a stable code the frontend can read. */
 function couponError(reason: CouponRejection): AppError {
   return new AppError(COUPON_MESSAGES[reason], 400, `COUPON_${reason}`);

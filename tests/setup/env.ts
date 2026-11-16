@@ -1,6 +1,6 @@
 // Must be the FIRST import of every integration test.
 //
-// Loads .env.test (git-ignored; built by the local setup script) and refuses to
+// Loads .env.test (git-ignored; create it by hand, see README "Quality checks") and refuses to
 // continue unless it points at the dedicated test database. Imports run in
 // order, so this finishes before any test imports the app (which reads the
 // environment the moment it loads).
