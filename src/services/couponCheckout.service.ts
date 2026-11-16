@@ -783,7 +783,23 @@ export async function repriceUnpaidOrder(args: {
 
   assertSessionOwner(session, callerUserId);
 
-  const { listPrice, currency } = await lookupListPrice(session);
+  let live;
+  try {
+    live = await lookupListPrice(session);
+  } catch (error) {
+    // Resuming with the code the order already carries: if the country was
+    // switched off or the price removed since the order was made, the order
+    // is still payable as it is, exactly as before coupons existed.
+    if (
+      requested !== null &&
+      requested === existing &&
+      (error instanceof NotFoundError || error instanceof ValidationError)
+    ) {
+      return null;
+    }
+    throw error;
+  }
+  const { listPrice, currency } = live;
 
   let priced: PricedCoupon | null = null;
   if (requested !== null) {

@@ -327,6 +327,31 @@ describe("payment safety around coupon changes", () => {
     ).rejects.toMatchObject({ statusCode: 401 });
   });
 
+  it("still resumes the order with its own code when the country was switched off since", async () => {
+    const { c, u, order, session } = await orderWithCoupon(
+      "resume-no-price",
+      new Date(Date.now() - 3 * 60 * 60 * 1000)
+    );
+    const gone = { ...session, shippingCountry: "ZZ" };
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session: gone,
+        couponCode: c.code,
+        callerUserId: u,
+      })
+    ).resolves.toBeNull();
+    // Removing the coupon needs a live price for the new full-price order, so it still fails.
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session: gone,
+        couponCode: null,
+        callerUserId: u,
+      })
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
   it("refuses to refresh a reservation when the order moved to another Razorpay order meanwhile", async () => {
     const { c, u, orderId, order, session } = await orderWithCoupon(
       "refresh-swapped",
