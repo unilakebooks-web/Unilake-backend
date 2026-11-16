@@ -14,7 +14,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "test": "vitest run",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
     "postinstall": "patch-package"
   },
   "dependencies": {

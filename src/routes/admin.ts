@@ -226,6 +226,20 @@ import {
   exportAdminCustomersHandler,
   listAdminCustomersHandler,
 } from "../controllers/customer.controller.js";
+import {
+  createCouponHandler,
+  deleteCouponHandler,
+  generateCouponsHandler,
+  getAllCouponsHandler,
+  getCouponHandler,
+  toggleCouponStatusHandler,
+  updateCouponHandler,
+} from "../controllers/coupon.controller.js";
+import {
+  createCouponSchema,
+  generateCouponsSchema,
+  updateCouponSchema,
+} from "../validators/coupon.schema.js";
 
 const router = Router();
 
@@ -598,6 +612,26 @@ router.patch(
   updateContactEnquiryStatusHandler
 );
 router.delete("/contact-enquiries/:id", deleteContactEnquiryHandler);
+
+// coupons
+// NOTE: POST /coupons/generate is a different path from POST /coupons, and the
+// :id routes use other methods or longer paths, so nothing here can shadow
+// another route.
+router.get("/coupons", getAllCouponsHandler);
+router.post("/coupons", validateBody(createCouponSchema), createCouponHandler);
+router.post(
+  "/coupons/generate",
+  validateBody(generateCouponsSchema),
+  generateCouponsHandler
+);
+router.get("/coupons/:id", getCouponHandler);
+router.patch(
+  "/coupons/:id",
+  validateBody(updateCouponSchema),
+  updateCouponHandler
+);
+router.patch("/coupons/:id/status", toggleCouponStatusHandler);
+router.delete("/coupons/:id", deleteCouponHandler);
 
 
 export default router;
