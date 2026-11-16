@@ -458,6 +458,23 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     }
   }
 
+  // Payments received per order, in ONE query for the page. An order that is
+  // still unpaid with a payment on it, or any order with two, needs someone to
+  // check Razorpay (the customer paid on a payment that coupon changes replaced).
+  const paymentCounts = orders.length
+    ? await prisma.webhookEvent.groupBy({
+        by: ["orderId"],
+        where: {
+          orderId: { in: orders.map((o) => o.id) },
+          eventType: "payment.captured",
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const paymentsByOrder = new Map(
+    paymentCounts.map((row) => [row.orderId, row._count._all])
+  );
+
   const rows = orders.map((o) => ({
     id: o.id,
     createdAt: o.createdAt,
@@ -466,6 +483,9 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     customerPhone: o.shippingPhone,
     amount: o.amount.toString(),
     couponCode: o.couponCode,
+    needsPaymentCheck:
+      ((paymentsByOrder.get(o.id) ?? 0) >= 1 && o.status === "CREATED") ||
+      (paymentsByOrder.get(o.id) ?? 0) >= 2,
     currency: o.currency,
     status: o.status,
     trackingStatus: o.trackingStatus,

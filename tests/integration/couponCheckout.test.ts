@@ -11,6 +11,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { createHmac } from "node:crypto";
 import { Prisma } from "../../src/generated/prisma/client.js";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { prisma } from "../../src/lib/prisma.js";
@@ -44,6 +45,9 @@ import {
   FAILED_COUPON_ATTEMPT_WINDOW_SECONDS,
 } from "../../src/config/coupon.js";
 import { recordFailedCouponAttempt } from "../../src/utils/attemptLimiter.js";
+import { config } from "../../src/config/env.js";
+import { handleRazorpayWebhook } from "../../src/services/webhook.service.js";
+import { listAdminOrders } from "../../src/services/order.service.js";
 import { acquireSlot } from "../../src/utils/keyedQueue.js";
 import { AppError } from "../../src/utils/errors.js";
 import { REVENUE_STATUSES } from "../../src/config/stats.js";
@@ -275,6 +279,170 @@ describe("repriceUnpaidOrder, refreshing a lapsed reservation", () => {
   });
 });
 
+describe("payment safety around coupon changes", () => {
+  /** An unpaid order carrying a coupon with a fresh or lapsed reservation. */
+  async function orderWithCoupon(label: string, reservedAt: Date) {
+    const c = await createCoupon(make({ usageLimit: 5 }), ADMIN);
+    const u = await makeUser(label);
+    const { sessionId, orderId } = await makeOrder(u);
+    const priced = await price(u, c.code);
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        amount: priced.finalAmount,
+        couponCode: priced.code,
+        razorpayOrderId: `order_${MARK}_${orderId.slice(0, 8)}`,
+      },
+    });
+    await redemption(c.id, u, orderId, "RESERVED", reservedAt);
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+    });
+    const session = await prisma.orderSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    return { c, u, orderId, order, session };
+  }
+
+  it("lets a customer resume with the code already on the order without being logged in, but not change it", async () => {
+    const { c, order, session } = await orderWithCoupon(
+      "resume-anon",
+      new Date()
+    );
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session,
+        couponCode: c.code,
+        callerUserId: undefined,
+      })
+    ).resolves.toBeNull();
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session,
+        couponCode: "OTHER-CODE",
+        callerUserId: undefined,
+      })
+    ).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it("refuses to refresh a reservation when the order moved to another Razorpay order meanwhile", async () => {
+    const { c, u, orderId, order, session } = await orderWithCoupon(
+      "refresh-swapped",
+      new Date(Date.now() - 3 * 60 * 60 * 1000)
+    );
+    // Another tab changed the coupon after this request read the order.
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { razorpayOrderId: `order_${MARK}_swapped_${orderId.slice(0, 8)}` },
+    });
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session,
+        couponCode: c.code,
+        callerUserId: u,
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
+    const row = await prisma.couponRedemption.findUniqueOrThrow({
+      where: { orderId },
+    });
+    expect(Date.now() - row.createdAt.getTime()).toBeGreaterThan(
+      60 * 60 * 1000
+    );
+  });
+
+  it("removes the stored webhook event when the payment transaction fails, so the retry is processed", async () => {
+    const u = await makeUser("wh-fail");
+    const { orderId } = await makeOrder(u);
+    const rzp = `order_${MARK}_wh_${orderId.slice(0, 8)}`;
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { razorpayOrderId: rzp },
+    });
+    const body = JSON.stringify({
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_${MARK}_1`,
+            order_id: rzp,
+            amount: 99900,
+            currency: "INR",
+            status: "captured",
+          },
+        },
+      },
+    });
+    const signature = createHmac(
+      "sha256",
+      config.razorpay.razorpayWebhookSecret
+    )
+      .update(body)
+      .digest("hex");
+    const eventId = `evt_${MARK}_${orderId.slice(0, 8)}`;
+    // Make the one payment transaction fail, then put the real method back.
+    const client = prisma as unknown as { $transaction: unknown };
+    const realTransaction = client.$transaction;
+    client.$transaction = () => Promise.reject(new Error("database timeout"));
+    try {
+      await expect(
+        handleRazorpayWebhook(Buffer.from(body), signature, eventId)
+      ).rejects.toThrow("database timeout");
+    } finally {
+      client.$transaction = realTransaction;
+    }
+    expect(
+      await prisma.webhookEvent.findUnique({ where: { eventId } })
+    ).toBeNull();
+    expect(
+      (await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status
+    ).toBe("CREATED");
+  });
+
+  it("flags an unpaid order that received a payment, and a paid order that received two", async () => {
+    const u = await makeUser("flag");
+    const unpaid = await makeOrder(u);
+    const quiet = await makeOrder(u);
+    const twice = await makeOrderWithStatus(u, "PAID");
+    const event = (orderId: string, n: number) =>
+      prisma.webhookEvent.create({
+        data: {
+          orderId,
+          source: "razorpay",
+          eventId: `evt_${MARK}_flag_${n}_${orderId.slice(0, 8)}`,
+          eventType: "payment.captured",
+          payloadJson: {},
+        },
+      });
+    await event(unpaid.orderId, 1);
+    await event(twice.orderId, 2);
+    await event(twice.orderId, 3);
+    const { orders } = await listAdminOrders({
+      page: 1,
+      pageSize: 50,
+      sortBy: "createdAt",
+      sortOrder: "desc",
+      search: unpaid.orderId.slice(0, 8),
+    } as never);
+    const flag = async (orderId: string) => {
+      const res = await listAdminOrders({
+        page: 1,
+        pageSize: 50,
+        sortBy: "createdAt",
+        sortOrder: "desc",
+        search: orderId,
+      } as never);
+      return res.orders.find((o) => o.id === orderId)?.needsPaymentCheck;
+    };
+    expect(orders.length).toBeGreaterThan(0);
+    expect(await flag(unpaid.orderId)).toBe(true);
+    expect(await flag(twice.orderId)).toBe(true);
+    expect(await flag(quiet.orderId)).toBe(false);
+  });
+});
+
 async function cleanup() {
   const coupons = await prisma.coupon.findMany({
     where: { name: { startsWith: MARK } },
@@ -294,6 +462,14 @@ async function cleanup() {
 
   await prisma.couponRedemption.deleteMany({
     where: { OR: [{ couponId: { in: couponIds } }, { userId: { in: ids } }] },
+  });
+  await prisma.webhookEvent.deleteMany({
+    where: {
+      OR: [
+        { eventId: { startsWith: `evt_${MARK}` } },
+        { order: { orderSessionId: { in: sessionIds } } },
+      ],
+    },
   });
   await prisma.order.deleteMany({
     where: { orderSessionId: { in: sessionIds } },

@@ -759,7 +759,6 @@ export async function repriceUnpaidOrder(args: {
   callerUserId: string | undefined;
 }) {
   const { order, session, couponCode, callerUserId } = args;
-  assertSessionOwner(session, callerUserId);
 
   const requested =
     couponCode === null || couponCode.trim() === ""
@@ -777,8 +776,12 @@ export async function repriceUnpaidOrder(args: {
     const fresh =
       redemption?.status === "RESERVED" &&
       redemption.createdAt > reservationCutoff(new Date());
+    // Resuming with the code the order already carries changes nothing, so, as
+    // before coupons existed, it does not need the owner to be logged in.
     if (fresh) return null;
   }
+
+  assertSessionOwner(session, callerUserId);
 
   const { listPrice, currency } = await lookupListPrice(session);
 
@@ -805,9 +808,15 @@ export async function repriceUnpaidOrder(args: {
       await prisma.$transaction(async (tx) => {
         // Lock the order row first: a payment landing right now must not have its
         // redemption turned back into a reservation by this refresh.
-        const [row] = await tx.$queryRaw<{ status: string }[]>`
-          SELECT status FROM orders WHERE id = ${order.id} FOR UPDATE`;
-        if (row?.status !== "CREATED") {
+        // Unpaid and still the same Razorpay order: if another tab changed the
+        // coupon meanwhile, this refresh would put the old code back on it.
+        const [row] = await tx.$queryRaw<
+          { status: string; razorpayOrderId: string | null }[]
+        >`SELECT status, "razorpayOrderId" FROM orders WHERE id = ${order.id} FOR UPDATE`;
+        if (
+          row?.status !== "CREATED" ||
+          row.razorpayOrderId !== order.razorpayOrderId
+        ) {
           throw new ConflictError(
             "This order changed while you were applying the code. Please refresh and try again."
           );

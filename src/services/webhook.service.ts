@@ -244,6 +244,19 @@ async function handlePaymentCaptured(
       where: { id: order.orderSessionId, status: "AWAITING_PAYMENT" },
       data: { status: "PAID" },
     });
+  }).catch(async (error) => {
+    // The idempotency row was stored before processing. If the status change
+    // failed, remove it so Razorpay's retry is processed instead of skipped as a
+    // duplicate (the order would otherwise stay unpaid after the customer paid).
+    await prisma.webhookEvent
+      .delete({ where: { eventId } })
+      .catch(() => {
+        logger.error(
+          { eventId, orderId: order.id },
+          "Failed to clean up WebhookEvent row after the payment transaction failed"
+        );
+      });
+    throw error;
   });
 
   if (repricedMeanwhile) {
