@@ -185,6 +185,10 @@ export async function getUserOrder(orderId: string, userId: string) {
     coverType: order.coverType,
     amount: order.amount.toString(),
     currency: order.currency,
+    // Coupon breakdown for "Total paid": null / "0" for orders without a coupon.
+    couponCode: order.couponCode,
+    discountAmount: order.discountAmount.toString(),
+    listAmount: order.listAmount?.toString() ?? null,
     publicStatus: toPublicStatus(order.status),
     shipping: {
       name: order.shippingName,
@@ -393,6 +397,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
         notificationEmail: true,
         shippingPhone: true,
         amount: true,
+        couponCode: true,
         currency: true,
         status: true,
         trackingStatus: true,
@@ -460,6 +465,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     customerEmail: o.notificationEmail,
     customerPhone: o.shippingPhone,
     amount: o.amount.toString(),
+    couponCode: o.couponCode,
     currency: o.currency,
     status: o.status,
     trackingStatus: o.trackingStatus,
@@ -561,6 +567,9 @@ export async function getAdminOrderDetail(orderId: string) {
     updatedAt: order.updatedAt,
 
     amount: order.amount.toString(),
+    couponCode: order.couponCode,
+    discountAmount: order.discountAmount.toString(),
+    listAmount: order.listAmount?.toString() ?? null,
     currency: order.currency,
     countryCode: order.countryCode,
     coverType: order.coverType,

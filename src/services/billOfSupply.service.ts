@@ -121,6 +121,9 @@ async function loadBillData(orderId: string) {
       billNumber: true,
       billIssuedAt: true,
       amount: true,
+      listAmount: true,
+      discountAmount: true,
+      couponCode: true,
       currency: true,
       shippingName: true,
       shippingLine1: true,
@@ -350,6 +353,13 @@ const TABLE_TOP = 214;
 const HEADER_BOTTOM = 266;
 const ROW_BOTTOM = 323;
 const TOTAL_BOTTOM = 363;
+/**
+ * A bill for an order with a coupon has one extra row, the coupon discount,
+ * between the item row and the Grand Total, the same height as the Grand Total
+ * row. The Grand Total row and the footer notes move down by this much. A bill
+ * with no discount is laid out exactly as before.
+ */
+const DISCOUNT_ROW_HEIGHT = TOTAL_BOTTOM - ROW_BOTTOM;
 
 /**
  * Builds the Bill of Supply PDF for one order, entirely in memory.
@@ -501,6 +511,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
   drawTable(page, data, { regular, bold });
 
   // ── Footer notes ───────────────────────────────────────────────────────────
+  const footerTop = 385 + (data.discountAmount.gt(0) ? DISCOUNT_ROW_HEIGHT : 0);
   const noteSize = 9.5;
   wrapText(
     "Declaration: We declare that the goods sold are intended for end user consumption and not for resale.",
@@ -508,7 +519,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     noteSize,
     regular
   ).forEach((line, i) =>
-    drawText(page, line, { x: 28, y: top(385 + 14 * i), size: noteSize, fonts: regular })
+    drawText(page, line, { x: 28, y: top(footerTop + 14 * i), size: noteSize, fonts: regular })
   );
 
   wrapText(
@@ -517,7 +528,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     11,
     regular
   ).forEach((line, i) =>
-    drawText(page, line, { x: 330, y: top(385 + 16 * i), size: 11, fonts: regular })
+    drawText(page, line, { x: 330, y: top(footerTop + 16 * i), size: 11, fonts: regular })
   );
 
   return pdf.save();
@@ -532,6 +543,14 @@ function drawTable(
   const right = TABLE_RIGHT;
   const border = { thickness: 1.3, color: BLACK };
 
+  // With a coupon the table has one more row, the discount, above the Grand Total.
+  const hasDiscount = data.discountAmount.gt(0);
+  const discountBottom = ROW_BOTTOM + DISCOUNT_ROW_HEIGHT;
+  const totalTop = hasDiscount ? discountBottom : ROW_BOTTOM;
+  const totalBottom = hasDiscount
+    ? discountBottom + (TOTAL_BOTTOM - ROW_BOTTOM)
+    : TOTAL_BOTTOM;
+
   // Header band.
   page.drawRectangle({
     x: left,
@@ -544,13 +563,15 @@ function drawTable(
   // Outer frame and horizontal rules.
   page.drawRectangle({
     x: left,
-    y: top(TOTAL_BOTTOM),
+    y: top(totalBottom),
     width: right - left,
-    height: TOTAL_BOTTOM - TABLE_TOP,
+    height: totalBottom - TABLE_TOP,
     borderWidth: border.thickness,
     borderColor: BLACK,
   });
-  for (const y of [HEADER_BOTTOM, ROW_BOTTOM]) {
+  for (const y of hasDiscount
+    ? [HEADER_BOTTOM, ROW_BOTTOM, discountBottom]
+    : [HEADER_BOTTOM, ROW_BOTTOM]) {
     page.drawLine({ start: { x: left, y: top(y) }, end: { x: right, y: top(y) }, ...border });
   }
 
@@ -560,13 +581,17 @@ function drawTable(
     const isAmountEdge = i + 1 === AMOUNT_COL;
     page.drawLine({
       start: { x, y: top(TABLE_TOP) },
-      end: { x, y: top(isAmountEdge ? TOTAL_BOTTOM : ROW_BOTTOM) },
+      end: { x, y: top(isAmountEdge ? totalBottom : ROW_BOTTOM) },
       ...border,
     });
   });
 
   const size = 11;
   const amount = formatRupees(data.amount);
+  // The item row shows the price before the coupon; the Grand Total is what was paid.
+  const itemAmount = hasDiscount
+    ? formatRupees(data.listAmount ?? data.amount.plus(data.discountAmount))
+    : amount;
 
   /**
    * Centres text in a cell, vertically and horizontally. Text with spaces
@@ -620,18 +645,45 @@ function drawTable(
 
   // The single line item. Underscore format is the client's.
   const childName = data.orderSession.childName?.trim() || "Child";
-  const row = ["1", `${childName}_Personalized Book`, HSN_CODE, amount, "1", amount];
+  const row = ["1", `${childName}_Personalized Book`, HSN_CODE, itemAmount, "1", itemAmount];
   row.forEach((text, col) => cell(col, HEADER_BOTTOM, ROW_BOTTOM, text, fonts.regular));
+
+  // Coupon discount — only when there is one. Same look as the Grand Total row;
+  // a very long code shrinks the label to fit to the left of the Amount column.
+  if (hasDiscount) {
+    const discountLabel = `Coupon discount (${data.couponCode ?? ""})`;
+    const available = colX(AMOUNT_COL) - 12 - (TABLE_LEFT + 8);
+    const labelSize = Math.min(
+      size,
+      (available / textWidth(discountLabel, size, fonts.regular)) * size
+    );
+    drawText(page, discountLabel, {
+      x:
+        colX(AMOUNT_COL) -
+        12 -
+        textWidth(discountLabel, labelSize, fonts.regular),
+      y: top((ROW_BOTTOM + discountBottom) / 2 + labelSize / 3),
+      size: labelSize,
+      fonts: fonts.regular,
+    });
+    cell(
+      AMOUNT_COL,
+      ROW_BOTTOM,
+      discountBottom,
+      `-${formatRupees(data.discountAmount)}`,
+      fonts.regular
+    );
+  }
 
   // Grand Total — label right-aligned against the Amount column.
   const label = "Grand Total";
   drawText(page, label, {
     x: colX(AMOUNT_COL) - 12 - textWidth(label, size, fonts.regular),
-    y: top((ROW_BOTTOM + TOTAL_BOTTOM) / 2 + size / 3),
+    y: top((totalTop + totalBottom) / 2 + size / 3),
     size,
     fonts: fonts.regular,
   });
-  cell(AMOUNT_COL, ROW_BOTTOM, TOTAL_BOTTOM, amount, fonts.regular);
+  cell(AMOUNT_COL, totalTop, totalBottom, amount, fonts.regular);
 }
 
 /** SVG path for a w×h rounded rectangle, origin at its top-left corner. */
