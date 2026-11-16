@@ -751,6 +751,71 @@ describe("rules across fields", () => {
     ).rejects.toBeInstanceOf(ValidationError);
   });
 
+  it("stores whether a coupon is shown at checkout, off by default, and returns it", async () => {
+    const hidden = await createCoupon(make(), ADMIN);
+    expect(hidden.showAtCheckout).toBe(false);
+    const shown = await createCoupon(make({ showAtCheckout: true }), ADMIN);
+    expect(shown.showAtCheckout).toBe(true);
+    expect((await getCoupon(shown.id)).showAtCheckout).toBe(true);
+
+    const flipped = await updateCoupon(
+      shown.id,
+      updateCouponSchema.parse({ showAtCheckout: false }),
+      ADMIN
+    );
+    expect(flipped.showAtCheckout).toBe(false);
+    // An edit that does not mention it leaves it as it was.
+    const renamed = await updateCoupon(
+      hidden.id,
+      updateCouponSchema.parse({ name: `${MARK} renamed` }),
+      ADMIN
+    );
+    expect(renamed.showAtCheckout).toBe(false);
+  });
+
+  it("refuses showing a single-use code or a coupon for one customer, on create and on edit", async () => {
+    await expect(
+      createCoupon(make({ kind: "SINGLE_USE", showAtCheckout: true }), ADMIN)
+    ).rejects.toThrow(
+      "A single-use code is shared one by one, so it cannot be shown to everyone."
+    );
+    await expect(
+      createCoupon(
+        make({ restrictedToUserId: userId, showAtCheckout: true }),
+        ADMIN
+      )
+    ).rejects.toThrow(
+      "A coupon reserved for one customer is shown to that customer automatically."
+    );
+
+    const shown = await createCoupon(make({ showAtCheckout: true }), ADMIN);
+    await expect(
+      updateCoupon(
+        shown.id,
+        updateCouponSchema.parse({ kind: "SINGLE_USE" }),
+        ADMIN
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      updateCoupon(
+        shown.id,
+        updateCouponSchema.parse({ restrictedToUserId: userId }),
+        ADMIN
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+    // Turning it off in the same edit is allowed.
+    const reserved = await updateCoupon(
+      shown.id,
+      updateCouponSchema.parse({
+        restrictedToUserId: userId,
+        showAtCheckout: false,
+      }),
+      ADMIN
+    );
+    expect(reserved.showAtCheckout).toBe(false);
+    expect(reserved.restrictedToUserId).toBe(userId);
+  });
+
   it("stores the largest amount and limit the columns hold", async () => {
     const c = await createCoupon(
       make({

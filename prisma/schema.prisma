@@ -606,6 +606,10 @@ model Coupon {
   combinable Boolean @default(false)
   isActive   Boolean @default(true)
 
+  // Shown to every customer on the checkout page when it fits their order. Only for public
+  // codes; a coupon reserved for one customer is shown to that customer without this.
+  showAtCheckout Boolean @default(false)
+
   createdById String // admin user ids, for audit; no foreign key on purpose
   updatedById String
 

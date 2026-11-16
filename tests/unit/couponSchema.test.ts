@@ -19,8 +19,24 @@ describe("createCouponSchema", () => {
     expect(parsed.countryCodes).toEqual([]);
     expect(parsed.coverTypes).toEqual([]);
     expect(parsed.combinable).toBe(false);
+    expect(parsed.showAtCheckout).toBe(false);
     expect(parsed.isActive).toBe(true);
     expect(parsed.code).toBeUndefined();
+  });
+
+  it("reads showAtCheckout and rejects a non-boolean", () => {
+    expect(
+      createCouponSchema.parse({ ...base, showAtCheckout: true }).showAtCheckout
+    ).toBe(true);
+    expect(
+      createCouponSchema.safeParse({ ...base, showAtCheckout: "yes" }).success
+    ).toBe(false);
+    expect(
+      updateCouponSchema.parse({ showAtCheckout: false }).showAtCheckout
+    ).toBe(false);
+    expect(updateCouponSchema.parse({ name: "x" }).showAtCheckout).toBe(
+      undefined
+    );
   });
 
   it("normalises the code to upper case and trims it", () => {

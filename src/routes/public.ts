@@ -9,6 +9,7 @@ import { createSessionSchema, photoUploadUrlSchema, photoConfirmSchema, updateSe
 import { createPhotoUploadUrlHandler, createSessionHandler,getSessionHandler, updateSessionHandler, confirmSessionPhotoHandler, generateSessionHandler, regeneratePageHandler, attachUserHandler } from "../controllers/session.controller.js";
 import { initiateCheckoutHandler } from "../controllers/checkout.controller.js";
 import { previewCouponHandler } from "../controllers/couponCheckout.controller.js";
+import { listCouponOffersHandler } from "../controllers/couponCheckout.controller.js";
 import { getAllThemesHandler } from "../controllers/theme.controller.js";
 import { getActiveHeroImagesHandler } from "../controllers/heroImage.controller.js";
 import { getActiveCustomerReviewsHandler } from "../controllers/customerReview.controller.js";
@@ -45,6 +46,7 @@ router.patch("/sessions/:sessionId/attach-user", requireLoggedIn, attachUserHand
 router.post("/sessions/:sessionId/pages/:pageNumber/regenerate", regeneratePageHandler);// This endpoint will let the user generate a single photo
 router.post("/sessions/:sessionId/checkout", initiateCheckoutHandler); // creates Razorpay order + Order row
 router.post("/sessions/:sessionId/coupon-preview", requireLoggedIn, previewCouponHandler); // read-only: what would this coupon code take off
+router.get("/sessions/:sessionId/coupon-offers", requireLoggedIn, listCouponOffersHandler); // read-only: the coupons that fit this order right now
 
 
 

@@ -211,6 +211,8 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
     perCustomerLimit: data.perCustomerLimit ?? null,
     allComics,
     comicCount: comicIds.length,
+    restrictedToUserId: data.restrictedToUserId ?? null,
+    showAtCheckout: data.showAtCheckout,
   });
   await assertReferencesExist(data.restrictedToUserId ?? null, comicIds);
   await assertCountriesExist(prisma, data.countryCodes);
@@ -246,6 +248,7 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
           countryCodes: data.countryCodes,
           coverTypes: data.coverTypes as CoverType[],
           combinable: data.combinable,
+          showAtCheckout: data.showAtCheckout,
           isActive: data.isActive,
           createdById: adminId,
           updatedById: adminId,
@@ -332,6 +335,12 @@ export async function updateCoupon(
         usageLimit = 1;
       }
 
+      const restrictedToUserId = pick(
+        data.restrictedToUserId,
+        existing.restrictedToUserId
+      );
+      const showAtCheckout = pick(data.showAtCheckout, existing.showAtCheckout);
+
       const merged: CouponShape = {
         kind,
         discountType,
@@ -348,13 +357,11 @@ export async function updateCoupon(
         ),
         allComics,
         comicCount: comicIds.length,
+        restrictedToUserId,
+        showAtCheckout,
       };
       assertWellFormed(merged, existing);
 
-      const restrictedToUserId = pick(
-        data.restrictedToUserId,
-        existing.restrictedToUserId
-      );
       if (
         data.restrictedToUserId !== undefined ||
         data.comicIds !== undefined
@@ -434,6 +441,7 @@ export async function updateCoupon(
             coverTypes: data.coverTypes as CoverType[],
           }),
           ...(data.combinable !== undefined && { combinable: data.combinable }),
+          showAtCheckout,
           ...(data.isActive !== undefined && { isActive: data.isActive }),
           updatedById: adminId,
         },

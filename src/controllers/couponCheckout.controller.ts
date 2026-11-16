@@ -2,7 +2,10 @@ import type { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationError } from "../utils/errors.js";
 import { sendSuccess } from "../utils/response.js";
-import { previewCoupon } from "../services/couponCheckout.service.js";
+import {
+  listCouponOffers,
+  previewCoupon,
+} from "../services/couponCheckout.service.js";
 import {
   checkoutParamsSchema,
   couponPreviewBodySchema,
@@ -29,6 +32,22 @@ export const previewCouponHandler = asyncHandler(
       req.user!.id,
       body.data.code
     );
+
+    sendSuccess(res, 200, result);
+  }
+);
+
+export const listCouponOffersHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const parsed = checkoutParamsSchema.safeParse(req.params);
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      throw new ValidationError(
+        firstIssue?.message ?? "Invalid checkout params"
+      );
+    }
+
+    const result = await listCouponOffers(parsed.data.sessionId, req.user!.id);
 
     sendSuccess(res, 200, result);
   }

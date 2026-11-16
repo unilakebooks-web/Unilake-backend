@@ -381,6 +381,167 @@ export async function previewCoupon(
 }
 
 // ------------------------------------------------------------
+// Offers
+// ------------------------------------------------------------
+
+/** The most offers one checkout page shows. */
+const MAX_OFFERS = 10;
+
+/**
+ * "Which coupons fit this order right now?" Read-only. Lists the coupons
+ * reserved for the caller and the public ones the admin chose to show, each run
+ * through the same `evaluateCoupon` as checkout with the real counts, so only
+ * offers that work right now are returned. Nothing is guessed, so a miss never
+ * counts toward the failed-attempt limit.
+ *
+ * Database cost, independent of how many coupons exist: the session, the price
+ * (one query), the candidates, one grouped count of live uses and one for this
+ * customer's. Never calls `priceCoupon` per coupon.
+ *
+ * A session that cannot be priced yet, or is in the wrong state, has no offers.
+ */
+export async function listCouponOffers(
+  sessionId: string,
+  callerUserId: string | undefined
+) {
+  const session = await prisma.orderSession.findUnique({
+    where: { id: sessionId },
+  });
+  if (!session) throw new NotFoundError("Session not found");
+
+  assertSessionOwner(session, callerUserId);
+
+  const now = new Date();
+  if (
+    (session.status !== "PREVIEW_READY" &&
+      session.status !== "AWAITING_PAYMENT") ||
+    (session.status === "PREVIEW_READY" && session.expiresAt < now) ||
+    !session.coverType ||
+    !session.shippingCountry
+  ) {
+    return { offers: [] };
+  }
+
+  // The same price as lookupListPrice, found with the candidates in one round
+  // trip; no active country or no price means no offers. A coupon for specific
+  // comics is only fetched when it names this one, so its comics need no
+  // further query.
+  const [country, pricingRule, rows] = await Promise.all([
+    prisma.country.findUnique({ where: { code: session.shippingCountry } }),
+    prisma.pricingRule.findFirst({
+      where: {
+        comicId: session.comicId,
+        coverType: session.coverType,
+        country: { code: session.shippingCountry },
+      },
+    }),
+    prisma.coupon.findMany({
+      where: {
+        isActive: true,
+        AND: [
+          {
+            OR: [
+              { restrictedToUserId: callerUserId },
+              {
+                kind: "PUBLIC",
+                restrictedToUserId: null,
+                showAtCheckout: true,
+              },
+            ],
+          },
+          {
+            OR: [
+              { allComics: true },
+              { comics: { some: { comicId: session.comicId } } },
+            ],
+          },
+        ],
+      },
+    }),
+  ]);
+  if (!country || !country.isActive || !pricingRule || rows.length === 0) {
+    return { offers: [] };
+  }
+  const candidates = rows.map((row) => ({
+    ...row,
+    comics: row.allComics ? [] : [{ comicId: session.comicId }],
+  }));
+
+  const currency = country.currencyCode;
+  const baseContext = {
+    comicId: session.comicId,
+    countryCode: country.code,
+    coverType: session.coverType,
+    currency,
+    exponent: currencyExponent(currency),
+    listPrice: pricingRule.price,
+    userId: callerUserId,
+  };
+
+  // The same "live" uses as countUses, for all candidates at once; the
+  // customer's own unpaid order does not count against itself.
+  const live: Prisma.CouponRedemptionWhereInput = {
+    couponId: { in: candidates.map((c) => c.id) },
+    order: { orderSessionId: { not: session.id } },
+    OR: [
+      { status: "REDEEMED" },
+      { status: "RESERVED", createdAt: { gt: reservationCutoff(now) } },
+    ],
+  };
+  const [totals, mine] = await Promise.all([
+    prisma.couponRedemption.groupBy({
+      by: ["couponId"],
+      where: live,
+      _count: { _all: true },
+    }),
+    prisma.couponRedemption.groupBy({
+      by: ["couponId"],
+      where: { ...live, userId: callerUserId },
+      _count: { _all: true },
+    }),
+  ]);
+  const totalUses = new Map(totals.map((r) => [r.couponId, r._count._all]));
+  const userUses = new Map(mine.map((r) => [r.couponId, r._count._all]));
+
+  const offers = [];
+  for (const row of candidates) {
+    const result = evaluateCoupon(toRules(row), {
+      ...baseContext,
+      now,
+      totalUses: totalUses.get(row.id) ?? 0,
+      userUses: userUses.get(row.id) ?? 0,
+    });
+    if (!result.ok) continue;
+    offers.push({
+      code: row.code,
+      name: row.name,
+      description: row.description,
+      forYou: row.restrictedToUserId === callerUserId,
+      endsAt: row.endsAt?.toISOString() ?? null,
+      listAmount: pricingRule.price.toString(),
+      discountAmount: result.discountAmount.toString(),
+      finalAmount: result.finalAmount.toString(),
+      currency,
+      discount: result.discountAmount,
+    });
+  }
+
+  // Reserved for the customer first, then the bigger saving, then by code.
+  offers.sort(
+    (a, b) =>
+      Number(b.forYou) - Number(a.forYou) ||
+      b.discount.comparedTo(a.discount) ||
+      (a.code < b.code ? -1 : a.code > b.code ? 1 : 0)
+  );
+
+  return {
+    offers: offers
+      .slice(0, MAX_OFFERS)
+      .map(({ discount: _discount, ...offer }) => offer),
+  };
+}
+
+// ------------------------------------------------------------
 // Reserving, redeeming, releasing (inside the caller's transaction)
 // ------------------------------------------------------------
 

@@ -2,8 +2,17 @@
 // reserving, redeeming and releasing a use. They run against the Neon TEST
 // branch only: the setup import below refuses any other database.
 import "../setup/env.js";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { Prisma } from "../../src/generated/prisma/client.js";
+import { PrismaNeon } from "@prisma/adapter-neon";
 import { prisma } from "../../src/lib/prisma.js";
 import { redisClient } from "../../src/lib/redis.js";
 import {
@@ -21,6 +30,7 @@ import {
 } from "../../src/services/coupon.service.js";
 import {
   couponResponseFields,
+  listCouponOffers,
   previewCoupon,
   priceCoupon,
   redeemCouponInTx,
@@ -747,5 +757,327 @@ describe("couponResponseFields", () => {
       discountAmount: "199.8",
       couponCode: "X",
     });
+  });
+});
+
+describe("listCouponOffers", () => {
+  const day = 24 * 60 * 60 * 1000;
+
+  async function sessionFor(
+    userId: string,
+    overrides: Record<string, unknown> = {}
+  ) {
+    return prisma.orderSession.create({
+      data: {
+        comicId: COMIC_ID,
+        userId,
+        status: "PREVIEW_READY",
+        coverType: "HARDCOVER",
+        shippingCountry: "IN",
+        expiresAt: new Date(Date.now() + day),
+        ...overrides,
+      },
+    });
+  }
+
+  const shown = (overrides: Record<string, unknown> = {}) =>
+    createCoupon(make({ showAtCheckout: true, ...overrides }), ADMIN);
+
+  const codesOf = async (sessionId: string, userId: string) =>
+    (await listCouponOffers(sessionId, userId)).offers.map((o) => o.code);
+
+  // Offers from earlier tests would crowd this one's list (and its cap of 10),
+  // so every test starts with all earlier test coupons hidden.
+  beforeEach(async () => {
+    await prisma.coupon.updateMany({
+      where: { name: { startsWith: MARK } },
+      data: { showAtCheckout: false },
+    });
+  });
+
+  it("lists a shown public coupon with the right amounts and only the specified fields", async () => {
+    const c = await shown({
+      percentOff: 10,
+      description: "Ten off",
+      endsAt: "2099-12-31",
+    });
+    const owner = await makeUser("offers-fields");
+    const session = await sessionFor(owner);
+    const { offers } = await listCouponOffers(session.id, owner);
+    expect(offers).toEqual([
+      {
+        code: c.code,
+        name: c.name,
+        description: "Ten off",
+        forYou: false,
+        endsAt: c.endsAt!.toISOString(),
+        listAmount: "999",
+        discountAmount: "99.9",
+        finalAmount: "899.1",
+        currency: "INR",
+      },
+    ]);
+    // Matches what a preview of the same code says.
+    const preview = await previewCoupon(session.id, owner, c.code);
+    expect(offers[0]!.finalAmount).toBe(preview.finalAmount);
+  });
+
+  it("has a null end date and description when the coupon has none", async () => {
+    await shown();
+    const owner = await makeUser("offers-nulls");
+    const session = await sessionFor(owner);
+    const { offers } = await listCouponOffers(session.id, owner);
+    expect(offers[0]).toMatchObject({ description: null, endsAt: null });
+  });
+
+  it("does not list a hidden public coupon", async () => {
+    const c = await createCoupon(make(), ADMIN);
+    const owner = await makeUser("offers-hidden");
+    const session = await sessionFor(owner);
+    expect(await codesOf(session.id, owner)).not.toContain(c.code);
+  });
+
+  it("lists a coupon reserved for the caller, as forYou, without the flag", async () => {
+    const owner = await makeUser("offers-mine");
+    const c = await createCoupon(make({ restrictedToUserId: owner }), ADMIN);
+    const session = await sessionFor(owner);
+    const { offers } = await listCouponOffers(session.id, owner);
+    expect(offers.find((o) => o.code === c.code)?.forYou).toBe(true);
+  });
+
+  it("lists a single-use code only for the customer it is reserved for", async () => {
+    const owner = await makeUser("offers-single");
+    const other = await makeUser("offers-single-other");
+    const mine = await createCoupon(
+      make({ kind: "SINGLE_USE", restrictedToUserId: owner }),
+      ADMIN
+    );
+    const loose = await createCoupon(make({ kind: "SINGLE_USE" }), ADMIN);
+    const session = await sessionFor(owner);
+    const codes = await codesOf(session.id, owner);
+    expect(codes).toContain(mine.code);
+    expect(codes).not.toContain(loose.code);
+    const otherSession = await sessionFor(other);
+    const otherCodes = await codesOf(otherSession.id, other);
+    expect(otherCodes).not.toContain(mine.code);
+    expect(otherCodes).not.toContain(loose.code);
+  });
+
+  it("never lists a coupon reserved for another customer", async () => {
+    const owner = await makeUser("offers-not-mine");
+    const other = await makeUser("offers-theirs");
+    const theirs = await createCoupon(
+      make({ restrictedToUserId: other }),
+      ADMIN
+    );
+    // Not creatable through the admin API with the flag; set it directly.
+    await prisma.coupon.update({
+      where: { id: theirs.id },
+      data: { showAtCheckout: true },
+    });
+    const session = await sessionFor(owner);
+    expect(await codesOf(session.id, owner)).not.toContain(theirs.code);
+  });
+
+  it("leaves out coupons that would not work right now", async () => {
+    const owner = await makeUser("offers-unfit");
+    const session = await sessionFor(owner);
+    const good = await shown();
+    const inactive = await shown({ isActive: false });
+    const future = await shown({ startsAt: "2099-01-01" });
+    const expired = await shown();
+    await prisma.coupon.update({
+      where: { id: expired.id },
+      data: {
+        startsAt: new Date("2020-01-01T00:00:00.000+05:30"),
+        endsAt: new Date("2020-01-31T23:59:59.999+05:30"),
+      },
+    });
+    const usd = await shown({
+      discountType: "FIXED",
+      percentOff: undefined,
+      amountOff: 5,
+      currency: "USD",
+    });
+    const otherComic = await shown({
+      allComics: false,
+      comicIds: [OTHER_COMIC_ID],
+    });
+    const otherCountry = await shown({ countryCodes: ["US"] });
+    const otherCover = await shown({ coverTypes: ["SOFTCOVER"] });
+
+    const usedUp = await shown({ usageLimit: 1 });
+    const buyer = await makeUser("offers-buyer");
+    const buyerOrder = await makeOrder(buyer);
+    await redemption(usedUp.id, buyer, buyerOrder.orderId, "REDEEMED");
+
+    const perCustomer = await shown({ perCustomerLimit: 1 });
+    const earlier = await makeOrder(owner);
+    await redemption(perCustomer.id, owner, earlier.orderId, "REDEEMED");
+
+    const codes = await codesOf(session.id, owner);
+    expect(codes).toContain(good.code);
+    for (const c of [
+      inactive,
+      future,
+      expired,
+      usd,
+      otherComic,
+      otherCountry,
+      otherCover,
+      usedUp,
+      perCustomer,
+    ]) {
+      expect(codes).not.toContain(c.code);
+    }
+  });
+
+  it("counts a fresh reservation by someone else but not a lapsed one", async () => {
+    const owner = await makeUser("offers-window");
+    const session = await sessionFor(owner);
+    const fresh = await shown({ usageLimit: 1 });
+    const lapsed = await shown({ usageLimit: 1 });
+    const buyer = await makeUser("offers-window-buyer");
+    const a = await makeOrder(buyer);
+    const b = await makeOrder(buyer);
+    await redemption(fresh.id, buyer, a.orderId, "RESERVED");
+    await redemption(
+      lapsed.id,
+      buyer,
+      b.orderId,
+      "RESERVED",
+      new Date(Date.now() - 2 * 60 * 60 * 1000)
+    );
+    const codes = await codesOf(session.id, owner);
+    expect(codes).not.toContain(fresh.code);
+    expect(codes).toContain(lapsed.code);
+  });
+
+  it("does not hide a coupon the caller already reserved on their own unpaid order", async () => {
+    const owner = await makeUser("offers-own");
+    const c = await shown({ usageLimit: 1, perCustomerLimit: 1 });
+    const { sessionId, orderId } = await makeOrder(owner);
+    await prisma.orderSession.update({
+      where: { id: sessionId },
+      data: { status: "AWAITING_PAYMENT" },
+    });
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { status: "CREATED" },
+    });
+    await redemption(c.id, owner, orderId, "RESERVED");
+    expect(await codesOf(sessionId, owner)).toContain(c.code);
+
+    // Another customer's session does see it as taken.
+    const other = await makeUser("offers-own-other");
+    const otherSession = await sessionFor(other);
+    expect(await codesOf(otherSession.id, other)).not.toContain(c.code);
+  });
+
+  it("orders the caller's own first, then the bigger saving, then the code", async () => {
+    const owner = await makeUser("offers-order");
+    const mine = await createCoupon(
+      make({ percentOff: 5, restrictedToUserId: owner }),
+      ADMIN
+    );
+    const big = await shown({ percentOff: 30 });
+    const bCode = await shown({ percentOff: 20, code: `TCK-${RUN}-ZB` });
+    const aCode = await shown({ percentOff: 20, code: `TCK-${RUN}-ZA` });
+    const session = await sessionFor(owner);
+    expect(await codesOf(session.id, owner)).toEqual([
+      mine.code,
+      big.code,
+      aCode.code,
+      bCode.code,
+    ]);
+  });
+
+  it("returns at most 10 offers", async () => {
+    const owner = await makeUser("offers-cap");
+    for (let i = 0; i < 12; i++) await shown({ percentOff: 10 + i });
+    const session = await sessionFor(owner);
+    const { offers } = await listCouponOffers(session.id, owner);
+    expect(offers).toHaveLength(10);
+    // The 10 biggest savings of the 12 (21%, 20%, ... 12%).
+    expect(offers[0]!.discountAmount).toBe("209.79");
+  });
+
+  it("is for the session's owner only, and needs a login", async () => {
+    const owner = await makeUser("offers-auth");
+    const stranger = await makeUser("offers-stranger");
+    const session = await sessionFor(owner);
+    await expect(listCouponOffers(session.id, stranger)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(listCouponOffers(session.id, undefined)).rejects.toMatchObject(
+      { code: "UNAUTHORIZED" }
+    );
+    await expect(
+      listCouponOffers("00000000-0000-4000-8000-0000000000aa", owner)
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("answers with no offers, not an error, for a session that cannot be priced or is in the wrong state", async () => {
+    await shown();
+    const owner = await makeUser("offers-states");
+    for (const overrides of [
+      { coverType: null },
+      { shippingCountry: null },
+      { shippingCountry: "ZZ" },
+      { status: "PAID" },
+      { expiresAt: new Date(Date.now() - 1000) },
+    ]) {
+      const session = await sessionFor(owner, overrides);
+      expect(await listCouponOffers(session.id, owner)).toEqual({
+        offers: [],
+      });
+    }
+  });
+
+  it("never counts toward the failed-attempt limit", async () => {
+    const c = await shown();
+    const owner = await makeUser("offers-limiter");
+    const session = await sessionFor(owner);
+    for (let i = 0; i < 15; i++) await listCouponOffers(session.id, owner);
+    const preview = await previewCoupon(session.id, owner, c.code);
+    expect(preview.code).toBe(c.code);
+  });
+
+  it("stays at a fixed number of queries however many coupons exist", async () => {
+    // Counts the statements that reach the database driver (the adapter's
+    // queryRaw/executeRaw), whatever the Prisma call that issued them.
+    const adapter = await new PrismaNeon({
+      connectionString: process.env.DATABASE_URL!,
+    }).connect();
+    let proto = Object.getPrototypeOf(adapter);
+    while (proto && !Object.hasOwn(proto, "queryRaw")) {
+      proto = Object.getPrototypeOf(proto);
+    }
+    await adapter.dispose();
+    const spy = vi.spyOn(proto, "queryRaw");
+    const queriesFor = async (sessionId: string, userId: string) => {
+      spy.mockClear();
+      await listCouponOffers(sessionId, userId);
+      return spy.mock.calls.length;
+    };
+
+    try {
+      const owner = await makeUser("offers-queries");
+      const session = await sessionFor(owner);
+      for (let i = 0; i < 2; i++) await shown({ percentOff: 5 + i });
+      const few = await queriesFor(session.id, owner);
+
+      // 28 more, so 30 candidates; the answer is capped and the cost is the same.
+      for (let i = 0; i < 28; i++) await shown({ percentOff: 1 + i });
+      const many = await queriesFor(session.id, owner);
+      const { offers } = await listCouponOffers(session.id, owner);
+      expect(offers).toHaveLength(10);
+      expect(many).toBe(few);
+      // The session, the country, the price, the candidates and two grouped
+      // counts; never one query per coupon.
+      expect(many).toBe(6);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

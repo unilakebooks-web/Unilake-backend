@@ -19,6 +19,8 @@ function shape(overrides: Partial<CouponShape> = {}): CouponShape {
     perCustomerLimit: null,
     allComics: true,
     comicCount: 0,
+    restrictedToUserId: null,
+    showAtCheckout: false,
     ...overrides,
   };
 }
@@ -176,6 +178,53 @@ describe("couponShapeIssues", () => {
     expect(
       couponShapeIssues(shape({ ...single, perCustomerLimit: 2 }))
     ).toEqual(["Uses per customer cannot be more than the total uses."]);
+  });
+
+  describe("showing a coupon at checkout", () => {
+    it("allows a public coupon for everyone to be shown", () => {
+      expect(couponShapeIssues(shape({ showAtCheckout: true }))).toEqual([]);
+    });
+
+    it("refuses showing a single-use code", () => {
+      expect(
+        couponShapeIssues(
+          shape({ kind: "SINGLE_USE", usageLimit: 1, showAtCheckout: true })
+        )
+      ).toEqual([
+        "A single-use code is shared one by one, so it cannot be shown to everyone.",
+      ]);
+    });
+
+    it("refuses showing a coupon reserved for one customer", () => {
+      expect(
+        couponShapeIssues(
+          shape({ restrictedToUserId: "user-1", showAtCheckout: true })
+        )
+      ).toEqual([
+        "A coupon reserved for one customer is shown to that customer automatically.",
+      ]);
+    });
+
+    it("allows single-use or reserved coupons while not shown", () => {
+      expect(
+        couponShapeIssues(
+          shape({ kind: "SINGLE_USE", usageLimit: 1, restrictedToUserId: "u" })
+        )
+      ).toEqual([]);
+    });
+
+    it("reports both when both apply", () => {
+      expect(
+        couponShapeIssues(
+          shape({
+            kind: "SINGLE_USE",
+            usageLimit: 1,
+            restrictedToUserId: "u",
+            showAtCheckout: true,
+          })
+        )
+      ).toHaveLength(2);
+    });
   });
 
   it("reports every problem at once", () => {

@@ -125,6 +125,7 @@ export const createCouponSchema = z.object({
   coverTypes: uniqueList(coverTypeEnum, 2, "cover types").default([]),
 
   combinable: z.boolean().default(false),
+  showAtCheckout: z.boolean().default(false),
   isActive: z.boolean().default(true),
 });
 
@@ -156,6 +157,7 @@ export const updateCouponSchema = z
     coverTypes: uniqueList(coverTypeEnum, 2, "cover types").optional(),
 
     combinable: z.boolean().optional(),
+    showAtCheckout: z.boolean().optional(),
     isActive: z.boolean().optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {

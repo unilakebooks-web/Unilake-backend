@@ -18,6 +18,8 @@ export interface CouponShape {
   perCustomerLimit: number | null;
   allComics: boolean;
   comicCount: number;
+  restrictedToUserId: string | null;
+  showAtCheckout: boolean;
 }
 
 /** Returns every problem found; an empty list means the coupon is well formed. */
@@ -94,6 +96,19 @@ export function couponShapeIssues(coupon: CouponShape): string[] {
 
   if (coupon.kind === "SINGLE_USE" && coupon.usageLimit !== 1) {
     issues.push("A single-use coupon can be used exactly once.");
+  }
+
+  // Offers at checkout: a shown coupon is for everyone, so it cannot be a code
+  // that is handed out one by one, nor one reserved for a single customer.
+  if (coupon.showAtCheckout && coupon.kind === "SINGLE_USE") {
+    issues.push(
+      "A single-use code is shared one by one, so it cannot be shown to everyone."
+    );
+  }
+  if (coupon.showAtCheckout && coupon.restrictedToUserId !== null) {
+    issues.push(
+      "A coupon reserved for one customer is shown to that customer automatically."
+    );
   }
 
   return issues;
