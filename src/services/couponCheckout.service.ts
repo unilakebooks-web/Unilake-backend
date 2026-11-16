@@ -195,6 +195,8 @@ interface PriceCouponArgs {
   currency: string;
   listPrice: Prisma.Decimal;
   excludeOrderId?: string;
+  // The code is the one already on the customer's order, so this is not a guess.
+  skipAttemptLimit?: boolean;
 }
 
 /**
@@ -205,7 +207,8 @@ interface PriceCouponArgs {
 export async function priceCoupon(
   args: PriceCouponArgs
 ): Promise<PricedCoupon> {
-  if (await isCouponAttemptLimited(args.userId)) throw tooManyAttemptsError();
+  if (!args.skipAttemptLimit && (await isCouponAttemptLimited(args.userId)))
+    throw tooManyAttemptsError();
 
   const refuse = async (reason: CouponRejection): Promise<never> => {
     await recordFailedCouponAttempt(args.userId);
@@ -338,7 +341,8 @@ async function priceCouponForSession(
   session: OrderSession,
   userId: string,
   rawCode: string,
-  excludeOrderId?: string
+  excludeOrderId?: string,
+  skipAttemptLimit?: boolean
 ) {
   const { listPrice, currency, countryCode } = await lookupListPrice(session);
   const priced = await priceCoupon({
@@ -350,6 +354,7 @@ async function priceCouponForSession(
     currency,
     listPrice,
     excludeOrderId,
+    skipAttemptLimit,
   });
   return { priced, listPrice, currency };
 }
@@ -783,7 +788,10 @@ export async function repriceUnpaidOrder(args: {
       session,
       callerUserId,
       requested,
-      order.id
+      order.id,
+      // Re-pricing the code the order already carries is not a guess, so a
+      // customer who is rate-limited can still pay for what they already applied.
+      requested === existing
     ));
   }
   const finalAmount = priced ? priced.finalAmount : listPrice;

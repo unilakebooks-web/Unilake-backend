@@ -224,6 +224,55 @@ describe("repriceUnpaidOrder, refreshing a lapsed reservation", () => {
     });
     expect(row.status).toBe("REDEEMED");
   });
+
+  it("lets a customer who is rate-limited refresh the code already on their order", async () => {
+    const c = await createCoupon(make({ usageLimit: 5 }), ADMIN);
+    const u = await makeUser("refresh-limited");
+    const { sessionId, orderId } = await makeOrder(u);
+    const priced = await price(u, c.code);
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { amount: priced.finalAmount, couponCode: priced.code },
+    });
+    await redemption(
+      c.id,
+      u,
+      orderId,
+      "RESERVED",
+      new Date(Date.now() - 3 * 60 * 60 * 1000)
+    );
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+    });
+    const session = await prisma.orderSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    for (let i = 0; i < 10; i++) await recordFailedCouponAttempt(u);
+
+    // Typing a different code is still refused while limited...
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session,
+        couponCode: "SOMETHING-ELSE",
+        callerUserId: u,
+      })
+    ).rejects.toMatchObject({ code: "COUPON_TOO_MANY_ATTEMPTS" });
+    // ...but the code the order already carries is not a guess.
+    await expect(
+      repriceUnpaidOrder({
+        order,
+        session,
+        couponCode: c.code,
+        callerUserId: u,
+      })
+    ).resolves.toBeNull();
+    const row = await prisma.couponRedemption.findUniqueOrThrow({
+      where: { orderId },
+    });
+    expect(row.status).toBe("RESERVED");
+    expect(Date.now() - row.createdAt.getTime()).toBeLessThan(60_000);
+  });
 });
 
 async function cleanup() {

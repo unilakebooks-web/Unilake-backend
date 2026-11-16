@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "../lib/auth.js";
+import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ValidationError } from "../utils/errors.js";
 import { sendSuccess } from "../utils/response.js";
@@ -35,8 +36,9 @@ export const initiateCheckoutHandler = asyncHandler(
           headers: fromNodeHeaders(req.headers),
         });
         if (sessionData?.user) callerUserId = sessionData.user.id;
-      } catch {
+      } catch (err) {
         // No valid session: the caller stays anonymous.
+        logger.warn({ err }, "Could not read the caller on checkout");
       }
     }
 
