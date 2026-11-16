@@ -34,6 +34,7 @@ import {
 } from "../utils/attemptLimiter.js";
 import { acquireSlot } from "../utils/keyedQueue.js";
 import { assertNotExpired } from "./session.service.js";
+import { REVENUE_STATUSES } from "../config/stats.js";
 
 // ============================================================
 // COUPONS AT CHECKOUT
@@ -88,7 +89,10 @@ export interface PricedCoupon {
   /** The coupon's updatedAt when it was read; the reservation refuses a coupon that changed since. */
   version: number;
   rules: CouponRules;
-  baseContext: Omit<CouponContext, "now" | "totalUses" | "userUses">;
+  baseContext: Omit<
+    CouponContext,
+    "now" | "totalUses" | "userUses" | "hasPaidOrder"
+  >;
   listAmount: Prisma.Decimal;
   discountAmount: Prisma.Decimal;
   finalAmount: Prisma.Decimal;
@@ -133,6 +137,7 @@ function toRules(row: CouponWithComics): CouponRules {
     comicIds: row.comics.map((c) => c.comicId),
     countryCodes: row.countryCodes,
     coverTypes: row.coverTypes,
+    firstOrderOnly: row.firstOrderOnly,
   };
 }
 
@@ -161,6 +166,19 @@ async function countUses(
     where: { ...live, userId },
   });
   return { totalUses, userUses };
+}
+
+/**
+ * Whether the customer already has an order that counts as revenue (paid and
+ * not cancelled), which makes any further order not their first. Always read
+ * fresh, never cached: a customer can pay another order at any moment.
+ */
+async function customerHasPaidOrder(db: Db, userId: string) {
+  const order = await db.order.findFirst({
+    where: { orderSession: { userId }, status: { in: REVENUE_STATUSES } },
+    select: { id: true },
+  });
+  return order !== null;
 }
 
 // ------------------------------------------------------------
@@ -222,7 +240,15 @@ export async function priceCoupon(
     args.excludeOrderId
   );
 
-  const result = evaluateCoupon(rules, { ...baseContext, ...counts, now });
+  const hasPaidOrder =
+    rules.firstOrderOnly && (await customerHasPaidOrder(prisma, args.userId));
+
+  const result = evaluateCoupon(rules, {
+    ...baseContext,
+    ...counts,
+    hasPaidOrder,
+    now,
+  });
   if (!result.ok) return refuse(result.reason);
 
   logger.info({ couponId: row.id }, "Coupon applied to a checkout");
@@ -398,7 +424,7 @@ const MAX_OFFERS = 10;
  *
  * Database cost, independent of how many coupons exist: the session, the price
  * (one query), the candidates, one grouped count of live uses and one for this
- * customer's. Never calls `priceCoupon` per coupon.
+ * customer's, plus one paid-order lookup when a candidate is first-order-only. Never calls `priceCoupon` per coupon.
  *
  * A session that cannot be priced yet, or is in the wrong state, has no offers.
  */
@@ -508,6 +534,12 @@ export async function listCouponOffers(
   const totalUses = new Map(totals.map((r) => [r.couponId, r._count._all]));
   const userUses = new Map(mine.map((r) => [r.couponId, r._count._all]));
 
+  // One query for the caller, shared by every candidate, and only when some
+  // candidate is first-order-only.
+  const hasPaidOrder = candidates.some((c) => c.firstOrderOnly)
+    ? await customerHasPaidOrder(prisma, callerUserId)
+    : false;
+
   const offers = [];
   for (const row of candidates) {
     const result = evaluateCoupon(toRules(row), {
@@ -515,6 +547,7 @@ export async function listCouponOffers(
       now,
       totalUses: totalUses.get(row.id) ?? 0,
       userUses: userUses.get(row.id) ?? 0,
+      hasPaidOrder,
     });
     if (!result.ok) continue;
     offers.push({
@@ -522,6 +555,7 @@ export async function listCouponOffers(
       name: row.name,
       description: row.description,
       forYou: row.restrictedToUserId === callerUserId,
+      firstOrderOnly: row.firstOrderOnly,
       endsAt: row.endsAt?.toISOString() ?? null,
       listAmount: pricingRule.price.toString(),
       discountAmount: result.discountAmount.toString(),
@@ -577,9 +611,14 @@ export async function reserveCouponInTx(
 
   const now = new Date();
   const counts = await countUses(tx, priced.couponId, userId, now, orderId);
+  // Fresh, on the transaction's connection: the customer may have paid another
+  // order since this one was priced.
+  const hasPaidOrder =
+    priced.rules.firstOrderOnly && (await customerHasPaidOrder(tx, userId));
   const result = evaluateCoupon(priced.rules, {
     ...priced.baseContext,
     ...counts,
+    hasPaidOrder,
     now,
   });
   if (!result.ok) throw couponError(result.reason);

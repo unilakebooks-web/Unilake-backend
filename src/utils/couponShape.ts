@@ -22,6 +22,7 @@ export interface CouponShape {
   comicCount: number;
   restrictedToUserId: string | null;
   showAtCheckout: boolean;
+  firstOrderOnly: boolean;
 }
 
 /** Returns every problem found; an empty list means the coupon is well formed. */
@@ -111,6 +112,15 @@ export function couponShapeIssues(coupon: CouponShape): string[] {
     issues.push(
       "A coupon reserved for one customer is shown to that customer automatically."
     );
+  }
+
+  // A first-order coupon is for one order, so a customer gets one use.
+  if (
+    coupon.firstOrderOnly &&
+    coupon.perCustomerLimit !== null &&
+    coupon.perCustomerLimit !== 1
+  ) {
+    issues.push("A first-order coupon can only be used once per customer.");
   }
 
   return issues;

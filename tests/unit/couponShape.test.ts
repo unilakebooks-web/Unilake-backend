@@ -21,6 +21,7 @@ function shape(overrides: Partial<CouponShape> = {}): CouponShape {
     comicCount: 0,
     restrictedToUserId: null,
     showAtCheckout: false,
+    firstOrderOnly: false,
     ...overrides,
   };
 }
@@ -224,6 +225,27 @@ describe("couponShapeIssues", () => {
           })
         )
       ).toHaveLength(2);
+    });
+  });
+
+  describe("first orders only", () => {
+    const issue = "A first-order coupon can only be used once per customer.";
+
+    it("allows an empty or 1 per-customer limit", () => {
+      expect(couponShapeIssues(shape({ firstOrderOnly: true }))).toEqual([]);
+      expect(
+        couponShapeIssues(shape({ firstOrderOnly: true, perCustomerLimit: 1 }))
+      ).toEqual([]);
+    });
+
+    it("refuses a per-customer limit above 1", () => {
+      expect(
+        couponShapeIssues(shape({ firstOrderOnly: true, perCustomerLimit: 2 }))
+      ).toEqual([issue]);
+    });
+
+    it("leaves other coupons free to have a higher limit", () => {
+      expect(couponShapeIssues(shape({ perCustomerLimit: 2 }))).toEqual([]);
     });
   });
 

@@ -47,6 +47,7 @@ describe("createCouponSchema", () => {
     expect(parsed.coverTypes).toEqual([]);
     expect(parsed.combinable).toBe(false);
     expect(parsed.showAtCheckout).toBe(false);
+    expect(parsed.firstOrderOnly).toBe(false);
     expect(parsed.isActive).toBe(true);
     expect(parsed.code).toBeUndefined();
   });
@@ -62,6 +63,21 @@ describe("createCouponSchema", () => {
       updateCouponSchema.parse({ showAtCheckout: false }).showAtCheckout
     ).toBe(false);
     expect(updateCouponSchema.parse({ name: "x" }).showAtCheckout).toBe(
+      undefined
+    );
+  });
+
+  it("reads firstOrderOnly and rejects a non-boolean", () => {
+    expect(
+      createCouponSchema.parse({ ...base, firstOrderOnly: true }).firstOrderOnly
+    ).toBe(true);
+    expect(
+      createCouponSchema.safeParse({ ...base, firstOrderOnly: "yes" }).success
+    ).toBe(false);
+    expect(
+      updateCouponSchema.parse({ firstOrderOnly: false }).firstOrderOnly
+    ).toBe(false);
+    expect(updateCouponSchema.parse({ name: "x" }).firstOrderOnly).toBe(
       undefined
     );
   });

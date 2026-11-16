@@ -773,6 +773,87 @@ describe("rules across fields", () => {
     expect(renamed.showAtCheckout).toBe(false);
   });
 
+  it("stores whether a coupon is for first orders only, off by default, and returns it", async () => {
+    const normal = await createCoupon(make(), ADMIN);
+    expect(normal.firstOrderOnly).toBe(false);
+    expect(normal.perCustomerLimit).toBeNull();
+    const first = await createCoupon(make({ firstOrderOnly: true }), ADMIN);
+    expect(first.firstOrderOnly).toBe(true);
+    expect((await getCoupon(first.id)).firstOrderOnly).toBe(true);
+
+    const renamed = await updateCoupon(
+      first.id,
+      updateCouponSchema.parse({ name: `${MARK} renamed` }),
+      ADMIN
+    );
+    expect(renamed.firstOrderOnly).toBe(true);
+    const off = await updateCoupon(
+      first.id,
+      updateCouponSchema.parse({ firstOrderOnly: false }),
+      ADMIN
+    );
+    expect(off.firstOrderOnly).toBe(false);
+  });
+
+  it("limits a first-order coupon to one use per customer, automatically", async () => {
+    const created = await createCoupon(make({ firstOrderOnly: true }), ADMIN);
+    expect(created.perCustomerLimit).toBe(1);
+    const explicit = await createCoupon(
+      make({ firstOrderOnly: true, perCustomerLimit: 1 }),
+      ADMIN
+    );
+    expect(explicit.perCustomerLimit).toBe(1);
+
+    // Switching it on for an existing coupon without a limit stores 1.
+    const normal = await createCoupon(make(), ADMIN);
+    const switched = await updateCoupon(
+      normal.id,
+      updateCouponSchema.parse({ firstOrderOnly: true }),
+      ADMIN
+    );
+    expect(switched.perCustomerLimit).toBe(1);
+
+    // Clearing the limit on an edit puts it back to 1.
+    const cleared = await updateCoupon(
+      created.id,
+      updateCouponSchema.parse({ perCustomerLimit: null }),
+      ADMIN
+    );
+    expect(cleared.perCustomerLimit).toBe(1);
+  });
+
+  it("refuses a per-customer limit above 1 on a first-order coupon, on create and on edit", async () => {
+    const message = "A first-order coupon can only be used once per customer.";
+    await expect(
+      createCoupon(make({ firstOrderOnly: true, perCustomerLimit: 2 }), ADMIN)
+    ).rejects.toThrow(message);
+
+    const first = await createCoupon(make({ firstOrderOnly: true }), ADMIN);
+    await expect(
+      updateCoupon(
+        first.id,
+        updateCouponSchema.parse({ perCustomerLimit: 2 }),
+        ADMIN
+      )
+    ).rejects.toThrow(message);
+
+    const limited = await createCoupon(make({ perCustomerLimit: 3 }), ADMIN);
+    await expect(
+      updateCoupon(
+        limited.id,
+        updateCouponSchema.parse({ firstOrderOnly: true }),
+        ADMIN
+      )
+    ).rejects.toThrow(message);
+    // Both in one edit is fine.
+    const both = await updateCoupon(
+      limited.id,
+      updateCouponSchema.parse({ firstOrderOnly: true, perCustomerLimit: 1 }),
+      ADMIN
+    );
+    expect(both.perCustomerLimit).toBe(1);
+  });
+
   it("refuses showing a single-use code or a coupon for one customer, on create and on edit", async () => {
     await expect(
       createCoupon(make({ kind: "SINGLE_USE", showAtCheckout: true }), ADMIN)

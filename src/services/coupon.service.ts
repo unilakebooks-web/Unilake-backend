@@ -8,6 +8,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "../utils/errors.js";
+import { COUPON_TRANSACTION_OPTIONS } from "../config/coupon.js";
 import { generateCouponCode } from "../utils/couponCode.js";
 import { couponShapeIssues, pastDateIssues } from "../utils/couponShape.js";
 import type { CouponShape } from "../utils/couponShape.js";
@@ -198,6 +199,12 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
       ? (data.usageLimit ?? 1)
       : (data.usageLimit ?? null);
 
+  // A first-order coupon is used once per customer; an empty limit becomes 1.
+  const perCustomerLimit =
+    data.firstOrderOnly && data.perCustomerLimit === undefined
+      ? 1
+      : (data.perCustomerLimit ?? null);
+
   assertWellFormed({
     kind: data.kind,
     discountType: data.discountType,
@@ -208,11 +215,12 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
     startsAt: data.startsAt ?? null,
     endsAt: data.endsAt ?? null,
     usageLimit,
-    perCustomerLimit: data.perCustomerLimit ?? null,
+    perCustomerLimit,
     allComics,
     comicCount: comicIds.length,
     restrictedToUserId: data.restrictedToUserId ?? null,
     showAtCheckout: data.showAtCheckout,
+    firstOrderOnly: data.firstOrderOnly,
   });
   await assertReferencesExist(data.restrictedToUserId ?? null, comicIds);
   await assertCountriesExist(prisma, data.countryCodes);
@@ -241,7 +249,7 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
           startsAt: data.startsAt ?? null,
           endsAt: data.endsAt ?? null,
           usageLimit,
-          perCustomerLimit: data.perCustomerLimit ?? null,
+          perCustomerLimit,
           restrictedToUserId: data.restrictedToUserId ?? null,
           allComics,
           comics: { create: comicIds.map((comicId) => ({ comicId })) },
@@ -249,6 +257,7 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
           coverTypes: data.coverTypes as CoverType[],
           combinable: data.combinable,
           showAtCheckout: data.showAtCheckout,
+          firstOrderOnly: data.firstOrderOnly,
           isActive: data.isActive,
           createdById: adminId,
           updatedById: adminId,
@@ -336,6 +345,14 @@ export async function updateCoupon(
         existing.restrictedToUserId
       );
       const showAtCheckout = pick(data.showAtCheckout, existing.showAtCheckout);
+      const firstOrderOnly = pick(data.firstOrderOnly, existing.firstOrderOnly);
+
+      // A first-order coupon is used once per customer; an empty limit becomes 1.
+      let perCustomerLimit = pick(
+        data.perCustomerLimit,
+        existing.perCustomerLimit
+      );
+      if (firstOrderOnly && perCustomerLimit === null) perCustomerLimit = 1;
 
       const merged: CouponShape = {
         kind,
@@ -347,14 +364,12 @@ export async function updateCoupon(
         startsAt: pick(data.startsAt, existing.startsAt),
         endsAt: pick(data.endsAt, existing.endsAt),
         usageLimit,
-        perCustomerLimit: pick(
-          data.perCustomerLimit,
-          existing.perCustomerLimit
-        ),
+        perCustomerLimit,
         allComics,
         comicCount: comicIds.length,
         restrictedToUserId,
         showAtCheckout,
+        firstOrderOnly,
       };
       assertWellFormed(merged, existing);
 
@@ -427,7 +442,7 @@ export async function updateCoupon(
           startsAt: merged.startsAt,
           endsAt: merged.endsAt,
           usageLimit,
-          perCustomerLimit: merged.perCustomerLimit,
+          perCustomerLimit,
           restrictedToUserId,
           allComics,
           ...(data.countryCodes !== undefined && {
@@ -438,6 +453,7 @@ export async function updateCoupon(
           }),
           ...(data.combinable !== undefined && { combinable: data.combinable }),
           showAtCheckout,
+          firstOrderOnly,
           ...(data.isActive !== undefined && { isActive: data.isActive }),
           updatedById: adminId,
         },
@@ -457,7 +473,7 @@ export async function updateCoupon(
         where: { id: updated.id },
         include: COUPON_INCLUDE,
       });
-    })
+    }, COUPON_TRANSACTION_OPTIONS)
     .catch((error: any) => {
       if (error.code === "P2002") throw duplicateCodeError();
       throw error;
@@ -493,7 +509,7 @@ export async function toggleCouponStatus(
       },
       include: COUPON_INCLUDE,
     });
-  });
+  }, COUPON_TRANSACTION_OPTIONS);
 
   logger.info(
     { couponId: id, isActive: row.isActive },
@@ -512,7 +528,7 @@ export async function deleteCoupon(id: string) {
       );
     }
     await tx.coupon.delete({ where: { id } });
-  });
+  }, COUPON_TRANSACTION_OPTIONS);
 
   logger.info({ couponId: id }, "Coupon deleted");
 }

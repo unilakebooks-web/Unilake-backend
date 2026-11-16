@@ -610,6 +610,9 @@ model Coupon {
   // codes; a coupon reserved for one customer is shown to that customer without this.
   showAtCheckout Boolean @default(false)
 
+  // Only a customer who has no paid order yet may use it (see REVENUE_STATUSES in config/stats.ts).
+  firstOrderOnly Boolean @default(false)
+
   createdById String // admin user ids, for audit; no foreign key on purpose
   updatedById String
 

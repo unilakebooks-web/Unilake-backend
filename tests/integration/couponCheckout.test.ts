@@ -45,6 +45,8 @@ import {
 import { recordFailedCouponAttempt } from "../../src/utils/attemptLimiter.js";
 import { acquireSlot } from "../../src/utils/keyedQueue.js";
 import { AppError } from "../../src/utils/errors.js";
+import { REVENUE_STATUSES } from "../../src/config/stats.js";
+import type { OrderStatus } from "../../src/generated/prisma/client.js";
 
 const MARK = "__vitest_checkout__";
 const ADMIN = "vitest-admin";
@@ -104,6 +106,13 @@ async function makeOrder(userId: string) {
     },
   });
   return { sessionId: session.id, orderId: order.id };
+}
+
+/** An order in the given status for a user, on its own session. */
+async function makeOrderWithStatus(userId: string, status: OrderStatus) {
+  const { sessionId, orderId } = await makeOrder(userId);
+  await prisma.order.update({ where: { id: orderId }, data: { status } });
+  return { sessionId, orderId };
 }
 
 const price = (
@@ -733,6 +742,78 @@ describe("previewCoupon", () => {
   });
 });
 
+describe("first-order-only coupons", () => {
+  const firstOrderCoupon = () =>
+    createCoupon(make({ firstOrderOnly: true }), ADMIN);
+
+  it("can be priced by a customer with no orders", async () => {
+    const c = await firstOrderCoupon();
+    const user = await makeUser("first-none");
+    const priced = await price(user, c.code);
+    expect(priced.discountAmount.toFixed(2)).toBe("199.80");
+  });
+
+  it.each(["CREATED", "CANCELLED"] as const)(
+    "can be priced by a customer whose only order is %s",
+    async (status) => {
+      const c = await firstOrderCoupon();
+      const user = await makeUser(`first-${status}`);
+      await makeOrderWithStatus(user, status);
+      expect((await price(user, c.code)).code).toBe(c.code);
+    }
+  );
+
+  it("is refused with COUPON_FIRST_ORDER_ONLY for a customer with a paid order", async () => {
+    const c = await firstOrderCoupon();
+    const user = await makeUser("first-paid");
+    await makeOrderWithStatus(user, "PAID");
+    expect(await refusal(price(user, c.code))).toBe("COUPON_FIRST_ORDER_ONLY");
+  });
+
+  it("is refused for every status that counts as revenue", async () => {
+    const c = await firstOrderCoupon();
+    for (const status of REVENUE_STATUSES) {
+      const user = await makeUser(`first-${status}`);
+      await makeOrderWithStatus(user, status);
+      expect(await refusal(price(user, c.code))).toBe(
+        "COUPON_FIRST_ORDER_ONLY"
+      );
+    }
+  });
+
+  it("does not stop a returning customer using a normal coupon", async () => {
+    const c = await createCoupon(make(), ADMIN);
+    const user = await makeUser("first-normal");
+    await makeOrderWithStatus(user, "PAID");
+    expect((await price(user, c.code)).code).toBe(c.code);
+  });
+
+  it("is checked again inside the reserve transaction", async () => {
+    const c = await firstOrderCoupon();
+    const user = await makeUser("first-fresh");
+    const { orderId } = await makeOrder(user);
+    const priced = await price(user, c.code, { excludeOrderId: orderId });
+    await makeOrderWithStatus(user, "PAID");
+    expect(await refusal(reserve(priced, orderId, user))).toBe(
+      "COUPON_FIRST_ORDER_ONLY"
+    );
+    expect(
+      await prisma.couponRedemption.count({ where: { couponId: c.id } })
+    ).toBe(0);
+  });
+
+  it("is reserved for a customer who still has no paid order", async () => {
+    const c = await firstOrderCoupon();
+    const user = await makeUser("first-reserve");
+    const { orderId } = await makeOrder(user);
+    const priced = await price(user, c.code, { excludeOrderId: orderId });
+    await reserve(priced, orderId, user);
+    expect(
+      await prisma.couponRedemption.count({ where: { couponId: c.id } })
+    ).toBe(1);
+  });
+});
+
 describe("couponResponseFields", () => {
   it("returns strings, and null when there is no coupon", () => {
     expect(
@@ -810,6 +891,7 @@ describe("listCouponOffers", () => {
         name: c.name,
         description: "Ten off",
         forYou: false,
+        firstOrderOnly: false,
         endsAt: c.endsAt!.toISOString(),
         listAmount: "999",
         discountAmount: "99.9",
@@ -1043,6 +1125,25 @@ describe("listCouponOffers", () => {
     expect(preview.code).toBe(c.code);
   });
 
+  it("lists a first-order coupon for a new customer and not for a returning one", async () => {
+    const c = await shown({ firstOrderOnly: true });
+    const fresh = await makeUser("offers-first-new");
+    const freshSession = await sessionFor(fresh);
+    const { offers } = await listCouponOffers(freshSession.id, fresh);
+    expect(offers.find((o) => o.code === c.code)?.firstOrderOnly).toBe(true);
+
+    const returning = await makeUser("offers-first-returning");
+    await makeOrderWithStatus(returning, "DELIVERED");
+    const returningSession = await sessionFor(returning);
+    expect(await codesOf(returningSession.id, returning)).not.toContain(c.code);
+
+    // Unpaid and cancelled orders do not make a customer a returning one.
+    const abandoned = await makeUser("offers-first-abandoned");
+    await makeOrderWithStatus(abandoned, "CANCELLED");
+    const abandonedSession = await sessionFor(abandoned);
+    expect(await codesOf(abandonedSession.id, abandoned)).toContain(c.code);
+  });
+
   it("stays at a fixed number of queries however many coupons exist", async () => {
     // Counts the statements that reach the database driver (the adapter's
     // queryRaw/executeRaw), whatever the Prisma call that issued them.
@@ -1076,6 +1177,11 @@ describe("listCouponOffers", () => {
       // The session, the country, the price, the candidates and two grouped
       // counts; never one query per coupon.
       expect(many).toBe(6);
+
+      // A first-order candidate adds one lookup for the caller, not one per coupon.
+      await shown({ firstOrderOnly: true });
+      await shown({ firstOrderOnly: true });
+      expect(await queriesFor(session.id, owner)).toBe(7);
     } finally {
       spy.mockRestore();
     }

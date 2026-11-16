@@ -22,7 +22,8 @@ export type CouponRejection =
   | "USED_UP"
   | "ALREADY_USED"
   | "WRONG_CURRENCY"
-  | "NOT_APPLICABLE";
+  | "NOT_APPLICABLE"
+  | "FIRST_ORDER_ONLY";
 
 export interface CouponRules {
   isActive: boolean;
@@ -40,6 +41,7 @@ export interface CouponRules {
   comicIds: string[];
   countryCodes: string[];
   coverTypes: CoverType[];
+  firstOrderOnly: boolean;
 }
 
 export interface CouponContext {
@@ -56,6 +58,8 @@ export interface CouponContext {
   totalUses: number;
   /** The same count for this customer only. */
   userUses: number;
+  /** The customer has an order that counts as revenue (see REVENUE_STATUSES). Read only when the coupon is first-order-only. */
+  hasPaidOrder: boolean;
 }
 
 export type CouponEvaluation =
@@ -117,9 +121,12 @@ export function computeDiscount(
  *   3. inactive                 -> INVALID
  *      not started yet          -> NOT_STARTED
  *   4. currency -> WRONG_CURRENCY; comic, country, cover type -> NOT_APPLICABLE
- *   5. total limit reached      -> USED_UP
- *   6. per-customer limit       -> ALREADY_USED
- *   7. the discount would be zero (price already at the minimum) -> NOT_APPLICABLE
+ *   5. first-order-only and the customer already has a paid order
+ *                               -> FIRST_ORDER_ONLY (before the limits, so a
+ *                                  returning customer is told the true reason)
+ *   6. total limit reached      -> USED_UP
+ *   7. per-customer limit       -> ALREADY_USED
+ *   8. the discount would be zero (price already at the minimum) -> NOT_APPLICABLE
  *
  * startsAt and endsAt are both inclusive: a coupon is valid at the exact
  * instant it starts and at the exact instant it ends.
@@ -167,6 +174,10 @@ export function evaluateCoupon(
     !rules.coverTypes.includes(ctx.coverType)
   ) {
     return { ok: false, reason: "NOT_APPLICABLE" };
+  }
+
+  if (rules.firstOrderOnly && ctx.hasPaidOrder) {
+    return { ok: false, reason: "FIRST_ORDER_ONLY" };
   }
 
   if (rules.usageLimit !== null && ctx.totalUses >= rules.usageLimit) {

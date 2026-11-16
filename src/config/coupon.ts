@@ -80,6 +80,7 @@ export const COUPON_MESSAGES = {
   ALREADY_USED: "You have already used this code.",
   WRONG_CURRENCY: "This code is not valid for orders in this currency.",
   NOT_APPLICABLE: "This code does not apply to this book.",
+  FIRST_ORDER_ONLY: "This code is only for a customer's first order.",
   TOO_MANY_ATTEMPTS: "Too many attempts. Please try again in about 10 minutes.",
   CHANGED_RETRY: "This offer was just updated. Please try again.",
 } as const;

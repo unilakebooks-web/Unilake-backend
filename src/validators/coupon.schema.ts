@@ -134,6 +134,7 @@ export const createCouponSchema = z.object({
 
   combinable: z.boolean().default(false),
   showAtCheckout: z.boolean().default(false),
+  firstOrderOnly: z.boolean().default(false),
   isActive: z.boolean().default(true),
 });
 
@@ -176,6 +177,7 @@ export const updateCouponSchema = z
 
     combinable: z.boolean().optional(),
     showAtCheckout: z.boolean().optional(),
+    firstOrderOnly: z.boolean().optional(),
     isActive: z.boolean().optional(),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {

@@ -29,6 +29,7 @@ function rules(overrides: Partial<CouponRules> = {}): CouponRules {
     comicIds: [],
     countryCodes: [],
     coverTypes: [],
+    firstOrderOnly: false,
     ...overrides,
   };
 }
@@ -45,6 +46,7 @@ function ctx(overrides: Partial<CouponContext> = {}): CouponContext {
     now: NOW,
     totalUses: 0,
     userUses: 0,
+    hasPaidOrder: false,
     ...overrides,
   };
 }
@@ -350,7 +352,72 @@ describe("evaluateCoupon", () => {
     });
   });
 
+  describe("first orders only", () => {
+    it("accepts a customer with no paid order", () => {
+      expect(evaluateCoupon(rules({ firstOrderOnly: true }), ctx()).ok).toBe(
+        true
+      );
+    });
+
+    it("refuses a returning customer with FIRST_ORDER_ONLY", () => {
+      expect(
+        evaluateCoupon(
+          rules({ firstOrderOnly: true }),
+          ctx({ hasPaidOrder: true })
+        )
+      ).toEqual({ ok: false, reason: "FIRST_ORDER_ONLY" });
+    });
+
+    it("does not affect a normal coupon", () => {
+      expect(evaluateCoupon(rules(), ctx({ hasPaidOrder: true })).ok).toBe(
+        true
+      );
+    });
+  });
+
   describe("order of the checks", () => {
+    it("keeps INVALID for another customer's or an inactive first-order coupon ahead of FIRST_ORDER_ONLY", () => {
+      const returning = ctx({ hasPaidOrder: true });
+      expect(
+        evaluateCoupon(
+          rules({ firstOrderOnly: true, restrictedToUserId: "someone-else" }),
+          returning
+        )
+      ).toEqual({ ok: false, reason: "INVALID" });
+      expect(
+        evaluateCoupon(
+          rules({ firstOrderOnly: true, isActive: false }),
+          returning
+        )
+      ).toEqual({ ok: false, reason: "INVALID" });
+    });
+
+    it("reports a scope refusal before FIRST_ORDER_ONLY", () => {
+      const r = rules({
+        firstOrderOnly: true,
+        allComics: false,
+        comicIds: ["other"],
+      });
+      expect(evaluateCoupon(r, ctx({ hasPaidOrder: true }))).toEqual({
+        ok: false,
+        reason: "NOT_APPLICABLE",
+      });
+    });
+
+    it("reports FIRST_ORDER_ONLY before USED_UP and ALREADY_USED", () => {
+      const r = rules({
+        firstOrderOnly: true,
+        usageLimit: 1,
+        perCustomerLimit: 1,
+      });
+      expect(
+        evaluateCoupon(
+          r,
+          ctx({ hasPaidOrder: true, totalUses: 1, userUses: 1 })
+        )
+      ).toEqual({ ok: false, reason: "FIRST_ORDER_ONLY" });
+    });
+
     it("reports an out-of-scope coupon as NOT_APPLICABLE before a reached limit", () => {
       const r = rules({ allComics: false, comicIds: ["other"], usageLimit: 1 });
       expect(evaluateCoupon(r, ctx({ totalUses: 1 }))).toEqual({
