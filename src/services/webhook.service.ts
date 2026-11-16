@@ -203,14 +203,29 @@ async function handlePaymentCaptured(
     });
 
   // Flip Order + Session in a transaction. Enqueue OUTSIDE.
+  let repricedMeanwhile = false;
   await prisma.$transaction(async (tx) => {
     const { count: orderFlipped } = await tx.order.updateMany({
-      where: { id: order.id, status: "CREATED" },
+      where: { id: order.id, status: "CREATED", razorpayOrderId },
       data: {
         status: "PAID",
         razorpayPaymentId,
       },
     });
+
+    // The customer changed the coupon after we looked the order up, so this
+    // payment is now for a superseded Razorpay order. Nothing was flipped;
+    // leave the order for the admin notice (as for any superseded payment).
+    if (orderFlipped === 0) {
+      const current = await tx.order.findUnique({
+        where: { id: order.id },
+        select: { status: true },
+      });
+      if (current?.status === "CREATED") {
+        repricedMeanwhile = true;
+        return;
+      }
+    }
 
     // Bill of Supply number — INR orders only, and only by the call that
     // actually flipped the order, so a redelivered webhook never takes a
@@ -230,6 +245,14 @@ async function handlePaymentCaptured(
       data: { status: "PAID" },
     });
   });
+
+  if (repricedMeanwhile) {
+    logger.error(
+      { orderId: order.id, razorpayOrderId, razorpayPaymentId, eventId },
+      "Payment captured on a Razorpay order that was superseded a moment ago — order left unpaid for manual follow-up"
+    );
+    return;
+  }
 
   logger.info(
     {

@@ -66,6 +66,11 @@ export const MIN_PAYABLE_MAJOR_UNITS = 1;
 export const MAX_FAILED_COUPON_ATTEMPTS = 10;
 export const FAILED_COUPON_ATTEMPT_WINDOW_SECONDS = 10 * 60;
 
+// With Redis down the client queues commands until it reconnects (the job queue
+// needs that), so a plain await would hang the customer's request. The attempt
+// limiter gives up after this long and treats Redis as unavailable.
+export const REDIS_WAIT_MS = 500;
+
 // ============================================================
 // CUSTOMER-FACING MESSAGES
 // ============================================================

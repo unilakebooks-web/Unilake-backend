@@ -35,6 +35,7 @@ import {
   priceCoupon,
   redeemCouponInTx,
   releaseCouponInTx,
+  repriceUnpaidOrder,
   reserveCouponInTx,
   type PricedCoupon,
 } from "../../src/services/couponCheckout.service.js";
@@ -171,6 +172,59 @@ const redemption = (
       ...(createdAt && { createdAt }),
     },
   });
+
+describe("repriceUnpaidOrder, refreshing a lapsed reservation", () => {
+  it("does not turn a redeemed use back into a reservation when the payment landed meanwhile", async () => {
+    const c = await createCoupon(make({ usageLimit: 1 }), ADMIN);
+    const u = await makeUser("refresh-race");
+    const { sessionId, orderId } = await makeOrder(u);
+    const priced = await price(u, c.code);
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        amount: priced.finalAmount,
+        couponCode: priced.code,
+        razorpayOrderId: `order_${MARK}_${orderId.slice(0, 8)}`,
+      },
+    });
+    await redemption(
+      c.id,
+      u,
+      orderId,
+      "RESERVED",
+      new Date(Date.now() - 3 * 60 * 60 * 1000)
+    );
+    // What checkout read: the order still unpaid, with a lapsed reservation.
+    const staleOrder = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+    });
+    const session = await prisma.orderSession.findUniqueOrThrow({
+      where: { id: sessionId },
+    });
+    // Then the payment webhook lands first.
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { status: "PAID" },
+    });
+    await prisma.couponRedemption.update({
+      where: { orderId },
+      data: { status: "REDEEMED" },
+    });
+
+    await expect(
+      repriceUnpaidOrder({
+        order: staleOrder,
+        session,
+        couponCode: c.code,
+        callerUserId: u,
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
+    const row = await prisma.couponRedemption.findUniqueOrThrow({
+      where: { orderId },
+    });
+    expect(row.status).toBe("REDEEMED");
+  });
+});
 
 async function cleanup() {
   const coupons = await prisma.coupon.findMany({

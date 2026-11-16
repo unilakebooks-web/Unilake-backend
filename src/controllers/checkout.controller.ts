@@ -29,13 +29,15 @@ export const initiateCheckoutHandler = asyncHandler(
     // Checkout itself does not require a login (the session's owner was set
     // earlier), but changing a coupon does, so read the caller if there is one.
     let callerUserId: string | undefined;
-    try {
-      const sessionData = await auth.api.getSession({
-        headers: fromNodeHeaders(req.headers),
-      });
-      if (sessionData?.user) callerUserId = sessionData.user.id;
-    } catch {
-      // No valid session: the caller stays anonymous.
+    if (body.data.couponCode !== undefined) {
+      try {
+        const sessionData = await auth.api.getSession({
+          headers: fromNodeHeaders(req.headers),
+        });
+        if (sessionData?.user) callerUserId = sessionData.user.id;
+      } catch {
+        // No valid session: the caller stays anonymous.
+      }
     }
 
     const result = await initiateCheckout(parsed.data.sessionId, {

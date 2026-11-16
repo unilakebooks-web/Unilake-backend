@@ -665,8 +665,9 @@ export async function releaseCouponInTx(
 
 /**
  * Called from the payment-captured transaction, only by the delivery that flips
- * the order to PAID. Turns the order's reservation into a redemption whatever
- * its state: the customer has already paid the discounted price. DB writes only.
+ * the order to PAID. Turns the order's reservation into a redemption, even one
+ * that lapsed: the customer has already paid the discounted price. A RELEASED
+ * use (coupon removed, full price paid) is left alone. DB writes only.
  */
 export async function redeemCouponInTx(
   tx: Prisma.TransactionClient,
@@ -793,15 +794,22 @@ export async function repriceUnpaidOrder(args: {
     const pricedNow = priced; // a copy, so the callback below keeps the narrowed type
     const slot = await acquireSlot(`coupon:${priced.couponId}`);
     try {
-      await prisma.$transaction(
-        (tx) =>
-          reserveCouponInTx(tx, {
-            priced: pricedNow,
-            orderId: order.id,
-            userId: callerUserId,
-          }),
-        COUPON_TRANSACTION_OPTIONS
-      );
+      await prisma.$transaction(async (tx) => {
+        // Lock the order row first: a payment landing right now must not have its
+        // redemption turned back into a reservation by this refresh.
+        const [row] = await tx.$queryRaw<{ status: string }[]>`
+          SELECT status FROM orders WHERE id = ${order.id} FOR UPDATE`;
+        if (row?.status !== "CREATED") {
+          throw new ConflictError(
+            "This order changed while you were applying the code. Please refresh and try again."
+          );
+        }
+        await reserveCouponInTx(tx, {
+          priced: pricedNow,
+          orderId: order.id,
+          userId: callerUserId,
+        });
+      }, COUPON_TRANSACTION_OPTIONS);
     } finally {
       slot();
     }

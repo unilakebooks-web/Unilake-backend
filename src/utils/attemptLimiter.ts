@@ -3,6 +3,7 @@ import { logger } from "../lib/logger.js";
 import {
   FAILED_COUPON_ATTEMPT_WINDOW_SECONDS,
   MAX_FAILED_COUPON_ATTEMPTS,
+  REDIS_WAIT_MS,
 } from "../config/coupon.js";
 
 /**
@@ -16,11 +17,6 @@ import {
  */
 
 const key = (userId: string) => `coupon:failed-attempts:${userId}`;
-
-// With Redis down the client queues commands until it reconnects (the queue
-// connection needs that), so a plain await would hang the customer's request.
-// Give up after this long and treat it as "Redis unavailable".
-const REDIS_WAIT_MS = 500;
 
 function withinLimit<T>(command: Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout;
