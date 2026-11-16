@@ -83,6 +83,18 @@ export function toSmallestUnit(amount: number, currency: string): number {
   return smallest;
 }
 
+/**
+ * Number of decimal places a currency uses (0, 2 or 3), from the same sets
+ * toSmallestUnit uses, so a rounded discount and the Razorpay amount can never
+ * disagree about where the decimal point is.
+ */
+export function currencyExponent(currency: string): 0 | 2 | 3 {
+  const upperCurrency = currency.toUpperCase();
+  if (ZERO_DECIMAL_CURRENCIES.has(upperCurrency)) return 0;
+  if (THREE_DECIMAL_CURRENCIES.has(upperCurrency)) return 3;
+  return 2;
+}
+
 export function verifyWebhookSignature(
   rawBody: string,
   signature: string
