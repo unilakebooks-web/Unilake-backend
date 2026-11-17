@@ -153,7 +153,7 @@ async function filterRowsNeedingJobs(rowIds: string[]): Promise<Set<string>> {
  * and the batch goes in whole or not at all — the parallel version left books
  * half-queued when some adds threw and others had already landed.
  */
-async function addPageJobs(
+export async function addPageJobs(
   rows: { pageVersionId: string; pageNumber: number }[]
 ): Promise<void> {
   if (rows.length === 0) return;
