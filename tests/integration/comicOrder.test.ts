@@ -225,12 +225,9 @@ describe("reordering", () => {
     const q = await make("race-q", { sortOrder: 71 });
     const r = await make("race-r", { sortOrder: 72 });
     const everyone = (await publicList()).map((row) => row.id);
-    const wanted = [
-      ...everyone.filter((id) => ![p.id, q.id, r.id].includes(id)),
-      q.id,
-      r.id,
-      p.id,
-    ];
+    // q goes to the very front, so if it were written it would get the smallest
+    // number in the set, never its own 71.
+    const wanted = [q.id, ...everyone.filter((id) => id !== q.id)];
     // A real race, not a stub: a transaction locks q's row, the reorder passes
     // its check (reads do not wait) and then waits at q's write; q is then
     // unpublished and the lock released, so the write meets a row that is no
@@ -253,7 +250,34 @@ describe("reordering", () => {
     expect(await sortOrderOf(q.id)).toBe(71); // never written: no longer published
     const order = mine(await publicList());
     expect(order).not.toContain(q.id);
-    expect(order.indexOf(r.id)).toBeLessThan(order.indexOf(p.id));
+    expect(order.indexOf(p.id)).toBeLessThan(order.indexOf(r.id)); // the rest keep their order
+  });
+
+  it("saves a long list in one go and applies it", async () => {
+    const rows = Array.from({ length: 200 }, (_, i) => ({
+      title: TITLE(`bulk-${i}`),
+      pageCount: 6,
+      freePreviewPages: 2,
+      status: "PUBLISHED" as const,
+      sortOrder: 1000 + i,
+    }));
+    await prisma.comic.createMany({ data: rows });
+    const created = await prisma.comic.findMany({
+      where: { title: { startsWith: TITLE("bulk-") } },
+      select: { id: true },
+    });
+    ids.push(...created.map((c) => c.id));
+    const everyone = (await publicList()).map((r) => r.id);
+    const bulk = new Set(created.map((c) => c.id));
+    const reversed = [
+      ...everyone.filter((id) => !bulk.has(id)),
+      ...everyone.filter((id) => bulk.has(id)).reverse(),
+    ];
+    const started = Date.now();
+    await reorderComics(reversed);
+    const seconds = (Date.now() - started) / 1000;
+    expect((await publicList()).map((r) => r.id)).toEqual(reversed);
+    expect(seconds).toBeLessThan(10); // one statement, not 200 round trips
   });
 
   it("a book still publishing is not part of the set, and a republished book is", async () => {

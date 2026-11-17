@@ -23,7 +23,7 @@ import type {
   UpdateComicStatusInput,
   UploadThumbnailsBatchInput,
 } from "../validators/comic.schema.js";
-import type { Prisma } from "../generated/prisma/client.js";
+import { Prisma } from "../generated/prisma/client.js";
 import type { UpdateComicInput } from "../validators/comic.schema.js";
 
 // The order customers see on the home page, Our Books and Explore more books: the
@@ -860,20 +860,26 @@ export const reorderComics = async (orderedIds: string[], actorId?: string) => {
 
   const assignments = orderedIds.map((id, i) => ({ id, sortOrder: values[i]! }));
 
-  // One transaction. updateMany (not update) so a book deleted mid-request is
-  // skipped instead of failing the whole save. Statements run in ascending id
-  // order so two simultaneous saves lock rows in the same order (no deadlock).
-  await prisma.$transaction(
-    [...assignments]
-      .sort((a, b) => (a.id < b.id ? -1 : 1))
-      .map((a) =>
-        prisma.comic.updateMany({
-          // Still PUBLISHED: a book unpublished since the check above is left alone.
-          where: { id: a.id, status: "PUBLISHED" },
-          data: { sortOrder: a.sortOrder },
-        })
-      )
+  // ONE statement (a list of 200 books is one round trip, not 200). The CTE locks
+  // the rows in ascending id order first, so two simultaneous saves lock in the same
+  // order (no deadlock). Only rows still PUBLISHED are written: a book unpublished or
+  // deleted since the check above is left alone instead of failing the whole save.
+  const pairs = Prisma.join(
+    assignments.map((a) => Prisma.sql`(${a.id}, ${a.sortOrder}::int)`)
   );
+  await prisma.$executeRaw(Prisma.sql`
+    WITH locked AS (
+      SELECT "id" FROM "comics"
+      WHERE "id" IN (${Prisma.join(assignments.map((a) => a.id))})
+        AND "status" = 'PUBLISHED'
+      ORDER BY "id"
+      FOR UPDATE
+    )
+    UPDATE "comics" AS c
+    SET "sortOrder" = v.n
+    FROM (VALUES ${pairs}) AS v(id, n), locked
+    WHERE c."id" = v.id AND c."id" = locked."id"
+  `);
 
   logger.info({ orderedIds, actorId }, "Comics reordered");
 
