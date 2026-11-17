@@ -9,6 +9,10 @@ import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { config } from "../config/env.js";
 import {
+  deleteUploadedFiles,
+  optimiseUploadedImages,
+} from "./imageUpload.service.js";
+import {
   ConflictError,
   NotFoundError,
   ValidationError,
@@ -42,6 +46,20 @@ const COMIC_ORDER_BY = [
 // new books at the bottom instead.
 const NEW_COMIC_POSITION: "top" | "bottom" = "top";
 
+// A key some book already stores is not an upload: converting it would delete the
+// file that book shows. Only fresh keys (never a stored URL) reach this.
+async function assertNotStored(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  const stored = await prisma.comic.count({
+    where: { coverThumbnailUrls: { hasSome: keys.map(getPublicUrl) } },
+  });
+  if (stored > 0) {
+    throw new ValidationError(
+      "An uploaded image is not valid. Please upload it again."
+    );
+  }
+}
+
 async function nextComicSortOrder(tx: Prisma.TransactionClient) {
   const edge = await tx.comic.aggregate({
     _min: { sortOrder: true },
@@ -71,6 +89,10 @@ const normalizeThumbnailInput = (input: string): string => {
 
   return input.startsWith(prefix) ? input.slice(prefix.length) : input;
 };
+
+/** Where optimised cover thumbnails are stored, and where their raw uploads are put (see generateThumbnailUploadUrl). */
+const THUMBNAIL_FOLDER = "comics/thumbnails";
+const THUMBNAIL_RAW_PREFIX = "comics/temp/";
 
 /**
  * Throws a 400 when any of the given theme ids does not exist.
@@ -153,6 +175,8 @@ export const generateComicVideoUploadUrl = async (
 };
 
 export const createComic = async (data: CreateComicInput) => {
+  // Optimised files written for this request; removed again if the comic is not saved.
+  let optimisedKeys: string[] = [];
   try {
     logger.info(
       { title: data.title },
@@ -164,9 +188,16 @@ export const createComic = async (data: CreateComicInput) => {
     await assertThemesExist(themeIds);
     // Create only ever receives fresh keys today, but normalizing here keeps
     // create and update behaving identically for any future caller.
-    const coverThumbnailUrls = thumbnailKeys.map((entry) =>
-      getPublicUrl(normalizeThumbnailInput(entry))
+    // Each new thumbnail is shrunk to a web-sized WebP first (R2 work, so before
+    // the transaction). The raw uploads are deleted once the comic is saved.
+    await assertNotStored(thumbnailKeys.map(normalizeThumbnailInput));
+    const optimised = await optimiseUploadedImages(
+      thumbnailKeys.map(normalizeThumbnailInput),
+      THUMBNAIL_FOLDER,
+      THUMBNAIL_RAW_PREFIX
     );
+    optimisedKeys = optimised.map((o) => o.key);
+    const coverThumbnailUrls = optimised.map((o) => getPublicUrl(o.key));
 
     const newComic = await prisma.$transaction(async (tx) => {
       const sortOrder = await nextComicSortOrder(tx);
@@ -195,6 +226,8 @@ export const createComic = async (data: CreateComicInput) => {
       return comic;
     });
 
+    await deleteUploadedFiles(optimised.map((o) => o.originalKey));
+
     logger.info(
       { comicId: newComic.id },
       "Successfully created draft comic with pricing rules"
@@ -202,6 +235,7 @@ export const createComic = async (data: CreateComicInput) => {
     return newComic;
   } catch (error: any) {
     logger.error({ err: error, data }, "Failed to create comic in database");
+    await deleteUploadedFiles(optimisedKeys);
 
     if (error.code === "P2002") {
       throw new ConflictError(
@@ -214,6 +248,8 @@ export const createComic = async (data: CreateComicInput) => {
 };
 
 export const updateComic = async (comicId: string, data: UpdateComicInput) => {
+  // Optimised files written for this request; removed again if the update is not saved.
+  let optimisedKeys: string[] = [];
   try {
     const comic = await prisma.comic.findUnique({ where: { id: comicId } });
 
@@ -223,6 +259,7 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
 
     const updateData: Prisma.ComicUpdateInput = {};
     let oldR2KeysToDelete: string[] = [];
+    let rawUploadsToDiscard: string[] = [];
 
     if (data.title !== undefined) updateData.title = data.title;
     if (data.genderTags !== undefined) updateData.genderTags = data.genderTags;
@@ -234,14 +271,41 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
       // Entries may arrive as freshly-uploaded keys OR as URLs the client is
       // re-sending to keep. Normalizing both to keys first means the diff below
       // compares like with like, so a kept thumbnail is never seen as removed.
+      //
+      // Only the freshly-uploaded ones (a key, not a stored URL) are optimised;
+      // the ones being kept stay as they are, so a reorder or a delete does not
+      // redo every thumbnail.
+      //
+      // An entry is "kept" when it is a URL under the current base, or exactly one of
+      // the comic's stored thumbnails whatever its address (an older host, an inline
+      // image): that one is neither a new upload nor ours to delete.
+      const keepPrefix = `${config.r2.publicUrlBase.replace(/\/$/, "")}/`;
+      const isKept = (entry: string) =>
+        entry.startsWith(keepPrefix) || comic.coverThumbnailUrls.includes(entry);
+      const freshKeys = [
+        ...new Set(data.thumbnailKeys.filter((entry) => !isKept(entry))),
+      ];
+      await assertNotStored(freshKeys);
+      const optimised = await optimiseUploadedImages(
+        freshKeys,
+        THUMBNAIL_FOLDER,
+        THUMBNAIL_RAW_PREFIX
+      );
+      rawUploadsToDiscard = optimised.map((o) => o.originalKey);
+      optimisedKeys = optimised.map((o) => o.key);
+      const optimisedKeyFor = new Map(optimised.map((o) => [o.originalKey, o.key]));
       const newUrls = data.thumbnailKeys.map((entry) =>
-        getPublicUrl(normalizeThumbnailInput(entry))
+        comic.coverThumbnailUrls.includes(entry)
+          ? entry
+          : getPublicUrl(optimisedKeyFor.get(entry) ?? normalizeThumbnailInput(entry))
       );
       updateData.coverThumbnailUrls = newUrls;
 
       const publicBase = config.r2.publicUrlBase.replace(/\/$/, "");
       const removedUrls = comic.coverThumbnailUrls.filter((u) => !newUrls.includes(u));
-      oldR2KeysToDelete = removedUrls.map((u) => u.replace(`${publicBase}/`, ""));
+      oldR2KeysToDelete = removedUrls
+        .filter((u) => u.startsWith(`${publicBase}/`))
+        .map((u) => u.replace(`${publicBase}/`, ""));
     }
     if (data.videoKey !== undefined) {
       // Scalar, so the contract is simpler than thumbnailKeys': omitted means
@@ -293,6 +357,7 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
         logger.warn({ error, comicId, oldR2Key }, "Failed to delete old comic thumbnail from R2");
       }
     }
+    await deleteUploadedFiles(rawUploadsToDiscard);
     logger.info(
       { comicId, updatedFields: Object.keys(updateData) },
       "Successfully updated comic"
@@ -301,6 +366,7 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
     return updatedComic;
   } catch (error: any) {
     logger.error({ err: error, comicId }, "Failed to update comic");
+    await deleteUploadedFiles(optimisedKeys);
     throw error;
   }
 };

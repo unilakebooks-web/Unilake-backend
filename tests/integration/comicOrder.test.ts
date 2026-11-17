@@ -7,8 +7,20 @@
 import "../setup/env.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import sharp from "sharp";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// createComic now turns each uploaded thumbnail into a WebP, so it reads the raw
+// upload from storage. Nothing reaches R2: reads, writes and deletes are stubbed.
+vi.mock("../../src/lib/r2.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/r2.js")>()),
+  downloadFileToBuffer: vi.fn(),
+  uploadFile: vi.fn().mockResolvedValue(undefined),
+  deleteFile: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { prisma } from "../../src/lib/prisma.js";
+import { downloadFileToBuffer } from "../../src/lib/r2.js";
 import {
   createComic,
   getPublicComicsList,
@@ -352,13 +364,25 @@ describe("reordering", () => {
 describe("a new book goes to the top", () => {
   it("takes a number smaller than every other book's", async () => {
     const theme = await prisma.theme.findFirstOrThrow();
+    vi.mocked(downloadFileToBuffer).mockResolvedValue(
+      await sharp({
+        create: {
+          width: 40,
+          height: 30,
+          channels: 3,
+          background: { r: 30, g: 90, b: 200 },
+        },
+      })
+        .png()
+        .toBuffer()
+    );
     const created = await createComic(
       createComicSchema.parse({
         title: TITLE("created through the service"),
         genderTags: ["UNISEX"],
         pageCount: 6,
         freePreviewPages: 2,
-        thumbnailKeys: ["comics/__vitest__/thumb.png"],
+        thumbnailKeys: ["comics/temp/vitest-thumb.png"],
         pricing: [
           { countryId: INDIA_ID, coverType: "HARDCOVER", mrp: 999, price: 799 },
         ],

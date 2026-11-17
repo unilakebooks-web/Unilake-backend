@@ -89,3 +89,47 @@ export const probeImageDimensions = async (
 
   return { width: metadata.width, height: metadata.height };
 };
+
+/** Long edge of an optimised cover thumbnail or hero image, in pixels. */
+const THUMBNAIL_MAX_EDGE = 1200;
+
+/** WebP quality for those. 82 keeps illustrated covers clean at about a tenth of the PNG's size. */
+const THUMBNAIL_WEBP_QUALITY = 82;
+
+/**
+ * Shrinks an image the admin uploaded for the storefront (a comic's cover
+ * thumbnails, a hero slide) to a web-sized WebP.
+ *
+ * Those files used to be stored exactly as picked, and covers of 1 to 10 MB were
+ * downloaded for a card a few hundred pixels wide. The long edge is capped at
+ * THUMBNAIL_MAX_EDGE, which still covers a 2x display of the largest place one
+ * is drawn. Never for page artwork or masks: those are the print masters.
+ *
+ * `rotate()` applies the camera's orientation flag before the metadata is
+ * dropped, so a phone photo does not come out sideways.
+ *
+ * @param buffer - The uploaded file, as read back from R2
+ * @returns WebP bytes, ready to upload
+ * @throws ValidationError if the bytes are not a readable image
+ */
+export const buildThumbnailImage = async (buffer: Buffer): Promise<Buffer> => {
+  try {
+    return await sharp(buffer)
+      .rotate()
+      .resize({
+        width: THUMBNAIL_MAX_EDGE,
+        height: THUMBNAIL_MAX_EDGE,
+        // "inside" caps the long edge and keeps the aspect ratio: never crops.
+        fit: "inside",
+        // A small image is not enlarged: that adds bytes and blur for nothing.
+        withoutEnlargement: true,
+      })
+      .webp({ quality: THUMBNAIL_WEBP_QUALITY })
+      .toBuffer();
+  } catch (error) {
+    logger.warn({ error }, "Sharp failed to optimise an uploaded image");
+    throw new ValidationError(
+      "The uploaded image could not be read. Upload a valid PNG, JPEG or WEBP file."
+    );
+  }
+};
