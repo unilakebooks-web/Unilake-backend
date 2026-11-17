@@ -19,6 +19,7 @@ type RunPodStatus =
   | "IN_PROGRESS"
   | "COMPLETED"
   | "FAILED"
+  | "TIMED_OUT" // terminal: RunPod gave up on the job (see pollUntilDone)
   | "CANCELLED";
 
 // All four response shapes flattened into one type.
@@ -252,7 +253,13 @@ async function pollUntilDone(jobId: string): Promise<RunPodStatusResponse> {
       );
       return response;
     }
-    if (response.status === "FAILED" || response.status === "CANCELLED") {
+    // TIMED_OUT is as final as FAILED. Left to the "keep waiting" branch below it
+    // was polled for the whole ~17 minute cap before BullMQ retried.
+    if (
+      response.status === "FAILED" ||
+      response.status === "CANCELLED" ||
+      response.status === "TIMED_OUT"
+    ) {
       const errorMessage = response.error ?? "Unknown RunPod failure";
       logger.error(
         { jobId, status: response.status, error: errorMessage },
