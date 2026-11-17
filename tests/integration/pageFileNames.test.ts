@@ -4,11 +4,15 @@
 // (the setup import refuses any other database) and the local MinIO bucket,
 // with real PNGs, because creating and updating a page measures the image.
 import "../setup/env.js";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { prisma } from "../../src/lib/prisma.js";
 import { createPage, updatePage } from "../../src/services/page.service.js";
-import { deleteFile, uploadFile } from "../../src/lib/r2.js";
+import {
+  deleteFile,
+  downloadFileToBuffer,
+  uploadFile,
+} from "../../src/lib/r2.js";
 import { ValidationError } from "../../src/utils/errors.js";
 import {
   createPageSchema,
@@ -53,6 +57,22 @@ async function newPage(input: Record<string, unknown> = {}) {
 
 async function read(pageId: string) {
   return prisma.page.findUniqueOrThrow({ where: { id: pageId } });
+}
+
+// A crashed earlier run may have left its pages behind (fixed page numbers).
+beforeAll(async () => {
+  await prisma.page.deleteMany({
+    where: { comicId: COMIC_ID, pageNumber: { gte: FIRST_PAGE_NUMBER } },
+  });
+});
+
+async function exists(key: string) {
+  try {
+    await downloadFileToBuffer("public", key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 afterAll(async () => {
@@ -258,41 +278,86 @@ describe("replacing a mask follows the same rules as artwork", () => {
   });
 });
 
-describe("the name as a display value", () => {
-  it("removes control characters including NUL, trims, and cuts to 255 characters", () => {
-    const parsed = createPageSchema.parse({
-      pageNumber: 1,
-      artworkFileName: `  a\u0000b\u0007c\n${"x".repeat(400)}  `,
-    });
-    expect(parsed.artworkFileName?.startsWith("abc")).toBe(true);
-    expect(Array.from(parsed.artworkFileName ?? "").length).toBe(255);
-    expect(parsed.artworkFileName).not.toMatch(/[\u0000-\u001f]/);
+describe("the old file after a replace", () => {
+  it("is deleted from storage when the file is replaced", async () => {
+    const art = await putPng("d1-art", 40, 60);
+    const page = await newPage({ artworkUrl: art, artworkFileName: "old.png" });
+    const art2 = await putPng("d1-art2", 40, 60);
+    await updatePage(page.id, updatePageSchema.parse({ artworkUrl: art2 }));
+    expect(await exists(art)).toBe(false);
+    expect(await exists(art2)).toBe(true);
   });
 
-  it("counts characters, not bytes, so a Hindi name is not split", () => {
-    const hindi = "पृष्ठ".repeat(100); // 500 code points
-    const parsed = createPageSchema.parse({
-      pageNumber: 1,
-      artworkFileName: hindi,
+  it("is kept when the same file is sent again", async () => {
+    const art = await putPng("d2-art", 40, 60);
+    const page = await newPage({ artworkUrl: art });
+    await updatePage(
+      page.id,
+      updatePageSchema.parse({ artworkUrl: art, artworkFileName: "x.png" })
+    );
+    expect(await exists(art)).toBe(true);
+  });
+});
+
+describe("the name as a display value", () => {
+  const segments = (value: string | undefined) =>
+    Array.from(new Intl.Segmenter().segment(value ?? "")).length;
+  const parse = (name: unknown) =>
+    createPageSchema.parse({ pageNumber: 1, artworkFileName: name })
+      .artworkFileName;
+
+  it("removes control characters including NUL and trims", () => {
+    expect(parse("  a\u0000b\u0007c\n  ")).toBe("abc");
+  });
+
+  it("cuts at 255 visible characters: 255 stay, 256 are cut", () => {
+    expect(segments(parse("x".repeat(255)))).toBe(255);
+    expect(segments(parse("x".repeat(256)))).toBe(255);
+    expect(segments(parse("x".repeat(400)))).toBe(255);
+  });
+
+  it("never splits an emoji or a Hindi conjunct at the cut", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(parse("x".repeat(255) + family)).toBe("x".repeat(255));
+    expect(parse("x".repeat(254) + family)).toBe("x".repeat(254) + family);
+    const hindi = parse("\u092A\u0943\u0937\u094D\u0920".repeat(200)) ?? "";
+    expect(segments(hindi)).toBe(255);
+    expect(hindi.endsWith("\u0943") || hindi.endsWith("\u0920")).toBe(true);
+  });
+
+  it("treats a value that is not a string as no name instead of failing", () => {
+    for (const bad of [null, 12, true, {}, ["a"]]) {
+      expect(parse(bad)).toBeUndefined();
+    }
+    expect(
+      updatePageSchema.parse({ hasFace: true, artworkFileName: null })
+    ).toEqual({
+      hasFace: true,
+      artworkFileName: undefined,
     });
-    expect(Array.from(parsed.artworkFileName ?? "").length).toBe(255);
+  });
+
+  it("replaces a lone surrogate so the value can always be stored", () => {
+    const value = parse("bad\ud800name.png") ?? "";
+    expect(value.isWellFormed()).toBe(true);
+    expect(value.startsWith("bad")).toBe(true);
+  });
+
+  it("removes bidi overrides and zero-width spaces but keeps joiners", () => {
+    expect(parse("ab\u202Egpj\u200B.png")).toBe("abgpj.png");
+    expect(parse("a\u200Db")).toBe("a\u200Db");
   });
 
   it("treats an empty or whitespace-only name as no name", () => {
-    expect(
-      createPageSchema.parse({ pageNumber: 1, artworkFileName: "  \n " })
-        .artworkFileName
-    ).toBeUndefined();
+    expect(parse("  \n ")).toBeUndefined();
     expect(
       updatePageSchema.parse({ artworkFileName: "" }).artworkFileName
     ).toBeUndefined();
   });
 
   it("keeps a name that looks like markup as plain text", () => {
-    const parsed = createPageSchema.parse({
-      pageNumber: 1,
-      artworkFileName: `<img src=x onerror=alert(1)>.png`,
-    });
-    expect(parsed.artworkFileName).toBe(`<img src=x onerror=alert(1)>.png`);
+    expect(parse(`<img src=x onerror=alert(1)>.png`)).toBe(
+      `<img src=x onerror=alert(1)>.png`
+    );
   });
 });

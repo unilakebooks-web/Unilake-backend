@@ -11,16 +11,31 @@ import {
 } from "./bubble.schema.js";
 
 
-// A display name must never block a page save, so this is lenient: control
-// characters (NUL included, Postgres rejects it) are removed, the result is
-// trimmed and cut to 255 characters (by code point), and an empty result means
-// "no name". Only used for showing the name back to the admin.
+// A display name must never block a page save, so this accepts anything and
+// cleans it: a value that is not a string means "no name"; a lone surrogate is
+// replaced (Postgres and the JSON layer can reject it), control characters (NUL
+// included), zero-width and bidi-override characters are removed, the result is
+// trimmed and cut to 255 characters counted as user-visible characters, so an
+// emoji or a conjunct is never split. An empty result means "no name". Only
+// used for showing the name back to the admin.
 const fileNameField = z
-  .string()
+  .unknown()
   .transform((value) => {
-    // eslint-disable-next-line no-control-regex
-    const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-    const cut = Array.from(cleaned).slice(0, 255).join("");
+    if (typeof value !== "string") return undefined;
+    const cleaned = value
+      .toWellFormed()
+      // eslint-disable-next-line no-control-regex
+      .replace(
+        /[\u0000-\u001f\u007f-\u009f\u200b\u202a-\u202e\u2066-\u2069\ufeff]/g,
+        ""
+      )
+      .trim();
+    const cut = Array.from(
+      new Intl.Segmenter().segment(cleaned),
+      (part) => part.segment
+    )
+      .slice(0, 255)
+      .join("");
     return cut === "" ? undefined : cut;
   })
   .optional();
