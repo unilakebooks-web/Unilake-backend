@@ -173,6 +173,17 @@ describe("updating a page", () => {
     expect((await read(page.id)).artworkFileName).toBe("kept.png");
   });
 
+  it("keeps the name when the same file is sent again with no name", async () => {
+    const art = await putPng("u5b-art", 40, 60);
+    const page = await newPage({
+      artworkUrl: art,
+      artworkFileName: "kept.png",
+    });
+    await updatePage(page.id, updatePageSchema.parse({ artworkUrl: art }));
+    expect((await read(page.id)).artworkFileName).toBe("kept.png");
+    expect(await exists(art)).toBe(true);
+  });
+
   it("leaves names alone on an update that touches neither file", async () => {
     const art = await putPng("u6-art", 40, 60);
     const page = await newPage({
