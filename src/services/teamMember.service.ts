@@ -230,18 +230,34 @@ export async function reorderTeamMembers(orderedIds: string[]) {
   const total = await prisma.teamMember.count();
 
   if (existing.length !== orderedIds.length || total !== orderedIds.length) {
+    logger.warn(
+      { expected: total, received: orderedIds.length },
+      "Team reorder refused: the list is not the current team"
+    );
     throw new ConflictError(
-      `The team list has changed since it was loaded (expected ${total} members, received ${orderedIds.length}). Reload and try again.`
+      "The team list has changed since you opened it. Reload and try again."
     );
   }
 
   // Renumber by array position, one transaction. No unique constraint on
   // sortOrder, so no two-phase renumber is needed (same as reorderFaqs).
-  await prisma.$transaction(
-    orderedIds.map((id, index) =>
-      prisma.teamMember.update({ where: { id }, data: { sortOrder: index } })
-    )
-  );
+  try {
+    await prisma.$transaction(
+      orderedIds.map((id, index) =>
+        prisma.teamMember.update({ where: { id }, data: { sortOrder: index } })
+      )
+    );
+  } catch (err) {
+    // P2025: someone was deleted between the check above and the write. The
+    // transaction rolled back, so nothing changed; answer the same 409 so the
+    // admin's screen reloads instead of showing a server error.
+    if ((err as { code?: string }).code === "P2025") {
+      throw new ConflictError(
+        "The team list has changed since you opened it. Reload and try again."
+      );
+    }
+    throw err;
+  }
 
   logger.info({ orderedIds }, "Team members reordered");
 

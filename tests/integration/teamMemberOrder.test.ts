@@ -6,7 +6,7 @@
 import "../setup/env.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../src/lib/prisma.js";
 import {
   createTeamMember,
@@ -52,7 +52,7 @@ afterAll(async () => {
 });
 
 describe("a new member goes to the end", () => {
-  it("takes the next sortOrder and appears after the existing members", async () => {
+  it("takes the next sortOrder and appears in creation order among themselves", async () => {
     const a = await make("A");
     const b = await make("B");
     const c = await make("C");
@@ -107,9 +107,25 @@ describe("reordering", () => {
       ...everyone.slice(1),
       "00000000-0000-4000-8000-00000000dead",
     ];
+    const before = mine(await getAllTeamMembers());
     await expect(reorderTeamMembers(withGhost)).rejects.toBeInstanceOf(
       ConflictError
     );
+    expect(mine(await getAllTeamMembers())).toEqual(before);
+  });
+
+  it("answers 409 (not a server error) when a member is deleted during the save", async () => {
+    const everyone = (await getAllTeamMembers()).map((r) => r.id);
+    const before = mine(await getAllTeamMembers());
+    // The checks pass, then the write finds a row gone (Prisma P2025).
+    // One failing call; any later call goes through to the real function.
+    vi.spyOn(prisma, "$transaction").mockRejectedValueOnce(
+      Object.assign(new Error("gone"), { code: "P2025" })
+    );
+    await expect(reorderTeamMembers(everyone)).rejects.toBeInstanceOf(
+      ConflictError
+    );
+    expect(mine(await getAllTeamMembers())).toEqual(before);
   });
 
   it("the request schema rejects empty, duplicate and non-uuid lists", () => {
@@ -128,7 +144,7 @@ describe("reordering", () => {
     ).toBe(true);
   });
 
-  it("does not change anything but the order", async () => {
+  it("changes only the order and the updated time of a member", async () => {
     const [a] = ids as [string];
     const before = await prisma.teamMember.findUniqueOrThrow({
       where: { id: a },
