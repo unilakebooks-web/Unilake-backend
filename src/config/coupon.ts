@@ -20,6 +20,12 @@ export const COUPON_CODE_MAX = 32;
 export const GENERATED_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const GENERATED_CODE_LENGTH = 8;
 
+// Most single-use codes the admin can create in one go. Each batch is one
+// transaction of three statements however many codes it holds; the cap keeps
+// the response, the list and the admin's copy and paste manageable.
+// ⚠️ also in unilake-frontend/components/admin/coupon/couponFormRules.ts (MAX_BULK_COUPONS)
+export const MAX_BULK_COUPONS = 100;
+
 // ============================================================
 // RESERVATIONS
 // ============================================================

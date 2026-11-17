@@ -1,4 +1,4 @@
-import { randomInt } from "crypto";
+import { randomInt, randomUUID } from "crypto";
 import { Prisma } from "../generated/prisma/client.js";
 import type { CoverType } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
@@ -14,6 +14,7 @@ import { couponShapeIssues, pastDateIssues } from "../utils/couponShape.js";
 import type { CouponShape } from "../utils/couponShape.js";
 import { reservationCutoff } from "../utils/couponPricing.js";
 import type {
+  CreateBulkCouponsInput,
   CreateCouponInput,
   ListCouponsQueryInput,
   UpdateCouponInput,
@@ -281,6 +282,127 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
 
   // Unreachable: the loop either returns or throws.
   throw duplicateCodeError();
+}
+
+/**
+ * Creates several single-use coupons in one go: the same rules and one generated
+ * code each. Everything is checked once up front, then the whole batch is written
+ * in one transaction of three statements (the coupons, their comic links, a read
+ * back), however many codes there are: each round trip to the database costs
+ * about 0.35 s, so one create per code would take far too long.
+ *
+ * The codes are generated and de-duplicated in memory first. If one of them is
+ * already taken the insert fails as a whole (nothing is kept) and a fresh batch of
+ * codes is tried, as createCoupon retries a single generated code.
+ *
+ * ⚠️ The rule checks mirror createCoupon; change both together.
+ */
+export async function createBulkCoupons(
+  data: CreateBulkCouponsInput,
+  adminId: string
+) {
+  const allComics = data.allComics;
+  const comicIds = allComics ? [] : [...new Set(data.comicIds)];
+  // A first-order coupon is used once per customer; an empty limit becomes 1.
+  const perCustomerLimit =
+    data.firstOrderOnly && data.perCustomerLimit === undefined
+      ? 1
+      : (data.perCustomerLimit ?? null);
+
+  assertWellFormed({
+    kind: "SINGLE_USE",
+    discountType: data.discountType,
+    percentOff: data.percentOff ?? null,
+    amountOff: data.amountOff ?? null,
+    maxDiscount: data.maxDiscount ?? null,
+    currency: data.currency ?? null,
+    startsAt: data.startsAt ?? null,
+    endsAt: data.endsAt ?? null,
+    usageLimit: 1,
+    perCustomerLimit,
+    allComics,
+    comicCount: comicIds.length,
+    restrictedToUserId: null,
+    showAtCheckout: false,
+    firstOrderOnly: data.firstOrderOnly,
+  });
+  await assertReferencesExist(prisma, null, comicIds);
+  await assertCountriesExist(prisma, data.countryCodes);
+  await assertCurrencyFitsCountries(
+    prisma,
+    data.currency ?? null,
+    data.countryCodes
+  );
+
+  for (let attempt = 1; attempt <= CODE_ATTEMPTS; attempt++) {
+    const codes = new Set<string>();
+    while (codes.size < data.quantity) {
+      codes.add(randomCode(data.codeLength));
+    }
+    const ids = [...codes].map((code) => ({ code, id: randomUUID() }));
+
+    try {
+      const rows = await prisma.$transaction(async (tx) => {
+        await tx.coupon.createMany({
+          data: ids.map(({ code, id }) => ({
+            id,
+            code,
+            name: data.name,
+            description: data.description ?? null,
+            kind: "SINGLE_USE" as const,
+            discountType: data.discountType,
+            percentOff: toDecimal(data.percentOff),
+            amountOff: toDecimal(data.amountOff),
+            maxDiscount: toDecimal(data.maxDiscount),
+            currency: data.currency ?? null,
+            startsAt: data.startsAt ?? null,
+            endsAt: data.endsAt ?? null,
+            usageLimit: 1,
+            perCustomerLimit,
+            restrictedToUserId: null,
+            allComics,
+            countryCodes: data.countryCodes,
+            coverTypes: data.coverTypes as CoverType[],
+            combinable: data.combinable,
+            showAtCheckout: false,
+            firstOrderOnly: data.firstOrderOnly,
+            isActive: data.isActive,
+            createdById: adminId,
+            updatedById: adminId,
+          })),
+        });
+        if (comicIds.length > 0) {
+          await tx.couponComic.createMany({
+            data: ids.flatMap(({ id }) =>
+              comicIds.map((comicId) => ({ couponId: id, comicId }))
+            ),
+          });
+        }
+        return tx.coupon.findMany({
+          where: { id: { in: ids.map(({ id }) => id) } },
+          include: COUPON_INCLUDE,
+          orderBy: { code: "asc" },
+        });
+      }, COUPON_TRANSACTION_OPTIONS);
+
+      logger.info(
+        { count: rows.length, createdById: adminId },
+        "Single-use coupons created in bulk"
+      );
+      return rows.map((row) => toCouponResponse(row, { redeemed: 0, reserved: 0 }));
+    } catch (error: any) {
+      if (error.code === "P2002" && attempt < CODE_ATTEMPTS) continue;
+      if (error.code === "P2002") {
+        throw new ConflictError(
+          "Could not generate enough unused codes. Try again, or choose a longer code length"
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Unreachable: the loop either returns or throws.
+  throw new ConflictError("Could not generate enough unused codes. Try again");
 }
 
 // ============================================================
