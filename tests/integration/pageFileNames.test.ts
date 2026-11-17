@@ -14,6 +14,7 @@ import {
   uploadFile,
 } from "../../src/lib/r2.js";
 import { ValidationError } from "../../src/utils/errors.js";
+import { getPublicComicDetails } from "../../src/services/comic.service.js";
 import {
   createPageSchema,
   updatePageSchema,
@@ -278,6 +279,56 @@ describe("replacing a mask follows the same rules as artwork", () => {
   });
 });
 
+describe("names that are not plain ASCII are stored and read back exactly", () => {
+  it("round-trips Hindi, emoji and markup-like names through the database", async () => {
+    const names = [
+      "\u092A\u0943\u0937\u094D\u0920-\u096D.png",
+      "page \u{1F468}\u200D\u{1F469}\u200D\u{1F467} 7 & #%.webp",
+      "<img src=x onerror=alert(1)>.png",
+    ];
+    for (const [i, name] of names.entries()) {
+      const art = await putPng(`n${i}-art`, 40, 60);
+      const page = await newPage({
+        artworkUrl: art,
+        artworkFileName: name,
+      });
+      expect((await read(page.id)).artworkFileName).toBe(name);
+    }
+  });
+
+  it("stores a name cleaned of NUL and a lone surrogate (Postgres accepts it)", async () => {
+    const art = await putPng("n9-art", 40, 60);
+    const page = await newPage({
+      artworkUrl: art,
+      artworkFileName: "a\u0000b\ud800c.png",
+    });
+    const stored = (await read(page.id)).artworkFileName ?? "";
+    expect(stored.startsWith("ab")).toBe(true);
+    expect(stored.isWellFormed()).toBe(true);
+  });
+});
+
+describe("existing behaviour next to the name writes", () => {
+  it("still warns when a replaced artwork changes the aspect ratio", async () => {
+    const art = await putPng("w1-art", 40, 60);
+    const page = await newPage({ artworkUrl: art, artworkFileName: "a.png" });
+    const wide = await putPng("w1-wide", 120, 40);
+    const result = await updatePage(
+      page.id,
+      updatePageSchema.parse({ artworkUrl: wide })
+    );
+    expect(result.warnings.length).toBe(1);
+    expect(result.warnings[0]).toMatch(/aspect ratio/i);
+  });
+
+  it("never returns a file name from the public comic details", async () => {
+    const art = await putPng("w2-art", 40, 60);
+    await newPage({ artworkUrl: art, artworkFileName: "SECRET-NAME-w2.png" });
+    const details = await getPublicComicDetails(COMIC_ID);
+    expect(JSON.stringify(details)).not.toMatch(/SECRET-NAME-w2|FileName/);
+  });
+});
+
 describe("replacing one file leaves the other name alone", () => {
   it("replacing the artwork keeps the mask name", async () => {
     const art = await putPng("k1-art", 40, 60);
@@ -361,5 +412,7 @@ describe("the old file after a replace", () => {
       updatePageSchema.parse({ artworkUrl: art, artworkFileName: "x.png" })
     );
     expect(await exists(art)).toBe(true);
+    // the page had no name; sending one with the same file does not add it
+    expect((await read(page.id)).artworkFileName).toBeNull();
   });
 });

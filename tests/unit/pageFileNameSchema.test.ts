@@ -36,20 +36,27 @@ describe("the page file name cleaner", () => {
     expect(parse("x".repeat(254) + family)).toBe("x".repeat(254) + family);
     const hindi = parse("\u092A\u0943\u0937\u094D\u0920".repeat(200)) ?? "";
     expect(segments(hindi)).toBe(255);
-    // Re-cutting the result changes nothing, so no visible character was split.
-    expect(parse(hindi)).toBe(hindi);
+    // The result is exactly the first 255 visible characters of the input.
+    const input = "\u092A\u0943\u0937\u094D\u0920".repeat(200);
+    const first255 = Array.from(
+      new Intl.Segmenter().segment(input),
+      (part) => part.segment
+    )
+      .slice(0, 255)
+      .join("");
+    expect(hindi).toBe(first255);
   });
 
   it("treats a value that is not a string as no name instead of failing", () => {
     for (const bad of [null, 12, true, {}, ["a"]]) {
       expect(parse(bad)).toBeUndefined();
     }
-    expect(
-      updatePageSchema.parse({ hasFace: true, artworkFileName: null })
-    ).toEqual({
+    const parsed = updatePageSchema.parse({
       hasFace: true,
-      artworkFileName: undefined,
+      artworkFileName: null,
     });
+    expect(parsed.hasFace).toBe(true);
+    expect(parsed.artworkFileName).toBeUndefined();
   });
 
   it("replaces a lone surrogate so the value can always be stored", () => {
