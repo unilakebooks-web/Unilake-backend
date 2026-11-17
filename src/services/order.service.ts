@@ -691,84 +691,83 @@ export async function getAdminOrderDetail(orderId: string) {
 // ⚠️ The eligibility rule exists in two forms that must stay in step:
 // this helper (the detail response's canMarkSentToPrinter) and the WHERE
 // clause of the mark statement in setOrderSentToPrinter below.
-// A print-ready PDF must exist and the order must not be cancelled.
+// A print-ready PDF must exist (a non-empty path) and the order must not be cancelled.
 function canMarkSentToPrinter(order: {
   pdfUrl: string | null;
   status: string;
 }): boolean {
-  return order.pdfUrl !== null && order.status !== "CANCELLED";
+  return !!order.pdfUrl && order.status !== "CANCELLED";
 }
 
 // One atomic statement per action. Raw SQL on purpose: prisma.order.update
 // would also write updatedAt from the client, and marking is bookkeeping that
 // must not move it (updatedAt is a sort key and the order's "last real
-// change"). The first date is kept: a second mark changes nothing.
+// change"). RETURNING gives the answer from the same statement, so there is
+// no second read to race with. The first date is kept: a second mark changes
+// nothing.
 export async function setOrderSentToPrinter(
   orderId: string,
   sent: boolean,
   adminId: string
 ) {
   if (sent) {
-    const changed = await prisma.$executeRaw`
+    const marked = await prisma.$queryRaw<{ sentToPrinterAt: Date }[]>`
       UPDATE "orders" SET "sentToPrinterAt" = now()
       WHERE "id" = ${orderId}
         AND "sentToPrinterAt" IS NULL
-        AND "pdfUrl" IS NOT NULL
+        AND "pdfUrl" IS NOT NULL AND "pdfUrl" <> ''
         AND "status" <> 'CANCELLED'
+      RETURNING "sentToPrinterAt"
     `;
 
-    if (changed === 0) {
-      // Nothing changed: report what the order is now.
-      const order = await prisma.order.findUnique({
-        where: { id: orderId },
-        select: { id: true, sentToPrinterAt: true, pdfUrl: true, status: true },
-      });
-      if (!order) {
-        throw new NotFoundError("Order not found");
-      }
-      if (order.sentToPrinterAt === null && !canMarkSentToPrinter(order)) {
-        throw new ConflictError(
-          order.pdfUrl === null
-            ? "This order has no print-ready PDF yet"
-            : "This order is cancelled"
-        );
-      }
-      // Already marked: success, the first date is kept. Also reached when an
-      // undo landed between the statement and this read: the order is
-      // eligible, so report what it is now (no mark) instead of an error.
-      return { id: order.id, sentToPrinterAt: order.sentToPrinterAt };
+    if (marked.length === 1) {
+      logger.info(
+        { orderId, action: "marked", adminId },
+        "Order sent to printer"
+      );
+      return { id: orderId, sentToPrinterAt: marked[0]!.sentToPrinterAt };
     }
 
-    logger.info({ orderId, action: "marked", adminId }, "Order sent to printer");
-  } else {
-    const changed = await prisma.$executeRaw`
-      UPDATE "orders" SET "sentToPrinterAt" = NULL
-      WHERE "id" = ${orderId} AND "sentToPrinterAt" IS NOT NULL
-    `;
-
-    if (changed === 0) {
-      const exists = await prisma.order.findUnique({
-        where: { id: orderId },
-        select: { id: true },
-      });
-      if (!exists) {
-        throw new NotFoundError("Order not found");
-      }
-      return { id: orderId, sentToPrinterAt: null };
+    // Nothing changed: report what the order is now.
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, sentToPrinterAt: true, pdfUrl: true, status: true },
+    });
+    if (!order) {
+      throw new NotFoundError("Order not found");
     }
+    if (order.sentToPrinterAt === null && !canMarkSentToPrinter(order)) {
+      throw new ConflictError(
+        !order.pdfUrl
+          ? "This order has no print-ready PDF yet"
+          : "This order is cancelled"
+      );
+    }
+    // Already marked: success, the first date is kept.
+    return { id: order.id, sentToPrinterAt: order.sentToPrinterAt };
+  }
 
+  const cleared = await prisma.$queryRaw<{ id: string }[]>`
+    UPDATE "orders" SET "sentToPrinterAt" = NULL
+    WHERE "id" = ${orderId} AND "sentToPrinterAt" IS NOT NULL
+    RETURNING "id"
+  `;
+
+  if (cleared.length === 1) {
     logger.info(
       { orderId, action: "unmarked", adminId },
       "Order sent to printer mark removed"
     );
+    return { id: orderId, sentToPrinterAt: null };
   }
 
-  const order = await prisma.order.findUnique({
+  // Nothing to clear: unknown order is a 404, an unmarked order is a success.
+  const exists = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { id: true, sentToPrinterAt: true },
+    select: { id: true },
   });
-  if (!order) {
+  if (!exists) {
     throw new NotFoundError("Order not found");
   }
-  return order;
+  return { id: orderId, sentToPrinterAt: null };
 }

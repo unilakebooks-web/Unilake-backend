@@ -354,6 +354,17 @@ describe("the two forms of the eligibility rule agree", () => {
   });
 });
 
+describe("an empty PDF path is not a print-ready PDF", () => {
+  it("is refused by the mark and reported as not markable", async () => {
+    const id = await makeOrder(customer, "CONFIRMED", true);
+    await prisma.order.update({ where: { id }, data: { pdfUrl: "" } });
+    expect((await getAdminOrderDetail(id)).canMarkSentToPrinter).toBe(false);
+    await expect(setOrderSentToPrinter(id, true, ADMIN)).rejects.toThrow(
+      "no print-ready PDF"
+    );
+  });
+});
+
 describe("customer responses", () => {
   it("never contain the mark or its date", async () => {
     const id = await makeOrder(customer, "CONFIRMED", true);
