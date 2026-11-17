@@ -521,6 +521,10 @@ model Order {
   billNumber   String?   @unique
   billIssuedAt DateTime?
 
+  // Internal only, never returned to customers: when an admin recorded that
+  // the print-ready PDF was handed to the printer. Null means not sent.
+  sentToPrinterAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
