@@ -1062,6 +1062,21 @@ export async function maybeMarkPaidReady(
   // No paid pages in this book means nothing was enqueued. Never flip.
   if (totalPaidPages === 0) return "not-done";
 
+  // A page that is being made again is not settled, even if an older variant of
+  // it failed: the terminal-row count below would otherwise call the book ready
+  // (and email the customer) while a page is still running. Same rule
+  // sendToPrint already enforces. A row that never leaves flight is failed by the
+  // stuck-page sweeper, whose failure path calls this function again.
+  const stillBeingMade = await prisma.pageVersion.findFirst({
+    where: {
+      orderSessionId,
+      pageId: { in: paidPageIds },
+      status: { notIn: ["SD_READY", "FAILED"] },
+    },
+    select: { id: true },
+  });
+  if (stillBeingMade) return "not-done";
+
   // Every terminal PageVersion row for this session's paid pages. Same shape
   // as the preview helper — deliberately NOT distinct on pageId because a
   // page can hold a failed attempt + a successful regeneration and both
