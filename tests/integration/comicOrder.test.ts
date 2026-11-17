@@ -189,6 +189,37 @@ describe("reordering", () => {
     expect((await publicList()).map((r) => r.id)).toEqual(before);
   });
 
+  it("a filtered public list keeps the admin's order (a bestseller badge does not float up)", async () => {
+    const first = await make("filter-first", { sortOrder: 60 });
+    const last = await make("filter-last", {
+      sortOrder: 61,
+      isBestseller: true,
+    });
+    const rows = await getPublicComicsList({
+      search: `${MARK} ${RUN} filter-`,
+    } as Parameters<typeof getPublicComicsList>[0]);
+    expect(rows.map((r) => r.id)).toEqual([first.id, last.id]);
+  });
+
+  it("two saves at the same moment both finish, and the result is one of the two orders", async () => {
+    const ordered = (await publicList()).map((r) => r.id);
+    const reversed = [...ordered].reverse();
+    const results = await Promise.allSettled([
+      reorderComics(ordered),
+      reorderComics(reversed),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    const after = (await publicList()).map((r) => r.id);
+    expect([ordered.join(), reversed.join()]).toContain(after.join());
+    const numbers = (
+      await prisma.comic.findMany({
+        where: { status: "PUBLISHED" },
+        select: { sortOrder: true },
+      })
+    ).map((c) => c.sortOrder);
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+
   it("a book still publishing is not part of the set, and a republished book is", async () => {
     const book = await make("publishing", { status: "PUBLISHING" as never });
     const everyone = (await publicList()).map((r) => r.id);

@@ -836,7 +836,7 @@ export const getAdminComicDetail = async (comicId: string) => {
  * same number (several never arranged), the numbers are made strictly increasing,
  * otherwise a dragged book would tie and fall back to newest first.
  */
-export const reorderComics = async (orderedIds: string[]) => {
+export const reorderComics = async (orderedIds: string[], actorId?: string) => {
   const published = await prisma.comic.findMany({
     where: { status: "PUBLISHED" },
     select: { id: true, sortOrder: true },
@@ -868,13 +868,14 @@ export const reorderComics = async (orderedIds: string[]) => {
       .sort((a, b) => (a.id < b.id ? -1 : 1))
       .map((a) =>
         prisma.comic.updateMany({
-          where: { id: a.id },
+          // Still PUBLISHED: a book unpublished since the check above is left alone.
+          where: { id: a.id, status: "PUBLISHED" },
           data: { sortOrder: a.sortOrder },
         })
       )
   );
 
-  logger.info({ orderedIds }, "Comics reordered");
+  logger.info({ orderedIds, actorId }, "Comics reordered");
 
   return assignments;
 };

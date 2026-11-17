@@ -290,7 +290,7 @@ export const getAdminComicsHandler = asyncHandler(
 
 export const reorderComicsHandler = asyncHandler(
   async (req: Request, res: Response) => {
-    const comics = await reorderComics(req.body.orderedIds);
+    const comics = await reorderComics(req.body.orderedIds, req.user!.id);
     sendSuccess(res, 200, comics);
   }
 );
