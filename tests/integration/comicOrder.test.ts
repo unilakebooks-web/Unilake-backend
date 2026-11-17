@@ -220,6 +220,42 @@ describe("reordering", () => {
     expect(new Set(numbers).size).toBe(numbers.length);
   });
 
+  it("a book unpublished between the check and the write is left alone and the save still finishes", async () => {
+    const p = await make("race-p", { sortOrder: 70 });
+    const q = await make("race-q", { sortOrder: 71 });
+    const r = await make("race-r", { sortOrder: 72 });
+    const everyone = (await publicList()).map((row) => row.id);
+    const wanted = [
+      ...everyone.filter((id) => ![p.id, q.id, r.id].includes(id)),
+      q.id,
+      r.id,
+      p.id,
+    ];
+    // A real race, not a stub: a transaction locks q's row, the reorder passes
+    // its check (reads do not wait) and then waits at q's write; q is then
+    // unpublished and the lock released, so the write meets a row that is no
+    // longer PUBLISHED. If the wait were too short the check itself would see
+    // the unpublish and answer 409, which fails this test loudly.
+    let saving: ReturnType<typeof reorderComics> | undefined;
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.comic.update({
+          where: { id: q.id },
+          data: { status: "UNPUBLISHED" },
+        });
+        saving = reorderComics(wanted);
+        saving.catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+      },
+      { timeout: 30000, maxWait: 30000 }
+    );
+    await saving;
+    expect(await sortOrderOf(q.id)).toBe(71); // never written: no longer published
+    const order = mine(await publicList());
+    expect(order).not.toContain(q.id);
+    expect(order.indexOf(r.id)).toBeLessThan(order.indexOf(p.id));
+  });
+
   it("a book still publishing is not part of the set, and a republished book is", async () => {
     const book = await make("publishing", { status: "PUBLISHING" as never });
     const everyone = (await publicList()).map((r) => r.id);
