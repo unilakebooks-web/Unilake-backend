@@ -684,7 +684,6 @@ export async function getAdminOrderDetail(orderId: string) {
   };
 }
 
-
 // ============================================================
 // SENT TO PRINTER (admin marks an order as handed to the printer)
 // ============================================================
@@ -693,7 +692,7 @@ export async function getAdminOrderDetail(orderId: string) {
 // this helper (the detail response's canMarkSentToPrinter) and the WHERE
 // clause of the mark statement in setOrderSentToPrinter below.
 // A print-ready PDF must exist and the order must not be cancelled.
-export function canMarkSentToPrinter(order: {
+function canMarkSentToPrinter(order: {
   pdfUrl: string | null;
   status: string;
 }): boolean {

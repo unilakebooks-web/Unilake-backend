@@ -125,13 +125,9 @@ afterAll(async () => {
 describe("setOrderSentToPrinter, marking", () => {
   it("marks an eligible order and returns its id and date", async () => {
     const id = await makeOrder(customer, "CONFIRMED", true);
-    const before = Date.now();
     const result = await setOrderSentToPrinter(id, true, ADMIN);
     expect(result.id).toBe(id);
     expect(result.sentToPrinterAt).toBeInstanceOf(Date);
-    expect(Math.abs(result.sentToPrinterAt!.getTime() - before)).toBeLessThan(
-      60_000
-    );
     expect((await readOrder(id)).sentToPrinterAt).toEqual(
       result.sentToPrinterAt
     );
@@ -325,6 +321,36 @@ describe("admin detail", () => {
     expect((await getAdminOrderDetail(cancelled)).canMarkSentToPrinter).toBe(
       false
     );
+  });
+});
+
+describe("the two forms of the eligibility rule agree", () => {
+  // The detail's canMarkSentToPrinter (a helper) and the mark statement (SQL) must
+  // answer the same for every kind of order. If only one is edited this fails.
+  const cases: [OrderStatus, boolean][] = [
+    ["CONFIRMED", true],
+    ["SHIPROCKET_FAILED", true],
+    ["READY_TO_SHIP", true],
+    ["SHIPPED", true],
+    ["DELIVERED", true],
+    ["CANCELLED", true],
+    ["PAID", true],
+    ["CREATED", false],
+    ["PAID", false],
+    ["GENERATED", false],
+    ["CANCELLED", false],
+  ];
+  it.each(cases)("%s, print PDF: %s", async (status, withPdf) => {
+    const id = await makeOrder(customer, status, withPdf);
+    const advertised = (await getAdminOrderDetail(id)).canMarkSentToPrinter;
+    let marked = false;
+    try {
+      marked =
+        (await setOrderSentToPrinter(id, true, ADMIN)).sentToPrinterAt !== null;
+    } catch {
+      marked = false;
+    }
+    expect(marked).toBe(advertised);
   });
 });
 

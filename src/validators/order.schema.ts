@@ -49,8 +49,6 @@ export const setSentToPrinterBodySchema = z.object({
   sent: z.boolean(),
 });
 
-export type SetSentToPrinterBodyInput = z.infer<typeof setSentToPrinterBodySchema>;
-
 // Body for POST /api/admin/orders/:orderId/confirm-dimensions
 // Bounds sourced from shipping.ts to stay in sync with the service-layer
 // re-validation inside pushDimensionsAssignAwbAndSchedulePickup.
