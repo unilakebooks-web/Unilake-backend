@@ -174,8 +174,8 @@ import {
   toggleBlogStatusHandler,
   updateBlogHandler,
 } from "../controllers/blog.controller.js";
-import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler } from "../controllers/order.controller.js";
-import { confirmDimensionsBodySchema } from "../validators/order.schema.js";
+import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler, setSentToPrinterHandler } from "../controllers/order.controller.js";
+import { confirmDimensionsBodySchema, setSentToPrinterBodySchema } from "../validators/order.schema.js";
 import {
   getAdminSitePageHandler,
   getAdminSitePagesHandler,
@@ -551,6 +551,11 @@ router.post(
 );
 router.post("/orders/:orderId/retry-shiprocket", retryShiprocketHandler);
 router.post("/orders/:orderId/refresh-tracking", refreshTrackingHandler);
+router.patch(
+  "/orders/:orderId/sent-to-printer",
+  validateBody(setSentToPrinterBodySchema),
+  setSentToPrinterHandler
+);
 
 // USERS (admin user management)
 // List every account; promote/demote. No ordering hazard: the PATCH has a
