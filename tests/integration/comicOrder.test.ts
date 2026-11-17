@@ -139,6 +139,9 @@ describe("reordering", () => {
   });
 
   it("reuses the numbers the set already held, in order", async () => {
+    // Make the numbers strictly increasing first, so this does not depend on what
+    // earlier tests left behind.
+    await reorderComics((await publicList()).map((r) => r.id));
     const before = (
       await prisma.comic.findMany({
         where: { status: "PUBLISHED" },
@@ -277,7 +280,19 @@ describe("reordering", () => {
     await reorderComics(reversed);
     const seconds = (Date.now() - started) / 1000;
     expect((await publicList()).map((r) => r.id)).toEqual(reversed);
-    expect(seconds).toBeLessThan(10); // one statement, not 200 round trips
+    expect(seconds).toBeLessThan(3); // one statement; 200 separate updates take several seconds
+  });
+
+  it("many pairs of opposite saves over a long list all finish (no deadlock)", async () => {
+    const ordered = (await publicList()).map((r) => r.id);
+    const reversed = [...ordered].reverse();
+    for (let round = 0; round < 5; round++) {
+      const results = await Promise.allSettled([
+        reorderComics(ordered),
+        reorderComics(reversed),
+      ]);
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    }
   });
 
   it("a book still publishing is not part of the set, and a republished book is", async () => {
