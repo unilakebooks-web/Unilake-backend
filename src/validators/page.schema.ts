@@ -11,10 +11,26 @@ import {
 } from "./bubble.schema.js";
 
 
+// A display name must never block a page save, so this is lenient: control
+// characters (NUL included, Postgres rejects it) are removed, the result is
+// trimmed and cut to 255 characters (by code point), and an empty result means
+// "no name". Only used for showing the name back to the admin.
+const fileNameField = z
+  .string()
+  .transform((value) => {
+    // eslint-disable-next-line no-control-regex
+    const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    const cut = Array.from(cleaned).slice(0, 255).join("");
+    return cut === "" ? undefined : cut;
+  })
+  .optional();
+
 export const createPageSchema = z.object({
   pageNumber: z.number().int().positive(),
   artworkUrl: z.string().min(1).optional(),
   maskUrl: z.string().min(1).optional(),
+  artworkFileName: fileNameField,
+  maskFileName: fileNameField,
   hasFace: z.boolean().default(false),
   mirrorFace: z.boolean().default(false),
   faceDirection: z.enum(["front", "three-quarter", "side"]).optional(),
@@ -37,6 +53,8 @@ export const updatePageSchema = z.object({
   pagePrompt: z.string().min(1, "Page prompt cannot be empty").optional(),
   artworkUrl: z.string().min(1).optional(),
   maskUrl: z.string().min(1).optional(),
+  artworkFileName: fileNameField,
+  maskFileName: fileNameField,
   steps: z.number().int().min(MIN_STEPS).max(MAX_STEPS).optional(),
   cfg: z.number().min(MIN_CFG).max(MAX_CFG).optional(),
 }).refine((data) => Object.keys(data).length > 0, {
