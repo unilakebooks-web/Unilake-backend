@@ -114,18 +114,15 @@ describe("reordering", () => {
     expect(mine(await getAllTeamMembers())).toEqual(before);
   });
 
-  it("answers 409 (not a server error) when a member is deleted during the save", async () => {
-    const everyone = (await getAllTeamMembers()).map((r) => r.id);
-    const before = mine(await getAllTeamMembers());
-    // The checks pass, then the write finds a row gone (Prisma P2025).
-    // One failing call; any later call goes through to the real function.
-    vi.spyOn(prisma, "$transaction").mockRejectedValueOnce(
-      Object.assign(new Error("gone"), { code: "P2025" })
-    );
-    await expect(reorderTeamMembers(everyone)).rejects.toBeInstanceOf(
-      ConflictError
-    );
-    expect(mine(await getAllTeamMembers())).toEqual(before);
+  it("Prisma itself raises P2025 for a missing row inside a transaction (what the 409 mapping relies on)", async () => {
+    await expect(
+      prisma.$transaction([
+        prisma.teamMember.update({
+          where: { id: "00000000-0000-4000-8000-00000000dead" },
+          data: { sortOrder: 0 },
+        }),
+      ])
+    ).rejects.toMatchObject({ code: "P2025" });
   });
 
   it("the request schema rejects empty, duplicate and non-uuid lists", () => {
@@ -153,6 +150,10 @@ describe("reordering", () => {
     const after = await prisma.teamMember.findUniqueOrThrow({
       where: { id: a },
     });
+    // Prisma's @updatedAt moves forward on every write, a reorder included.
+    expect(after.updatedAt.getTime()).toBeGreaterThan(
+      before.updatedAt.getTime()
+    );
     expect({ ...after, sortOrder: 0, updatedAt: 0 }).toEqual({
       ...before,
       sortOrder: 0,
@@ -178,6 +179,9 @@ describe("the migration's backfill keeps today's order", () => {
   }
 
   it("numbers members newest first, hidden ones included, ties by id", async () => {
+    // Every row starts at 100, so a row the statement skipped would stay at 100
+    // and sort last instead of in its place. Six rows share one creation time,
+    // so a missing id tie-break would almost surely give a different order.
     const created = (label: string, iso: string, isActive = true) =>
       prisma.teamMember.create({
         data: {
@@ -185,37 +189,34 @@ describe("the migration's backfill keeps today's order", () => {
           role: "Old",
           isActive,
           createdAt: new Date(iso),
-          sortOrder: 0,
+          sortOrder: 100,
         },
       });
     const oldest = await created("oldest", "2026-01-01T00:00:00Z");
-    const middle = await created("middle", "2026-02-01T00:00:00Z");
-    const hidden = await created(
-      "newest hidden",
-      "2026-04-01T00:00:00Z",
+    const hiddenMiddle = await created(
+      "hidden middle",
+      "2026-02-01T00:00:00Z",
       false
     );
-    const tieX = await created("tie-x", "2026-03-01T00:00:00Z");
-    const tieY = await created("tie-y", "2026-03-01T00:00:00Z");
-    const added = [oldest, middle, hidden, tieX, tieY];
+    const ties = [];
+    for (let i = 0; i < 6; i++) {
+      ties.push(await created(`tie-${i}`, "2026-03-01T00:00:00Z"));
+    }
+    const newest = await created("newest", "2026-04-01T00:00:00Z");
+    const added = [oldest, hiddenMiddle, ...ties, newest];
     ids.push(...added.map((m) => m.id));
 
-    await prisma.teamMember.updateMany({
-      where: { id: { in: added.map((m) => m.id) } },
-      data: { sortOrder: 0 },
-    });
     await prisma.$executeRawUnsafe(backfillSql());
 
     const rows = await prisma.teamMember.findMany({
       where: { id: { in: added.map((m) => m.id) } },
       orderBy: { sortOrder: "asc" },
     });
-    const tie = [tieX.id, tieY.id].sort(); // exact ties: ascending id
+    const tieIds = ties.map((m) => m.id).sort(); // exact ties: ascending id
     expect(rows.map((r) => r.id)).toEqual([
-      hidden.id,
-      tie[0],
-      tie[1],
-      middle.id,
+      newest.id,
+      ...tieIds,
+      hiddenMiddle.id,
       oldest.id,
     ]);
 
@@ -244,5 +245,23 @@ describe("the migration's backfill keeps today's order", () => {
       where: { id: m.id },
     });
     expect(after.updatedAt.toISOString()).toBe("2026-01-02T00:00:00.000Z");
+  });
+});
+
+// LAST on purpose: this test replaces prisma.$transaction with a stub and the
+// stub is not undone (restoring it breaks the client), so nothing may run after it.
+describe("a member deleted while the order is being saved", () => {
+  it("answers 409 (not a server error) when a member is deleted during the save", async () => {
+    const everyone = (await getAllTeamMembers()).map((r) => r.id);
+    const before = mine(await getAllTeamMembers());
+    // The checks pass, then the write finds a row gone (Prisma P2025).
+    // One failing call; any later call goes through to the real function.
+    vi.spyOn(prisma, "$transaction").mockRejectedValueOnce(
+      Object.assign(new Error("gone"), { code: "P2025" })
+    );
+    await expect(reorderTeamMembers(everyone)).rejects.toBeInstanceOf(
+      ConflictError
+    );
+    expect(mine(await getAllTeamMembers())).toEqual(before);
   });
 });
