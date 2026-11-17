@@ -13,7 +13,7 @@ import {
 } from "vitest";
 
 const fake = vi.hoisted(() => {
-  type Job = { state: string; removeFails?: boolean };
+  type Job = { state: string; removeFails?: boolean | "other" };
   const jobs = new Map<string, Job>();
   const redis = { status: "ready" };
   return {
@@ -25,6 +25,7 @@ const fake = vi.hoisted(() => {
       return [];
     }),
     removed: [] as string[],
+    getJobCalls: 0,
     settle: vi.fn(async () => ({ flipped: true })),
     emitPaidReady: vi.fn(),
     notifyBookReady: vi.fn(async () => ({})),
@@ -37,13 +38,19 @@ vi.mock("../../src/jobs/queues.js", () => ({
   sdGenerationQueue: {
     addBulk: fake.addBulk,
     getJob: vi.fn(async (id: string) => {
+      fake.getJobCalls++;
       if (fake.onGetJob) await fake.onGetJob(id);
       const job = fake.jobs.get(id);
       if (!job) return null;
       return {
         getState: async () => job.state,
         remove: async () => {
-          if (job.removeFails) throw new Error("Job is locked");
+          if (job.removeFails === "other")
+            throw new Error("redis script error");
+          if (job.removeFails)
+            throw new Error(
+              `Job ${id} could not be removed because it is locked by another worker`
+            );
           fake.removed.push(id);
           fake.jobs.delete(id);
         },
@@ -226,6 +233,7 @@ async function refusal(promise: Promise<unknown>) {
 beforeEach(() => {
   fake.jobs.clear();
   fake.removed.length = 0;
+  fake.getJobCalls = 0;
   fake.addBulk.mockClear();
   fake.settle.mockClear();
   fake.emitPaidReady.mockClear();
@@ -276,11 +284,10 @@ describe("GET the pages of an order", () => {
       failed: 0,
     });
     expect(result.queueAvailable).toBe(true);
-    expect(fake.jobs.size).toBe(0);
+    expect(fake.getJobCalls).toBe(0); // no page in flight: the queue is not asked
   });
 
   it("shows each page's state, which pages use the image service, and cleaned error text", async () => {
-    fake.jobs.set("placeholder", { state: "active" });
     const s = await stage({
       label: "mixed",
       rows: {
@@ -1149,5 +1156,110 @@ describe("review round 1 fixes", () => {
     });
     expect(Date.now() - started).toBeLessThan(10000); // not the whole 25 s
     expect(answer.signature).not.toBe(first.signature);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+
+describe("review round 2 fixes", () => {
+  it("a time-out while clearing old jobs (before anything was added) puts the rows back instead of leaving them queued with no job", async () => {
+    const s = await stage({
+      label: "clear-timeout",
+      rows: { ...finished(1, 3, 4, 5), 2: [[0, "FAILED", 60]] },
+    });
+    fake.onGetJob = (id) =>
+      id === s.rows["2:0"] ? new Promise<void>(() => {}) : Promise.resolve();
+    const err = await refusal(regenerateOrderPages(s.orderId, ADMIN, {}));
+    expect(err?.statusCode).toBe(503);
+    expect(err?.message).toMatch(/put back to failed/);
+    expect(fake.addBulk).not.toHaveBeenCalled();
+    expect(fake.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("an order whose paid pages are all finished can be repaired even if a free preview page never had a row", async () => {
+    const s = await stage({
+      label: "preview-norow",
+      session: "FAILED",
+      rows: finished(2, 3, 4, 5), // page 1 (free preview) has no row
+    });
+    expect((await getOrderPageStatus(s.orderId)).needsRepair).toBe(true);
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    expect(result.repaired).toBe(true);
+    expect(await sessionStatus(s)).toBe("PAID_PAGES_READY");
+  });
+});
+
+describe("review round 2 fixes, part 2", () => {
+  it("a job that fails to be removed for a reason other than a lock is put back, not called 'running'", async () => {
+    const s = await stage({
+      label: "remove-other",
+      rows: { ...finished(1, 3, 4, 5), 2: [[0, "QUEUED", 11]] },
+    });
+    fake.jobs.set(s.rows["2:0"]!, { state: "waiting", removeFails: "other" });
+    const err = await refusal(regenerateOrderPages(s.orderId, ADMIN, {}));
+    expect(err?.statusCode).toBe(503);
+    expect(fake.settle).toHaveBeenCalledWith(
+      s.rows["2:0"],
+      "Could not be queued",
+      expect.anything()
+    );
+  });
+
+  it("a stalled order whose restart was put back (every row failed minutes ago) is NOT told its pages are being made", async () => {
+    const s = await stage({
+      label: "stalled-retry",
+      session: "PAID",
+      orderAgeMinutes: 30,
+      rows: {
+        2: [[0, "FAILED", 3]],
+        3: [[0, "FAILED", 3]],
+        4: [[0, "FAILED", 3]],
+        5: [[0, "FAILED", 3]],
+      },
+    });
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    expect(result.queued).toHaveLength(0);
+    expect(result.sessionRestored).toBe(false);
+    expect(result.skipped.every((x) => x.reason === "COOLING_DOWN")).toBe(true);
+    expect(await sessionStatus(s)).toBe("PAID");
+    expect(fake.notifyPaymentReceived).not.toHaveBeenCalled();
+  });
+
+  it("a failed page of an order that was already announced ready (GENERATED) can be restarted, and the order stays GENERATED", async () => {
+    const s = await stage({
+      label: "generated-restart",
+      order: "GENERATED",
+      session: "PAID_PAGES_READY",
+      rows: { ...finished(1, 2, 4, 5), 3: [[0, "FAILED", 60]] },
+    });
+    const before = await getOrderPageStatus(s.orderId);
+    expect(before.canRegenerate).toBe(true);
+    expect(before.pages.find((p) => p.pageNumber === 3)).toMatchObject({
+      state: "FAILED",
+      restartable: true,
+    });
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {
+      pageNumbers: [3],
+    });
+    expect(result.queued.map((q) => q.pageNumber)).toEqual([3]);
+    expect(result.sessionRestored).toBe(false);
+    expect(await sessionStatus(s)).toBe("PAID_PAGES_READY");
+    expect((await orderRow(s)).status).toBe("GENERATED");
+  });
+
+  it("two restarts of the same order at the same moment: one goes through, the other is limited (429)", async () => {
+    const s = await stage({
+      label: "concurrent",
+      rows: { ...finished(1, 3, 4, 5), 2: [[0, "FAILED", 60]] },
+    });
+    const results = await Promise.allSettled([
+      regenerateOrderPages(s.orderId, ADMIN, {}),
+      regenerateOrderPages(s.orderId, ADMIN, {}),
+    ]);
+    const outcomes = results.map((r) =>
+      r.status === "fulfilled" ? "ok" : (r.reason as AppError).statusCode
+    );
+    expect(outcomes.sort()).toEqual([429, "ok"].sort());
+    expect(fake.addBulk).toHaveBeenCalledTimes(1);
   });
 });

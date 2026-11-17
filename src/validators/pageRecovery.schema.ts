@@ -28,6 +28,10 @@ export const regenerateOrderPagesBodySchema = z.object({
         .int("Page numbers are whole numbers")
         .positive("Page numbers start at 1")
     )
+    .min(
+      1,
+      "Name at least one page, or leave pageNumbers out to restart every restartable page"
+    )
     .max(
       MAX_PAGES_PER_REQUEST,
       `At most ${MAX_PAGES_PER_REQUEST} pages at a time`

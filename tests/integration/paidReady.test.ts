@@ -214,10 +214,37 @@ describe("maybeMarkPaidReady", () => {
     expect(await maybeMarkPaidReady(s.sessionId)).toBe("ready");
   });
 
-  it("is not held back by a running row of ANOTHER session", async () => {
+  it("is not held back by a running row of ANOTHER session, even one on the same pages", async () => {
     const mine = await stage("mine");
-    const other = await stage("other");
-    await row(other, 2, 0, "QUEUED");
+    const comic = await prisma.page.findFirstOrThrow({
+      where: { id: mine.pages[2]! },
+      select: { comicId: true },
+    });
+    // A second session of the same book, with its own running rows on the very same pages.
+    const otherSession = await prisma.orderSession.create({
+      data: {
+        comicId: comic.comicId,
+        userId: (
+          await prisma.orderSession.findUniqueOrThrow({
+            where: { id: mine.sessionId },
+          })
+        ).userId,
+        status: "GENERATING_PAID",
+        coverType: "HARDCOVER",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+    sessionIds.push(otherSession.id);
+    for (const n of [2, 3, 4]) {
+      await prisma.pageVersion.create({
+        data: {
+          orderSessionId: otherSession.id,
+          pageId: mine.pages[n]!,
+          variantIndex: 0,
+          status: "QUEUED",
+        },
+      });
+    }
     await row(mine, 2, 0, "SD_READY");
     await row(mine, 3, 0, "SD_READY");
     await row(mine, 4, 0, "SD_READY");

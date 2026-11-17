@@ -266,13 +266,16 @@ function signatureOf(ctx: Context, rows: RowWithPage[]): string {
   return hash.digest("hex").slice(0, 16);
 }
 
-const everyPageFinished = (pages: PageView[]) =>
-  pages.length > 0 &&
-  pages.every(
-    (p) =>
-      p.rows.some((r) => r.status === "SD_READY") &&
-      !p.rows.some((r) => inFlight(r.status))
+// Readiness (maybeMarkPaidReady) depends on the PAID pages only, so a free preview page
+// that was never generated must not make an order unrepairable.
+const everyPageFinished = (pages: PageView[]) => {
+  const paid = pages.filter((p) => !p.isPreviewPage);
+  return (
+    paid.length > 0 &&
+    paid.every((p) => p.rows.some((r) => r.status === "SD_READY")) &&
+    !pages.some((p) => p.rows.some((r) => inFlight(r.status)))
   );
+};
 
 /** Every page is finished but the order never moved on (a late job finished while the session said FAILED). */
 function needsRepairOf(ctx: Context, pages: PageView[]): boolean {
@@ -482,8 +485,12 @@ async function clearOldJob(
     await withinLimit(job.remove());
     return true;
   } catch (err) {
-    if (err instanceof QueueTimeoutError) throw err;
-    return false; // locked by a worker: it is running
+    // BullMQ refuses to remove a job a worker holds: it is running, leave it to finish.
+    // Any other failure is a real queue problem and must not be called "running".
+    if (err instanceof Error && /locked by another worker/.test(err.message)) {
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -693,9 +700,14 @@ async function run(
   if (
     candidates.length === 0 &&
     rule.mode === "stalled" &&
-    pages.some((p) => p.rows.length > 0)
+    pages.some(
+      (p) =>
+        p.cls.state === "IN_PROGRESS" ||
+        p.cls.state === "WAITING" ||
+        p.cls.retryRunning
+    )
   ) {
-    // The jobs were queued before the webhook crashed: the pages are being made, only the
+    // Pages are really being made (their jobs were queued before the webhook crashed), only the
     // session never moved on, so the completion check would never fire. Move it on.
     const { count } = await prisma.orderSession.updateMany({
       where: { id: ctx.session.id, status: "PAID" },
@@ -838,6 +850,7 @@ async function run(
 
   let toAdd: { pageVersionId: string; pageNumber: number }[] = [];
   const leftRunning = new Set<string>(); // rows whose job is running: never put back to failed
+  let addStarted = false; // once the add has been sent, a time-out may still turn into a job
   try {
     for (const { target, rowId } of reset) {
       const free = target.newRowId
@@ -857,9 +870,14 @@ async function run(
         });
       }
     }
-    if (toAdd.length > 0) await withinLimit(addPageJobs(toAdd));
+    if (toAdd.length > 0) {
+      addStarted = true;
+      await withinLimit(addPageJobs(toAdd));
+    }
   } catch (err) {
-    if (err instanceof QueueTimeoutError) {
+    // Only a time-out of the ADD itself can still become a job later. A time-out while
+    // clearing old jobs means nothing was added: those rows would sit QUEUED with no job.
+    if (err instanceof QueueTimeoutError && addStarted) {
       logger.error(
         { ...log, err },
         "[Page recovery] Queue timed out; no compensation"
