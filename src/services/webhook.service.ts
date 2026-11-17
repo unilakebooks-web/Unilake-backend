@@ -7,6 +7,10 @@ import { config } from "../config/env.js";
 import { processShiprocketStatusUpdate } from "./shiprocket.service.js";
 import { notifyPaymentReceived } from "./notification.service.js";
 import { assignBillNumber } from "./billOfSupply.service.js";
+import {
+  findOrderBySupersededRazorpayOrderId,
+  redeemCouponInTx,
+} from "./couponCheckout.service.js";
 
 /**
  * Handle an incoming Razorpay webhook.
@@ -145,6 +149,28 @@ async function handlePaymentCaptured(
   });
 
   if (!order) {
+    // A customer who changed or removed a coupon after starting checkout got a
+    // new Razorpay order; a payment on the replaced one is not an unknown order.
+    const superseded = await findOrderBySupersededRazorpayOrderId(razorpayOrderId);
+    if (superseded) {
+      logger.error(
+        {
+          razorpayOrderId,
+          razorpayPaymentId,
+          orderId: superseded.id,
+          currentRazorpayOrderId: superseded.razorpayOrderId,
+        },
+        "payment.captured on a SUPERSEDED Razorpay order — the customer paid an earlier amount, admin follow-up needed"
+      );
+      // Attach the event to the order so the admin sees the payment on the order page.
+      await prisma.webhookEvent
+        .update({ where: { eventId }, data: { orderId: superseded.id } })
+        .catch((err) => {
+          logger.error({ err, eventId }, "Could not link the superseded payment event to its order");
+        });
+      return;
+    }
+
     logger.error(
       { razorpayOrderId, razorpayPaymentId },
       "payment.captured: no local Order found for Razorpay order — orphan payment, admin follow-up needed"
@@ -177,14 +203,29 @@ async function handlePaymentCaptured(
     });
 
   // Flip Order + Session in a transaction. Enqueue OUTSIDE.
+  let repricedMeanwhile = false;
   await prisma.$transaction(async (tx) => {
     const { count: orderFlipped } = await tx.order.updateMany({
-      where: { id: order.id, status: "CREATED" },
+      where: { id: order.id, status: "CREATED", razorpayOrderId },
       data: {
         status: "PAID",
         razorpayPaymentId,
       },
     });
+
+    // The customer changed the coupon after we looked the order up, so this
+    // payment is now for a superseded Razorpay order. Nothing was flipped;
+    // leave the order for the admin notice (as for any superseded payment).
+    if (orderFlipped === 0) {
+      const current = await tx.order.findUnique({
+        where: { id: order.id },
+        select: { status: true },
+      });
+      if (current?.status === "CREATED") {
+        repricedMeanwhile = true;
+        return;
+      }
+    }
 
     // Bill of Supply number — INR orders only, and only by the call that
     // actually flipped the order, so a redelivered webhook never takes a
@@ -193,11 +234,38 @@ async function handlePaymentCaptured(
       await assignBillNumber(tx, order.id, new Date());
     }
 
+    // A coupon reserved for this order becomes redeemed with the payment, in the
+    // same transaction. Orders without a coupon do nothing here.
+    if (orderFlipped === 1) {
+      await redeemCouponInTx(tx, order.id);
+    }
+
     await tx.orderSession.updateMany({
       where: { id: order.orderSessionId, status: "AWAITING_PAYMENT" },
       data: { status: "PAID" },
     });
+  }).catch(async (error) => {
+    // The idempotency row was stored before processing. If the status change
+    // failed, remove it so Razorpay's retry is processed instead of skipped as a
+    // duplicate (the order would otherwise stay unpaid after the customer paid).
+    await prisma.webhookEvent
+      .delete({ where: { eventId } })
+      .catch(() => {
+        logger.error(
+          { eventId, orderId: order.id },
+          "Failed to clean up WebhookEvent row after the payment transaction failed"
+        );
+      });
+    throw error;
   });
+
+  if (repricedMeanwhile) {
+    logger.error(
+      { orderId: order.id, razorpayOrderId, razorpayPaymentId, eventId },
+      "Payment captured on a Razorpay order that was superseded a moment ago — order left unpaid for manual follow-up"
+    );
+    return;
+  }
 
   logger.info(
     {

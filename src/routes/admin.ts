@@ -226,6 +226,19 @@ import {
   exportAdminCustomersHandler,
   listAdminCustomersHandler,
 } from "../controllers/customer.controller.js";
+import {
+  createCouponHandler,
+  deleteCouponHandler,
+  getAllCouponsHandler,
+  getCouponHandler,
+  searchCouponCustomersHandler,
+  toggleCouponStatusHandler,
+  updateCouponHandler,
+} from "../controllers/coupon.controller.js";
+import {
+  createCouponSchema,
+  updateCouponSchema,
+} from "../validators/coupon.schema.js";
 
 const router = Router();
 
@@ -598,6 +611,21 @@ router.patch(
   updateContactEnquiryStatusHandler
 );
 router.delete("/contact-enquiries/:id", deleteContactEnquiryHandler);
+
+// coupons
+// NOTE: GET /coupons/customers must stay above GET /coupons/:id, or "customers"
+// would be read as a coupon id.
+router.get("/coupons", getAllCouponsHandler);
+router.post("/coupons", validateBody(createCouponSchema), createCouponHandler);
+router.get("/coupons/customers", searchCouponCustomersHandler);
+router.get("/coupons/:id", getCouponHandler);
+router.patch(
+  "/coupons/:id",
+  validateBody(updateCouponSchema),
+  updateCouponHandler
+);
+router.patch("/coupons/:id/status", toggleCouponStatusHandler);
+router.delete("/coupons/:id", deleteCouponHandler);
 
 
 export default router;

@@ -3,12 +3,24 @@ import { razorpay, toSmallestUnit } from "../lib/razorpay.js";
 import { logger } from "../lib/logger.js";
 import { config } from "../config/env.js";
 import {
+  AppError,
   ConflictError,
   NotFoundError,
   ValidationError,
 } from "../utils/errors.js";
 import type { OrderSession } from "../generated/prisma/client.js";
 import { assertNotExpired } from "./session.service.js";
+import { COUPON_TRANSACTION_OPTIONS } from "../config/coupon.js";
+import { acquireSlot } from "../utils/keyedQueue.js";
+import {
+  assertSessionOwner,
+  couponResponseFields,
+  priceCoupon,
+  repriceUnpaidOrder,
+  reserveCouponInTx,
+  type CheckoutCouponOptions,
+  type PricedCoupon,
+} from "./couponCheckout.service.js";
 
 /**
  * Matches `@default("singleton")` on SiteSetting.id — the same fixed key
@@ -79,7 +91,10 @@ function assertShippingComplete(session: OrderSession): void {
  * an unpaid CREATED order with no way to retry.
  */
 
-export async function initiateCheckout(sessionId: string) {
+export async function initiateCheckout(
+  sessionId: string,
+  options: CheckoutCouponOptions = {}
+) {
   // 1. Fetch session
   const session = await prisma.orderSession.findUnique({
     where: { id: sessionId },
@@ -135,6 +150,18 @@ export async function initiateCheckout(sessionId: string) {
         "Checkout re-initiated — reusing existing CREATED order"
       );
 
+      // The customer applied, changed or removed a coupon after starting checkout
+      // (couponCode undefined means: keep the order exactly as it is).
+      if (options.couponCode !== undefined) {
+        const repriced = await repriceUnpaidOrder({
+          order: session.order,
+          session,
+          couponCode: options.couponCode,
+          callerUserId: options.callerUserId,
+        });
+        if (repriced) return repriced;
+      }
+
       // Amount comes off the Order snapshot, never a fresh PricingRule lookup.
       // If an admin edited the price since, a recomputed amount would disagree
       // with the amount the Razorpay order was actually created for and the
@@ -147,6 +174,7 @@ export async function initiateCheckout(sessionId: string) {
         currency: session.order.currency,
         displayAmount: session.order.amount.toString(),
         notificationEmail: session.order.notificationEmail,
+        ...couponResponseFields(session.order),
       };
     }
     // Any other status — user has already paid or moved past checkout
@@ -256,7 +284,24 @@ export async function initiateCheckout(sessionId: string) {
     );
   }
 
-  const priceInMajorUnits = pricingRule.price.toNumber();
+  // Optional coupon: priced here on the server, then reserved together with the
+  // order below. With no coupon, payableAmount is exactly the pricing rule's price.
+  let priced: PricedCoupon | null = null;
+  if (options.couponCode) {
+    assertSessionOwner(session, options.callerUserId);
+    priced = await priceCoupon({
+      userId: session.userId!,
+      rawCode: options.couponCode,
+      comicId: session.comicId,
+      countryCode: country.code,
+      coverType: session.coverType,
+      currency: country.currencyCode,
+      listPrice: pricingRule.price,
+    });
+  }
+  const payableAmount = priced ? priced.finalAmount : pricingRule.price;
+
+  const priceInMajorUnits = payableAmount.toNumber();
   const amountSmallestUnit = toSmallestUnit(priceInMajorUnits, country.currencyCode);
   const isInternational = country.code !== "IN";
 
@@ -283,12 +328,17 @@ export async function initiateCheckout(sessionId: string) {
   }
 
   // 10. Persist Order row + flip session status — inside transaction
+  //
+  // With a coupon, wait for this coupon's turn first, in memory, so queued
+  // customers do not each hold a database connection while they wait for the
+  // coupon's row lock. Released in the finally below.
+  const releaseCouponSlot = priced ? await acquireSlot(`coupon:${priced.couponId}`) : null;
   try {
     const order = await prisma.$transaction(async (tx) => {
       const createdOrder = await tx.order.create({
         data: {
           orderSessionId: sessionId,
-          amount: pricingRule.price,
+          amount: payableAmount,
           currency: country.currencyCode,
           countryCode: country.code,
           coverType: session.coverType!,
@@ -304,8 +354,23 @@ export async function initiateCheckout(sessionId: string) {
           razorpayOrderId: razorpayOrder.id,
           status: "CREATED",
           isInternational,
+          ...(priced && {
+            listAmount: pricingRule.price,
+            discountAmount: priced.discountAmount,
+            couponCode: priced.code,
+          }),
         },
       });
+
+      // Reserve the coupon use in the same transaction as the order, so a refused
+      // coupon (used up in the meantime, or edited) leaves no order behind.
+      if (priced) {
+        await reserveCouponInTx(tx, {
+          priced,
+          orderId: createdOrder.id,
+          userId: session.userId!,
+        });
+      }
 
       // Flip session status via updateMany + guard, so a concurrent update can't race us
       await tx.orderSession.updateMany({
@@ -314,7 +379,7 @@ export async function initiateCheckout(sessionId: string) {
       });
 
       return createdOrder;
-    });
+    }, priced ? COUPON_TRANSACTION_OPTIONS : undefined);
 
     logger.info(
       {
@@ -333,8 +398,9 @@ export async function initiateCheckout(sessionId: string) {
       razorpayKeyId: config.razorpay.razorpayKeyId,
       amount: amountSmallestUnit,
       currency: country.currencyCode,
-      displayAmount: pricingRule.price.toString(),
+      displayAmount: payableAmount.toString(),
       notificationEmail: order.notificationEmail,
+      ...couponResponseFields(order),
     };
   } catch (error: any) {
     // DB write failed after Razorpay order created — orphan on Razorpay side.
@@ -347,6 +413,10 @@ export async function initiateCheckout(sessionId: string) {
       },
       "Order row creation failed AFTER Razorpay order created — orphan Razorpay order will auto-expire"
     );
+    // A coupon refusal is for the customer, not a failed save: keep its own message.
+    if (error instanceof AppError && error.code.startsWith("COUPON_")) throw error;
     throw new Error("Failed to save order. Please try again.");
+  } finally {
+    releaseCouponSlot?.();
   }
 }

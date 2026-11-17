@@ -440,11 +440,23 @@ unpaid here, by design. Shiprocket webhooks are set up the same way, with
 
 ---
 
+## Coupon codes
+
+Admin: `/api/admin/coupons` (list, create, edit, switch on or off, delete, and `/coupons/customers` to search accounts for a customer-only coupon). Customers: `POST /api/public/sessions/:id/coupon-preview` prices a code, `GET /api/public/sessions/:id/coupon-offers` lists the codes that fit the order, and `POST .../checkout` takes an optional `{ couponCode }`.
+
+- The price is always computed on the server (`utils/couponPricing.ts`). `Order.amount` is the amount paid; `listAmount`, `discountAmount` and `couponCode` record how it was reached. The minimum payable is 1.00.
+- Checkout reserves a use under a lock on the coupon row. A reservation lapses after 60 minutes (no job needed); payment turns it into a redemption inside the webhook transaction. If a customer pays on a Razorpay order that was replaced, the event is linked to the order (`supersededRazorpayOrderIds`) and the admin order page shows a notice.
+- Dates are read in IST; a date-only end date means the end of that day. A sweeper (`jobs/workers`, every 4 hours) switches expired coupons off.
+- Wrong guesses are limited to 10 per 10 minutes per customer (Redis; fails open if Redis is down).
+- Several rules live only in the migration SQL as CHECK constraints (percent between 0 and 100, positive amounts, one discount type); the schema file cannot express them.
+
+---
+
 ## Quality checks
 
-There is no automated test suite. Before opening a PR:
+Tests cover the coupon feature (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host. Everything else has no automated tests yet. Before opening a PR:
 
-- `npx tsc --noEmit` passes.
+- `npx tsc --noEmit` passes, and `npm test` passes.
 - You have exercised the changed flow end to end against your dev database.
 - Any new environment variable is in `config/env.ts` **and** `.env.example`.
 - Any schema change ships with its migration and a regenerated client.
