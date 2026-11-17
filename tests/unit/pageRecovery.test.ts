@@ -90,6 +90,14 @@ describe("classifyPage: finished pages", () => {
     });
   });
 
+  it("a finished page shows no error, even if a newer variant of it failed", () => {
+    const c = classify([
+      row("SD_READY", 90, 0),
+      row("FAILED", 90, 1, "RunPod said no"),
+    ]);
+    expect(c).toMatchObject({ state: "READY", lastError: null });
+  });
+
   it("a finished page with a newer retry that is stuck is BLOCKED and that retry is restartable", () => {
     const stuck = row("QUEUED", 5, 1);
     const c = classify([row("SD_READY", 90, 0), stuck]);

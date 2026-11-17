@@ -138,7 +138,8 @@ export function classifyPage(
   const inFlight = rows.filter((r) => isInFlight(r.status));
 
   if (inFlight.length === 0) {
-    if (finished) return base;
+    // A finished page shows no error, even if a newer variant of it failed.
+    if (finished) return { ...base, lastError: null };
     const row = newest(rows); // every row is FAILED
     const ends = row.updatedAt.getTime() + RESTART_COOLDOWN_MS;
     const cooling = nowMs < ends;

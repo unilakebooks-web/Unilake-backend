@@ -34,8 +34,10 @@ import type {
 // The admin's "restart stuck pages" tool.
 // It resets the newest unfinished PageVersion row of a page IN PLACE (no new variant, no
 // use of the customer's regeneration slots) and queues it again. It writes only PageVersion
-// rows and, in two places, OrderSession.status. It never writes an Order row, never
-// touches payment, pricing or the bill, so a restart can never charge the customer.
+// rows and, in two places, OrderSession.status. It never writes an Order row itself and
+// never touches payment, pricing or the bill, so a restart can never charge the customer.
+// The one Order change, PAID to GENERATED when an order whose pages are all finished is
+// completed, is made by the existing maybeMarkPaidReady, exactly as the worker does it.
 
 const RESTORE_FROM: OrderSessionStatus[] = [
   "FAILED",
@@ -547,6 +549,18 @@ export async function regenerateOrderPages(
   if (!rule.canRegenerate)
     throw new ConflictError(rule.blockedReason ?? "Not allowed");
 
+  // Finishing an order whose pages are all done needs no queue: it must work while Redis is
+  // down (a Redis outage is what leaves such orders stuck). A restart that names pages never
+  // turns into a repair.
+  if (input.repairOnly || !input.pageNumbers) {
+    const earlyRows = await loadRows(ctx.session.id);
+    const unclassified = ctx.pages.map((p) => ({
+      ...p,
+      rows: earlyRows.filter((r) => r.pageId === p.pageId),
+    })) as unknown as PageView[];
+    if (needsRepairOf(ctx, unclassified)) return repairOrder(ctx);
+  }
+
   if (!queueReady()) {
     throw new QueueDownBeforeWriteError();
   }
@@ -559,10 +573,12 @@ export async function regenerateOrderPages(
       lastPostAt.delete(orderId);
     return result;
   } catch (err) {
-    // Refused or failed before anything was written: do not hold the next try back.
+    // Refused or failed before anything was written: do not hold the next try back. An error
+    // that is not one of ours (a database error: the transaction rolled back) is the same.
     if (
       err instanceof ConflictError ||
-      err instanceof QueueDownBeforeWriteError
+      err instanceof QueueDownBeforeWriteError ||
+      !(err instanceof AppError)
     ) {
       lastPostAt.delete(orderId);
     }
@@ -591,7 +607,9 @@ async function run(
     throw new QueueDownBeforeWriteError();
   }
 
-  if (needsRepairOf(ctx, pages)) return repairOrder(ctx);
+  if (needsRepairOf(ctx, pages) && (input.repairOnly || !input.pageNumbers)) {
+    return repairOrder(ctx);
+  }
   if (input.repairOnly) {
     return {
       queued: [],
@@ -849,7 +867,6 @@ async function run(
   };
 
   let toAdd: { pageVersionId: string; pageNumber: number }[] = [];
-  const leftRunning = new Set<string>(); // rows whose job is running: never put back to failed
   let addStarted = false; // once the add has been sent, a time-out may still turn into a job
   try {
     for (const { target, rowId } of reset) {
@@ -862,7 +879,6 @@ async function run(
           pageNumber: target.page.pageNumber,
         });
       } else {
-        leftRunning.add(rowId);
         skipped.push({
           pageNumber: target.page.pageNumber,
           reason: "ALREADY_RUNNING",
@@ -893,7 +909,9 @@ async function run(
       { ...log, err },
       "[Page recovery] Queue rejected the restart; putting the pages back"
     );
-    for (const { rowId } of reset.filter((r) => !leftRunning.has(r.rowId))) {
+    // Only rows whose old job was cleared (or never existed) and so would have been added: a
+    // row left running, or not reached yet, still has a live job and must not be failed.
+    for (const { pageVersionId: rowId } of toAdd) {
       await settleTerminalPageFailure(rowId, "Could not be queued", {
         source: "admin-regenerate",
         staleBefore: new Date(Date.now() + 1000),
@@ -905,7 +923,9 @@ async function run(
       );
     }
     throw new AppError(
-      "The queue is not reachable. The pages were put back to failed; wait about 10 minutes or use Restart anyway.",
+      toAdd.length > 0
+        ? "The queue is not reachable. The pages were put back to failed; wait about 10 minutes or use Restart anyway."
+        : "The queue did not answer, so some pages may not have started. Look at the order page in a couple of minutes: pages that did not start can be restarted again.",
       503,
       "QUEUE_UNAVAILABLE"
     );
@@ -922,7 +942,16 @@ async function run(
     if (count > 0) sendPaymentReceived(ctx.session.id);
   }
 
-  logger.info(log, "[Page recovery] Pages restarted");
+  logger.info(
+    {
+      ...log,
+      skipped: skipped.map((x) => ({
+        pageNumber: x.pageNumber,
+        reason: x.reason,
+      })),
+    },
+    "[Page recovery] Pages restarted"
+  );
 
   const queuedNumbers = toAdd.map((a) => a.pageNumber);
   return {
