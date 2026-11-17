@@ -21,6 +21,16 @@ export const createTeamMemberSchema = z.object({
 });
 
 
+// Every member, in the new order (copy of reorderFaqsSchema).
+export const reorderTeamMembersSchema = z.object({
+  orderedIds: z
+    .array(z.string().uuid())
+    .min(1, "orderedIds cannot be empty")
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "orderedIds cannot contain duplicates",
+    }),
+});
+
 export const updateTeamMemberSchema = z
   .object({
     // name and role are NOT NULL in the DB — changeable, never clearable.
