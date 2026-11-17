@@ -121,14 +121,21 @@ describe("reordering", () => {
   });
 
   it("makes the numbers strictly increasing, so a drag is never tied away", async () => {
-    // F, G and H above were all at 0 before the save. Every published book must
-    // now hold a different number, ascending in the saved order.
+    // Three never-arranged books all at 0, then a save: every published book
+    // must hold a different number, ascending in the saved order.
+    const x = await make("tie-x", { sortOrder: 0 });
+    const y = await make("tie-y", { sortOrder: 0 });
+    const z = await make("tie-z", { sortOrder: 0 });
+    await reorderComics(await fullOrder([z.id, x.id, y.id]));
     const published = await prisma.comic.findMany({
       where: { status: "PUBLISHED" },
       select: { id: true, sortOrder: true },
     });
     const numbers = published.map((c) => c.sortOrder);
     expect(new Set(numbers).size).toBe(numbers.length);
+    const order = mine(await publicList());
+    expect(order.indexOf(z.id)).toBeLessThan(order.indexOf(x.id));
+    expect(order.indexOf(x.id)).toBeLessThan(order.indexOf(y.id));
   });
 
   it("reuses the numbers the set already held, in order", async () => {
@@ -180,6 +187,43 @@ describe("reordering", () => {
       ])
     ).rejects.toBeInstanceOf(ConflictError);
     expect((await publicList()).map((r) => r.id)).toEqual(before);
+  });
+
+  it("a book still publishing is not part of the set, and a republished book is", async () => {
+    const book = await make("publishing", { status: "PUBLISHING" as never });
+    const everyone = (await publicList()).map((r) => r.id);
+    expect(everyone).not.toContain(book.id);
+    await expect(reorderComics([...everyone, book.id])).rejects.toBeInstanceOf(
+      ConflictError
+    );
+    await prisma.comic.update({
+      where: { id: book.id },
+      data: { status: "PUBLISHED" },
+    });
+    await expect(reorderComics(everyone)).rejects.toBeInstanceOf(ConflictError);
+    await reorderComics((await publicList()).map((r) => r.id));
+    expect((await publicList()).map((r) => r.id)).toContain(book.id);
+  });
+
+  it("saving the order that is already saved changes nothing", async () => {
+    const before = (await publicList()).map((r) => r.id);
+    await reorderComics(before);
+    await reorderComics(before);
+    expect((await publicList()).map((r) => r.id)).toEqual(before);
+  });
+
+  it("books with the same number and the same creation time fall back to id", async () => {
+    const a = await make("same-a", {
+      sortOrder: 50,
+      createdAt: "2026-05-01T00:00:00Z",
+    });
+    const b = await make("same-b", {
+      sortOrder: 50,
+      createdAt: "2026-05-01T00:00:00Z",
+    });
+    const [first, second] = [a.id, b.id].sort();
+    const rows = mine(await publicList());
+    expect(rows.indexOf(first!)).toBeLessThan(rows.indexOf(second!));
   });
 
   it("the request schema rejects empty, duplicate and non-uuid lists", () => {
