@@ -34,12 +34,22 @@ export const listAdminOrdersQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: OrderStatusEnum.optional(),
   search: z.string().trim().min(1).optional(),
+  sentToPrinter: z.enum(["sent", "not_sent"]).optional(),
   sortBy: OrderSortByEnum.default("createdAt"),
   sortOrder: SortOrderEnum.default("desc"),
 });
 
 export type ListAdminOrdersQueryInput = z.infer<typeof listAdminOrdersQuerySchema>;
 
+
+// Body for PATCH /api/admin/orders/:orderId/sent-to-printer
+// true marks the order as sent to the printer, false undoes the mark.
+
+export const setSentToPrinterBodySchema = z.object({
+  sent: z.boolean(),
+});
+
+export type SetSentToPrinterBodyInput = z.infer<typeof setSentToPrinterBodySchema>;
 
 // Body for POST /api/admin/orders/:orderId/confirm-dimensions
 // Bounds sourced from shipping.ts to stay in sync with the service-layer

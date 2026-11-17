@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma.js";
-import { NotFoundError, ForbiddenError } from "../utils/errors.js";
+import { NotFoundError, ForbiddenError, ConflictError } from "../utils/errors.js";
 import { logger } from "../lib/logger.js";
 import {
   toPublicStatus,
@@ -363,6 +363,10 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     where.status = filters.status;
   }
 
+  if (filters.sentToPrinter !== undefined) {
+    where.sentToPrinterAt = filters.sentToPrinter === "sent" ? { not: null } : null;
+  }
+
   if (filters.search !== undefined) {
     const q = filters.search; // already trimmed + min-length checked in Zod
     where.OR = [
@@ -405,6 +409,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
         courierName: true,
         shippedAt: true,
         deliveredAt: true,
+        sentToPrinterAt: true,
         orderSession: {
           select: {
             // Needed to key the batched cover lookup below — not rendered.
@@ -493,6 +498,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     courierName: o.courierName,
     shippedAt: o.shippedAt,
     deliveredAt: o.deliveredAt,
+    sentToPrinterAt: o.sentToPrinterAt,
     childName: o.orderSession.childName,
     comicTitle: o.orderSession.comic.title,
     // Null when nothing is generated yet — the client renders a placeholder.
@@ -656,7 +662,10 @@ export async function getAdminOrderDetail(orderId: string) {
       pickupGeneratedAt: order.pickupGeneratedAt,
       shippedAt: order.shippedAt,
       deliveredAt: order.deliveredAt,
+      sentToPrinterAt: order.sentToPrinterAt,
     },
+
+    canMarkSentToPrinter: canMarkSentToPrinter(order),
 
     session: {
       id: order.orderSession.id,
@@ -673,4 +682,94 @@ export async function getAdminOrderDetail(orderId: string) {
 
     webhookEvents: order.webhookEvents,
   };
+}
+
+
+// ============================================================
+// SENT TO PRINTER (admin marks an order as handed to the printer)
+// ============================================================
+//
+// ⚠️ The eligibility rule exists in two forms that must stay in step:
+// this helper (the detail response's canMarkSentToPrinter) and the WHERE
+// clause of the mark statement in setOrderSentToPrinter below.
+// A print-ready PDF must exist and the order must not be cancelled.
+export function canMarkSentToPrinter(order: {
+  pdfUrl: string | null;
+  status: string;
+}): boolean {
+  return order.pdfUrl !== null && order.status !== "CANCELLED";
+}
+
+// One atomic statement per action. Raw SQL on purpose: prisma.order.update
+// would also write updatedAt from the client, and marking is bookkeeping that
+// must not move it (updatedAt is a sort key and the order's "last real
+// change"). The first date is kept: a second mark changes nothing.
+export async function setOrderSentToPrinter(
+  orderId: string,
+  sent: boolean,
+  adminId: string
+) {
+  if (sent) {
+    const changed = await prisma.$executeRaw`
+      UPDATE "orders" SET "sentToPrinterAt" = now()
+      WHERE "id" = ${orderId}
+        AND "sentToPrinterAt" IS NULL
+        AND "pdfUrl" IS NOT NULL
+        AND "status" <> 'CANCELLED'
+    `;
+
+    if (changed === 0) {
+      // Nothing changed: report what the order is now.
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, sentToPrinterAt: true, pdfUrl: true, status: true },
+      });
+      if (!order) {
+        throw new NotFoundError("Order not found");
+      }
+      if (order.sentToPrinterAt === null && !canMarkSentToPrinter(order)) {
+        throw new ConflictError(
+          order.pdfUrl === null
+            ? "This order has no print-ready PDF yet"
+            : "This order is cancelled"
+        );
+      }
+      // Already marked: success, the first date is kept. Also reached when an
+      // undo landed between the statement and this read: the order is
+      // eligible, so report what it is now (no mark) instead of an error.
+      return { id: order.id, sentToPrinterAt: order.sentToPrinterAt };
+    }
+
+    logger.info({ orderId, action: "marked", adminId }, "Order sent to printer");
+  } else {
+    const changed = await prisma.$executeRaw`
+      UPDATE "orders" SET "sentToPrinterAt" = NULL
+      WHERE "id" = ${orderId} AND "sentToPrinterAt" IS NOT NULL
+    `;
+
+    if (changed === 0) {
+      const exists = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true },
+      });
+      if (!exists) {
+        throw new NotFoundError("Order not found");
+      }
+      return { id: orderId, sentToPrinterAt: null };
+    }
+
+    logger.info(
+      { orderId, action: "unmarked", adminId },
+      "Order sent to printer mark removed"
+    );
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, sentToPrinterAt: true },
+  });
+  if (!order) {
+    throw new NotFoundError("Order not found");
+  }
+  return order;
 }
