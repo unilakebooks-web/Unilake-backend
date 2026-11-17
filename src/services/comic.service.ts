@@ -26,6 +26,31 @@ import type {
 import type { Prisma } from "../generated/prisma/client.js";
 import type { UpdateComicInput } from "../validators/comic.schema.js";
 
+// The order customers see on the home page, Our Books and Explore more books: the
+// admin's arrangement first. createdAt and id only break ties (two comics created
+// at the same moment can read the same smallest number), so the order is always
+// deterministic. The admin's Arrange Books screen sorts with the same rule: keep
+// both in step.
+const COMIC_ORDER_BY = [
+  { sortOrder: "asc" as const },
+  { createdAt: "desc" as const },
+  { id: "asc" as const },
+];
+
+// Where a new book appears (D-032): at the TOP, the same as the site's newest-first
+// order before the admin could arrange anything. Change this one constant to put
+// new books at the bottom instead.
+const NEW_COMIC_POSITION: "top" | "bottom" = "top";
+
+async function nextComicSortOrder(tx: Prisma.TransactionClient) {
+  const edge = await tx.comic.aggregate({
+    _min: { sortOrder: true },
+    _max: { sortOrder: true },
+  });
+  if (NEW_COMIC_POSITION === "top") return (edge._min.sortOrder ?? 1) - 1;
+  return (edge._max.sortOrder ?? -1) + 1;
+}
+
 /**
  * Accepts either a raw R2 key or a full public URL and always returns a key.
  *
@@ -144,9 +169,12 @@ export const createComic = async (data: CreateComicInput) => {
     );
 
     const newComic = await prisma.$transaction(async (tx) => {
+      const sortOrder = await nextComicSortOrder(tx);
+
       const comic = await tx.comic.create({
         data: {
           ...restData,
+          sortOrder,
           coverThumbnailUrls,
           status: "DRAFT",
           themes: { connect: themeIds.map((id) => ({ id })) },
@@ -597,11 +625,11 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
         },
       },
     },
-    // Bestsellers first, then everything else; newest first within each
-    // group. `desc` on a boolean puts true before false. This single ordering
-    // drives every storefront listing — the home page grid, /comic, and the
-    // "Explore More Books" picks on a comic page — so they always agree.
-    orderBy: [{ isBestseller: "desc" }, { createdAt: "desc" }],
+    // The admin's arrangement (Comic.sortOrder). The Bestseller flag is only a
+    // badge and does not move a book. This single ordering drives every
+    // storefront listing — the home page grid, /comic, and the "Explore More
+    // Books" picks on a comic page — so they always agree.
+    orderBy: COMIC_ORDER_BY,
   });
 
   return comics.map(withRealPageCount);
@@ -794,6 +822,62 @@ export const getAdminComicDetail = async (comicId: string) => {
   return comic;
 };
 
+
+/**
+ * Save the admin's arrangement of the PUBLISHED books.
+ *
+ * `orderedIds` must be exactly the set of published books the admin saw; if a
+ * book was published, unpublished, added or deleted since, nothing is written
+ * (409) and the admin reloads. Books that are not published are not touched: they
+ * keep their numbers and fall into place when published.
+ *
+ * The numbers the published books already hold are reused, in order, so the
+ * unpublished books' numbers stay meaningful. If several published books hold the
+ * same number (several never arranged), the numbers are made strictly increasing,
+ * otherwise a dragged book would tie and fall back to newest first.
+ */
+export const reorderComics = async (orderedIds: string[]) => {
+  const published = await prisma.comic.findMany({
+    where: { status: "PUBLISHED" },
+    select: { id: true, sortOrder: true },
+  });
+  const publishedIds = new Set(published.map((c) => c.id));
+
+  if (
+    published.length !== orderedIds.length ||
+    orderedIds.some((id) => !publishedIds.has(id))
+  ) {
+    throw new ConflictError(
+      "The list of books has changed since you opened this page. Reload and try again."
+    );
+  }
+
+  const held = published.map((c) => c.sortOrder).sort((a, b) => a - b);
+  const values: number[] = [];
+  held.forEach((value, i) => {
+    values.push(i === 0 ? value : Math.max(value, values[i - 1]! + 1));
+  });
+
+  const assignments = orderedIds.map((id, i) => ({ id, sortOrder: values[i]! }));
+
+  // One transaction. updateMany (not update) so a book deleted mid-request is
+  // skipped instead of failing the whole save. Statements run in ascending id
+  // order so two simultaneous saves lock rows in the same order (no deadlock).
+  await prisma.$transaction(
+    [...assignments]
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .map((a) =>
+        prisma.comic.updateMany({
+          where: { id: a.id },
+          data: { sortOrder: a.sortOrder },
+        })
+      )
+  );
+
+  logger.info({ orderedIds }, "Comics reordered");
+
+  return assignments;
+};
 
 export const generateThumbnailUploadUrlsBatch = async (
   files: UploadThumbnailsBatchInput["files"]

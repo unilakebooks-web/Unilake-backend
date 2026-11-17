@@ -10,6 +10,7 @@ import {
   updateComicPricing,
   getComicPricing,
   updateComicStatus,
+  reorderComics,
   getPublicComicsList,
   getPublicComicDetails,
   updateComic,
@@ -284,6 +285,13 @@ export const getAdminComicsHandler = asyncHandler(
       }
       throw error;
     }
+  }
+);
+
+export const reorderComicsHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const comics = await reorderComics(req.body.orderedIds);
+    sendSuccess(res, 200, comics);
   }
 );
 
