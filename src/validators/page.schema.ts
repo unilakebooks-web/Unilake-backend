@@ -12,23 +12,25 @@ import {
 
 
 // A display name must never block a page save, so this accepts anything and
-// cleans it: a value that is not a string means "no name"; a lone surrogate is
-// replaced (Postgres and the JSON layer can reject it), control characters (NUL
-// included), zero-width and bidi-override characters are removed, the result is
+// cleans it: a value that is not a string means "no name"; the input is first
+// capped (a run of combining marks counts as ONE visible character, so the cut
+// below alone would not shorten it); a lone surrogate is replaced (Postgres and
+// the JSON layer can reject it); control characters (NUL included), zero-width,
+// invisible direction and bidi-override characters are removed; the result is
 // trimmed and cut to 255 characters counted as user-visible characters, so an
 // emoji or a conjunct is never split. An empty result means "no name". Only
 // used for showing the name back to the admin.
+// eslint-disable-next-line no-control-regex
+const FILE_NAME_STRIP = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
+
 const fileNameField = z
   .unknown()
   .transform((value) => {
     if (typeof value !== "string") return undefined;
     const cleaned = value
+      .slice(0, 1024)
       .toWellFormed()
-      // eslint-disable-next-line no-control-regex
-      .replace(
-        /[\u0000-\u001f\u007f-\u009f\u200b\u202a-\u202e\u2066-\u2069\ufeff]/g,
-        ""
-      )
+      .replace(FILE_NAME_STRIP, "")
       .trim();
     const cut = Array.from(
       new Intl.Segmenter().segment(cleaned),

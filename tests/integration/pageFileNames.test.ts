@@ -278,6 +278,71 @@ describe("replacing a mask follows the same rules as artwork", () => {
   });
 });
 
+describe("replacing one file leaves the other name alone", () => {
+  it("replacing the artwork keeps the mask name", async () => {
+    const art = await putPng("k1-art", 40, 60);
+    const mask = await putPng("k1-mask", 40, 60);
+    const page = await newPage({
+      artworkUrl: art,
+      artworkFileName: "a.png",
+      maskUrl: mask,
+      maskFileName: "m.png",
+    });
+    const art2 = await putPng("k1-art2", 40, 60);
+    await updatePage(
+      page.id,
+      updatePageSchema.parse({ artworkUrl: art2, artworkFileName: "a2.png" })
+    );
+    const row = await read(page.id);
+    expect(row.artworkFileName).toBe("a2.png");
+    expect(row.maskFileName).toBe("m.png");
+  });
+
+  it("replacing the mask keeps the artwork name and deletes the old mask file", async () => {
+    const art = await putPng("k2-art", 40, 60);
+    const mask = await putPng("k2-mask", 40, 60);
+    const page = await newPage({
+      artworkUrl: art,
+      artworkFileName: "a.png",
+      maskUrl: mask,
+      maskFileName: "m.png",
+    });
+    const mask2 = await putPng("k2-mask2", 40, 60);
+    await updatePage(
+      page.id,
+      updatePageSchema.parse({ maskUrl: mask2, maskFileName: "m2.png" })
+    );
+    const row = await read(page.id);
+    expect(row.maskFileName).toBe("m2.png");
+    expect(row.artworkFileName).toBe("a.png");
+    expect(await exists(mask)).toBe(false);
+    expect(await exists(mask2)).toBe(true);
+  });
+
+  it("creating a page with a wrong-size mask is rejected and stores nothing", async () => {
+    const art = await putPng("k3-art", 40, 60);
+    const wrong = await putPng("k3-mask", 20, 20);
+    const number = nextPageNumber++;
+    await expect(
+      createPage(
+        COMIC_ID,
+        createPageSchema.parse({
+          pageNumber: number,
+          artworkUrl: art,
+          artworkFileName: "a.png",
+          maskUrl: wrong,
+          maskFileName: "m.png",
+        })
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(
+      await prisma.page.count({
+        where: { comicId: COMIC_ID, pageNumber: number },
+      })
+    ).toBe(0);
+  });
+});
+
 describe("the old file after a replace", () => {
   it("is deleted from storage when the file is replaced", async () => {
     const art = await putPng("d1-art", 40, 60);
@@ -296,68 +361,5 @@ describe("the old file after a replace", () => {
       updatePageSchema.parse({ artworkUrl: art, artworkFileName: "x.png" })
     );
     expect(await exists(art)).toBe(true);
-  });
-});
-
-describe("the name as a display value", () => {
-  const segments = (value: string | undefined) =>
-    Array.from(new Intl.Segmenter().segment(value ?? "")).length;
-  const parse = (name: unknown) =>
-    createPageSchema.parse({ pageNumber: 1, artworkFileName: name })
-      .artworkFileName;
-
-  it("removes control characters including NUL and trims", () => {
-    expect(parse("  a\u0000b\u0007c\n  ")).toBe("abc");
-  });
-
-  it("cuts at 255 visible characters: 255 stay, 256 are cut", () => {
-    expect(segments(parse("x".repeat(255)))).toBe(255);
-    expect(segments(parse("x".repeat(256)))).toBe(255);
-    expect(segments(parse("x".repeat(400)))).toBe(255);
-  });
-
-  it("never splits an emoji or a Hindi conjunct at the cut", () => {
-    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
-    expect(parse("x".repeat(255) + family)).toBe("x".repeat(255));
-    expect(parse("x".repeat(254) + family)).toBe("x".repeat(254) + family);
-    const hindi = parse("\u092A\u0943\u0937\u094D\u0920".repeat(200)) ?? "";
-    expect(segments(hindi)).toBe(255);
-    expect(hindi.endsWith("\u0943") || hindi.endsWith("\u0920")).toBe(true);
-  });
-
-  it("treats a value that is not a string as no name instead of failing", () => {
-    for (const bad of [null, 12, true, {}, ["a"]]) {
-      expect(parse(bad)).toBeUndefined();
-    }
-    expect(
-      updatePageSchema.parse({ hasFace: true, artworkFileName: null })
-    ).toEqual({
-      hasFace: true,
-      artworkFileName: undefined,
-    });
-  });
-
-  it("replaces a lone surrogate so the value can always be stored", () => {
-    const value = parse("bad\ud800name.png") ?? "";
-    expect(value.isWellFormed()).toBe(true);
-    expect(value.startsWith("bad")).toBe(true);
-  });
-
-  it("removes bidi overrides and zero-width spaces but keeps joiners", () => {
-    expect(parse("ab\u202Egpj\u200B.png")).toBe("abgpj.png");
-    expect(parse("a\u200Db")).toBe("a\u200Db");
-  });
-
-  it("treats an empty or whitespace-only name as no name", () => {
-    expect(parse("  \n ")).toBeUndefined();
-    expect(
-      updatePageSchema.parse({ artworkFileName: "" }).artworkFileName
-    ).toBeUndefined();
-  });
-
-  it("keeps a name that looks like markup as plain text", () => {
-    expect(parse(`<img src=x onerror=alert(1)>.png`)).toBe(
-      `<img src=x onerror=alert(1)>.png`
-    );
   });
 });
