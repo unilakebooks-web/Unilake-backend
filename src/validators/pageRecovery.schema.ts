@@ -34,4 +34,5 @@ export const regenerateOrderPagesBodySchema = z.object({
     )
     .optional(),
   force: z.boolean().optional(),
+  repairOnly: z.boolean().optional(),
 });

@@ -1,7 +1,7 @@
 // Integration tests for maybeMarkPaidReady: the book is announced as ready only
 // when every paid page has settled AND no row of a paid page is still being made.
 // A page that keeps an old FAILED variant used to count as settled while a newer
-// variant was still running (BUG-009). They run against the Neon TEST branch only:
+// variant was still running. They run against the Neon TEST branch only:
 // the setup import below refuses any other database.
 import "../setup/env.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

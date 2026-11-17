@@ -31,7 +31,7 @@ import type {
   PageVersionStatus,
 } from "../generated/prisma/client.js";
 
-// The admin's "restart stuck pages" tool. Plan: docs/phase2/features/03-regenerate-stuck-pages/PLAN.md.
+// The admin's "restart stuck pages" tool.
 // It resets the newest unfinished PageVersion row of a page IN PLACE (no new variant, no
 // use of the customer's regeneration slots) and queues it again. It writes only PageVersion
 // rows and, in two places, OrderSession.status. It never writes an Order row, never
@@ -48,6 +48,17 @@ const RESTORE_FROM: OrderSessionStatus[] = [
 // ---------------------------------------------------------------------------
 
 class QueueTimeoutError extends Error {}
+
+/** The queue could not be asked at all, before anything was written: the same request can be repeated at once. */
+class QueueDownBeforeWriteError extends AppError {
+  constructor() {
+    super(
+      "The queue is not reachable. Nothing was changed. Try again in a few minutes.",
+      503,
+      "QUEUE_UNAVAILABLE"
+    );
+  }
+}
 
 /**
  * Stops the REQUEST waiting; it cannot cancel the command. redisClient is created with
@@ -220,8 +231,9 @@ async function buildPages(
     );
   const states = await jobStatesFor(newestInFlight);
   const queueAvailable =
-    newestInFlight.length === 0 ||
-    [...states.values()].some((s) => s !== "unavailable");
+    queueReady() &&
+    (newestInFlight.length === 0 ||
+      [...states.values()].some((s) => s !== "unavailable"));
 
   const pages = ctx.pages.map((p) => {
     const pageRows = byPage.get(p.pageId) ?? [];
@@ -268,6 +280,7 @@ function needsRepairOf(ctx: Context, pages: PageView[]): boolean {
     ctx.order.status === "PAID" &&
     ctx.order.pdfUrl === null &&
     (ctx.session.status === "GENERATING_PAID" ||
+      ctx.session.status === "PAID" ||
       RESTORE_FROM.includes(ctx.session.status)) &&
     everyPageFinished(pages)
   );
@@ -388,7 +401,20 @@ export type SkipReason =
   | "COOLING_DOWN"
   | "NOT_IN_BOOK";
 
-export type RegenerateInput = { pageNumbers?: number[]; force?: boolean };
+export type RegenerateInput = {
+  pageNumbers?: number[];
+  force?: boolean;
+  /** "Finish this order": only move the order on; never restart a page, even if the state changed meanwhile. */
+  repairOnly?: boolean;
+};
+
+const sendPaymentReceived = (sessionId: string) =>
+  notifyPaymentReceived(sessionId).catch((err) =>
+    logger.error(
+      { err, sessionId },
+      "[Page recovery] notifyPaymentReceived failed (swallowed)"
+    )
+  );
 
 export type RegenerateResult = {
   queued: { pageNumber: number; pageVersionId: string }[];
@@ -463,9 +489,12 @@ async function clearOldJob(
 
 async function repairOrder(ctx: Context): Promise<RegenerateResult> {
   const { count } = await prisma.orderSession.updateMany({
-    where: { id: ctx.session.id, status: { in: RESTORE_FROM } },
+    where: { id: ctx.session.id, status: { in: [...RESTORE_FROM, "PAID"] } },
     data: { status: "GENERATING_PAID" },
   });
+  // A (PAID, PAID) order never got the webhook's flip, so nobody sent "payment received".
+  if (count > 0 && ctx.session.status === "PAID")
+    sendPaymentReceived(ctx.session.id);
   const ready = await maybeMarkPaidReady(ctx.session.id);
 
   if (ready === "ready") {
@@ -512,23 +541,21 @@ export async function regenerateOrderPages(
     throw new ConflictError(rule.blockedReason ?? "Not allowed");
 
   if (!queueReady()) {
-    throw new AppError(
-      "The queue is not reachable. Nothing was changed. Try again in a few minutes.",
-      503,
-      "QUEUE_UNAVAILABLE"
-    );
+    throw new QueueDownBeforeWriteError();
   }
 
   claimOrderSlot(orderId);
   try {
-    return await run(ctx, rule, adminId, input, now);
+    const result = await run(ctx, rule, adminId, input, now);
+    // Nothing was restarted (all skipped, nothing to do): the admin may try again at once.
+    if (result.queued.length === 0 && !result.repaired)
+      lastPostAt.delete(orderId);
+    return result;
   } catch (err) {
     // Refused or failed before anything was written: do not hold the next try back.
     if (
       err instanceof ConflictError ||
-      (err instanceof AppError &&
-        err.statusCode === 503 &&
-        /Nothing was changed/.test(err.message))
+      err instanceof QueueDownBeforeWriteError
     ) {
       lastPostAt.delete(orderId);
     }
@@ -554,14 +581,22 @@ async function run(
   }
   const { pages } = view;
   if (!view.queueAvailable) {
-    throw new AppError(
-      "The queue is not reachable. Nothing was changed. Try again in a few minutes.",
-      503,
-      "QUEUE_UNAVAILABLE"
-    );
+    throw new QueueDownBeforeWriteError();
   }
 
   if (needsRepairOf(ctx, pages)) return repairOrder(ctx);
+  if (input.repairOnly) {
+    return {
+      queued: [],
+      skipped: [],
+      notTouched: { finished: 0, running: 0 },
+      sessionRestored: false,
+      expanded: false,
+      repaired: false,
+      message:
+        "The order changed, so there is nothing to finish now. Look at the pages again.",
+    };
+  }
 
   const skipped: RegenerateResult["skipped"] = [];
   const restore = rule.mode === "restore";
@@ -591,8 +626,12 @@ async function run(
         skipped.push(skipReasonFor(page));
       }
     }
-    if (restore) {
-      const all = pages.filter((p) => p.cls.restartable);
+    if (restore || rule.mode === "stalled") {
+      // Every paid page that can be restarted (a book is announced ready only when they
+      // have all settled); a free preview page only if it was named.
+      const all = pages.filter(
+        (p) => p.cls.restartable && (!p.isPreviewPage || candidates.includes(p))
+      );
       expanded = all.length > candidates.length;
       candidates = all;
     }
@@ -651,6 +690,23 @@ async function run(
     repaired: false,
     message,
   });
+  if (
+    candidates.length === 0 &&
+    rule.mode === "stalled" &&
+    pages.some((p) => p.rows.length > 0)
+  ) {
+    // The jobs were queued before the webhook crashed: the pages are being made, only the
+    // session never moved on, so the completion check would never fire. Move it on.
+    const { count } = await prisma.orderSession.updateMany({
+      where: { id: ctx.session.id, status: "PAID" },
+      data: { status: "GENERATING_PAID" },
+    });
+    if (count > 0) sendPaymentReceived(ctx.session.id);
+    return {
+      ...empty("The order has moved on: its pages are already being made."),
+      sessionRestored: count > 0,
+    };
+  }
   if (candidates.length === 0) return empty("Nothing needed restarting.");
 
   const targets: Target[] = candidates.map((page) => {
@@ -679,86 +735,90 @@ async function run(
   const reset: { target: Target; rowId: string }[] = [];
   let sessionRestored = false;
 
-  await prisma.$transaction(async (tx) => {
-    const changed: Target[] = [];
+  await prisma.$transaction(
+    async (tx) => {
+      const changed: Target[] = [];
 
-    const fresh = targets.filter((t) => t.newRowId);
-    if (fresh.length > 0) {
-      await tx.pageVersion.createMany({
-        data: fresh.map((t) => ({
-          id: t.newRowId!,
-          orderSessionId: ctx.session.id,
-          pageId: t.page.pageId,
-          variantIndex: 0,
-          status: "QUEUED" as const,
-        })),
-        skipDuplicates: true, // a row made meanwhile by the webhook or the customer: not an error
-      });
-      const made = await tx.pageVersion.findMany({
-        where: { id: { in: fresh.map((t) => t.newRowId!) } },
-        select: { id: true },
-      });
-      const madeIds = new Set(made.map((m) => m.id));
-      for (const t of fresh) {
-        if (madeIds.has(t.newRowId!))
-          reset.push({ target: t, rowId: t.newRowId! });
-        else changed.push(t);
-      }
-    }
-
-    for (const t of targets.filter((x) => x.rowId)) {
-      // The guard is the row exactly as it was classified: status AND updatedAt. A
-      // worker write moves updatedAt, so a page that was picked up meanwhile is left alone,
-      // and the cooldown seen at classification still holds.
-      const { count } = await tx.pageVersion.updateMany({
-        where: {
-          id: t.rowId!,
-          status: t.seenStatus!,
-          updatedAt: t.seenUpdatedAt!,
-        },
-        data: { status: "QUEUED", textStampedUrl: null },
-      });
-      if (count === 1) reset.push({ target: t, rowId: t.rowId! });
-      else changed.push(t);
-    }
-
-    if (restore && changed.length > 0) {
-      // All or nothing: a half-restored book could be announced ready with pages still failed.
-      throw new ConflictError(
-        "Some pages changed while restarting, so nothing was restarted. Look at the pages again and try once more."
-      );
-    }
-    for (const t of changed) {
-      skipped.push({
-        pageNumber: t.page.pageNumber,
-        reason: "CHANGED",
-        message:
-          "It changed while restarting (it may have just been picked up). Look at the pages again.",
-      });
-    }
-
-    if (restore && reset.length > 0) {
-      const { count } = await tx.orderSession.updateMany({
-        where: { id: ctx.session.id, status: { in: RESTORE_FROM } },
-        data: { status: "GENERATING_PAID" },
-      });
-      sessionRestored = count > 0;
-      if (count === 0) {
-        const current = await tx.orderSession.findUniqueOrThrow({
-          where: { id: ctx.session.id },
-          select: { status: true },
+      const fresh = targets.filter((t) => t.newRowId);
+      if (fresh.length > 0) {
+        await tx.pageVersion.createMany({
+          data: fresh.map((t) => ({
+            id: t.newRowId!,
+            orderSessionId: ctx.session.id,
+            pageId: t.page.pageId,
+            variantIndex: 0,
+            status: "QUEUED" as const,
+          })),
+          skipDuplicates: true, // a row made meanwhile by the webhook or the customer: not an error
         });
-        if (
-          current.status !== "GENERATING_PAID" &&
-          current.status !== "PAID_PAGES_READY"
-        ) {
-          throw new ConflictError(
-            "The order changed while restarting. Look at the order again."
-          );
+        const made = await tx.pageVersion.findMany({
+          where: { id: { in: fresh.map((t) => t.newRowId!) } },
+          select: { id: true },
+        });
+        const madeIds = new Set(made.map((m) => m.id));
+        for (const t of fresh) {
+          if (madeIds.has(t.newRowId!))
+            reset.push({ target: t, rowId: t.newRowId! });
+          else changed.push(t);
         }
       }
-    }
-  });
+
+      for (const t of targets.filter((x) => x.rowId)) {
+        // The guard is the row exactly as it was classified: status AND updatedAt. A
+        // worker write moves updatedAt, so a page that was picked up meanwhile is left alone,
+        // and the cooldown seen at classification still holds.
+        const { count } = await tx.pageVersion.updateMany({
+          where: {
+            id: t.rowId!,
+            status: t.seenStatus!,
+            updatedAt: t.seenUpdatedAt!,
+          },
+          data: { status: "QUEUED", textStampedUrl: null },
+        });
+        if (count === 1) reset.push({ target: t, rowId: t.rowId! });
+        else changed.push(t);
+      }
+
+      if (restore && changed.length > 0) {
+        // All or nothing: a half-restored book could be announced ready with pages still failed.
+        throw new ConflictError(
+          "Some pages changed while restarting, so nothing was restarted. Look at the pages again and try once more."
+        );
+      }
+      for (const t of changed) {
+        skipped.push({
+          pageNumber: t.page.pageNumber,
+          reason: "CHANGED",
+          message:
+            "It changed while restarting (it may have just been picked up). Look at the pages again.",
+        });
+      }
+
+      if (restore && reset.length > 0) {
+        const { count } = await tx.orderSession.updateMany({
+          where: { id: ctx.session.id, status: { in: RESTORE_FROM } },
+          data: { status: "GENERATING_PAID" },
+        });
+        sessionRestored = count > 0;
+        if (count === 0) {
+          const current = await tx.orderSession.findUniqueOrThrow({
+            where: { id: ctx.session.id },
+            select: { status: true },
+          });
+          if (
+            current.status !== "GENERATING_PAID" &&
+            current.status !== "PAID_PAGES_READY"
+          ) {
+            throw new ConflictError(
+              "The order changed while restarting. Look at the order again."
+            );
+          }
+        }
+      }
+    },
+    // A long book is one update per page over a remote database: more than Prisma's 5 s default.
+    { timeout: 20_000, maxWait: 10_000 }
+  );
 
   if (reset.length === 0) return empty("Nothing was restarted.");
 
@@ -777,6 +837,7 @@ async function run(
   };
 
   let toAdd: { pageVersionId: string; pageNumber: number }[] = [];
+  const leftRunning = new Set<string>(); // rows whose job is running: never put back to failed
   try {
     for (const { target, rowId } of reset) {
       const free = target.newRowId
@@ -788,6 +849,7 @@ async function run(
           pageNumber: target.page.pageNumber,
         });
       } else {
+        leftRunning.add(rowId);
         skipped.push({
           pageNumber: target.page.pageNumber,
           reason: "ALREADY_RUNNING",
@@ -813,7 +875,7 @@ async function run(
       { ...log, err },
       "[Page recovery] Queue rejected the restart; putting the pages back"
     );
-    for (const { rowId } of reset) {
+    for (const { rowId } of reset.filter((r) => !leftRunning.has(r.rowId))) {
       await settleTerminalPageFailure(rowId, "Could not be queued", {
         source: "admin-regenerate",
         staleBefore: new Date(Date.now() + 1000),
@@ -839,14 +901,7 @@ async function run(
       data: { status: "GENERATING_PAID" },
     });
     sessionRestored = count > 0;
-    if (count > 0) {
-      notifyPaymentReceived(ctx.session.id).catch((err) =>
-        logger.error(
-          { err, sessionId: ctx.session.id },
-          "[Page recovery] notifyPaymentReceived failed (swallowed)"
-        )
-      );
-    }
+    if (count > 0) sendPaymentReceived(ctx.session.id);
   }
 
   logger.info(log, "[Page recovery] Pages restarted");
@@ -897,9 +952,5 @@ function skipReasonFor(page: PageView): RegenerateResult["skipped"][number] {
 
 function unavailable(err: unknown): AppError {
   if (err instanceof AppError) return err;
-  return new AppError(
-    "The queue is not reachable. Nothing was changed. Try again in a few minutes.",
-    503,
-    "QUEUE_UNAVAILABLE"
-  );
+  return new QueueDownBeforeWriteError();
 }

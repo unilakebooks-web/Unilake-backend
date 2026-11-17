@@ -84,7 +84,7 @@ const newest = <T extends { variantIndex: number }>(rows: T[]): T =>
 /**
  * Where one page stands, and whether it can be restarted.
  *
- * Rules (docs/phase2/features/03-regenerate-stuck-pages/PLAN.md, P12-1, P12-10):
+ * Rules:
  *  - a page with a finished variant is never reset; if a newer retry is stuck it is
  *    BLOCKED (the customer cannot print while any row is in flight) and that row is
  *    restartable;

@@ -974,3 +974,180 @@ describe("POST restart: finishing an order whose pages are all done", () => {
     expect(result.repaired).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+
+describe("review round 1 fixes", () => {
+  it("(PAID, PAID) for over 10 minutes with every page already finished: finishes the order and sends both emails once", async () => {
+    const s = await stage({
+      label: "stalled-done",
+      session: "PAID",
+      orderAgeMinutes: 30,
+      rows: finished(1, 2, 3, 4, 5),
+    });
+    expect((await getOrderPageStatus(s.orderId)).needsRepair).toBe(true);
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    expect(result.repaired).toBe(true);
+    expect(await sessionStatus(s)).toBe("PAID_PAGES_READY");
+    expect((await orderRow(s)).status).toBe("GENERATED");
+    expect(fake.notifyPaymentReceived).toHaveBeenCalledTimes(1);
+    expect(fake.notifyBookReady).toHaveBeenCalledTimes(1);
+    expect(fake.addBulk).not.toHaveBeenCalled();
+  });
+
+  it("(PAID, PAID) whose jobs were queued before the webhook crashed: only moves the session on, restarts nothing", async () => {
+    const s = await stage({
+      label: "stalled-running",
+      session: "PAID",
+      orderAgeMinutes: 30,
+      rows: {
+        1: [[0, "SD_READY", 90]],
+        2: [[0, "QUEUED", 1]],
+        3: [[0, "QUEUED", 1]],
+        4: [[0, "QUEUED", 1]],
+        5: [[0, "QUEUED", 1]],
+      },
+    });
+    for (const key of ["2:0", "3:0", "4:0", "5:0"]) {
+      fake.jobs.set(s.rows[key]!, { state: "waiting" });
+    }
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    expect(result.queued).toHaveLength(0);
+    expect(result.sessionRestored).toBe(true);
+    expect(result.message).toMatch(/moved on/);
+    expect(await sessionStatus(s)).toBe("GENERATING_PAID");
+    expect(fake.notifyPaymentReceived).toHaveBeenCalledTimes(1);
+    expect(fake.addBulk).not.toHaveBeenCalled();
+  });
+
+  it("(PAID, PAID) with a named page creates the rows of every paid page, not just that one", async () => {
+    const s = await stage({
+      label: "stalled-subset",
+      session: "PAID",
+      orderAgeMinutes: 30,
+      rows: {},
+    });
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {
+      pageNumbers: [3],
+    });
+    expect(result.expanded).toBe(true);
+    expect(result.queued.map((q) => q.pageNumber).sort()).toEqual([2, 3, 4, 5]);
+    expect(await sessionStatus(s)).toBe("GENERATING_PAID");
+  });
+
+  it("restoring a session restarts every paid page, but a free preview page only when it was named", async () => {
+    const s = await stage({
+      label: "restore-preview",
+      session: "FAILED",
+      rows: {
+        1: [[0, "FAILED", 60]],
+        2: [[0, "FAILED", 60]],
+        3: [[0, "FAILED", 60]],
+        4: [[0, "SD_READY", 90]],
+        5: [[0, "SD_READY", 90]],
+      },
+    });
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {
+      pageNumbers: [2],
+    });
+    expect(result.queued.map((q) => q.pageNumber).sort()).toEqual([2, 3]);
+    expect((await readRow(s, "1:0")).status).toBe("FAILED"); // the free preview page was left alone
+
+    _resetOrderSlots();
+    const named = await regenerateOrderPages(s.orderId, ADMIN, {
+      pageNumbers: [1],
+      force: true,
+    });
+    expect(named.queued.map((q) => q.pageNumber)).toContain(1);
+  });
+
+  it("a request that restarts nothing does not use up the minute", async () => {
+    const s = await stage({
+      label: "noop-then-force",
+      rows: {
+        ...finished(1, 4, 5),
+        2: [[0, "FAILED", 3]],
+        3: [[0, "FAILED", 3]],
+      },
+    });
+    const none = await regenerateOrderPages(s.orderId, ADMIN, {});
+    expect(none.queued).toHaveLength(0);
+    expect(none.skipped.map((x) => x.reason)).toEqual([
+      "COOLING_DOWN",
+      "COOLING_DOWN",
+    ]);
+    const forced = await regenerateOrderPages(s.orderId, ADMIN, {
+      force: true,
+    }); // not 429
+    expect(forced.queued.map((q) => q.pageNumber).sort()).toEqual([2, 3]);
+  });
+
+  it("a rejected add puts back only the rows that were queued, not one whose job is running", async () => {
+    const s = await stage({
+      label: "comp-scope",
+      rows: {
+        ...finished(1, 4, 5),
+        2: [[0, "QUEUED", 11]],
+        3: [[0, "FAILED", 60]],
+      },
+    });
+    fake.jobs.set(s.rows["2:0"]!, { state: "waiting", removeFails: true }); // a worker holds it
+    fake.addBulk.mockRejectedValueOnce(new Error("redis exploded"));
+    const err = await refusal(regenerateOrderPages(s.orderId, ADMIN, {}));
+    expect(err?.statusCode).toBe(503);
+    const settled = fake.settle.mock.calls.map(
+      (c) => (c as unknown as [string])[0]
+    );
+    expect(settled).toEqual([s.rows["3:0"]]);
+  });
+
+  it("offers no restart when Redis is not ready, even when no page is in flight", async () => {
+    const s = await stage({
+      label: "redis-down-failed",
+      rows: { ...finished(1, 3, 4, 5), 2: [[0, "FAILED", 60]] },
+    });
+    fake.redis.status = "reconnecting";
+    const result = await getOrderPageStatus(s.orderId);
+    expect(result.queueAvailable).toBe(false);
+    expect(result.pages.some((p) => p.restartable)).toBe(false);
+  });
+
+  it("'Finish this order' never restarts pages: if the order changed it says so and does nothing", async () => {
+    const s = await stage({
+      label: "repair-only",
+      rows: { ...finished(1, 3, 4, 5), 2: [[0, "FAILED", 60]] },
+    });
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {
+      repairOnly: true,
+    });
+    expect(result.repaired).toBe(false);
+    expect(result.queued).toHaveLength(0);
+    expect(result.message).toMatch(/nothing to finish/);
+    expect((await readRow(s, "2:0")).status).toBe("FAILED");
+    expect(fake.addBulk).not.toHaveBeenCalled();
+  });
+
+  it("a long poll answers early when a row changes while it is held", async () => {
+    const s = await stage({
+      label: "poll-change",
+      rows: { 2: [[0, "QUEUED", 1]] },
+    });
+    const first = await getOrderPageStatus(s.orderId);
+    setTimeout(() => {
+      prisma.pageVersion
+        .update({
+          where: { id: s.rows["2:0"]! },
+          data: { status: "TEXT_STAMPING" },
+        })
+        // .then() is what runs a Prisma query; a bare `void` would never send it
+        .then(() => undefined);
+    }, 1200);
+    const started = Date.now();
+    const answer = await getOrderPageStatus(s.orderId, {
+      wait: 25,
+      sig: first.signature,
+    });
+    expect(Date.now() - started).toBeLessThan(10000); // not the whole 25 s
+    expect(answer.signature).not.toBe(first.signature);
+  });
+});

@@ -1,7 +1,7 @@
 // Integration tests for the customer's regeneratePage on a session that FAILED
 // after payment. It used to move such a session to GENERATING_PREVIEW; the free
 // preview pages were all done, so it jumped to PREVIEW_READY, the order stayed
-// PAID and the book could never be printed (BUG-008). They run against the Neon
+// PAID and the book could never be printed. They run against the Neon
 // TEST branch only: the setup import below refuses any other database. The job
 // queue is replaced by a stub, so nothing reaches Redis.
 import "../setup/env.js";

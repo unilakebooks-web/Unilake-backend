@@ -902,7 +902,7 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
   //
   // A session that failed AFTER payment goes back to GENERATING_PAID, the stage
   // whose completion check (maybeMarkPaidReady) ends in PAID_PAGES_READY and the
-  // order GENERATED; GENERATING_PREVIEW would end in PREVIEW_READY (BUG-008).
+  // order GENERATED; GENERATING_PREVIEW would end in PREVIEW_READY.
   if (session.status === "FAILED") {
     const to = failedAfterPayment ? "GENERATING_PAID" : "GENERATING_PREVIEW";
     const { count } = await prisma.orderSession.updateMany({

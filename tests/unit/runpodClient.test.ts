@@ -1,6 +1,6 @@
 // RunPod's own states, as our client reads them. A job RunPod reports TIMED_OUT must
 // fail at once like FAILED and CANCELLED, so BullMQ retries within seconds; before,
-// the client kept polling it for the full ~17 minute cap (BUG-010).
+// the client kept polling it for the full ~17 minute cap.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/config/env.js", () => ({
