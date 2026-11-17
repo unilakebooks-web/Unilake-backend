@@ -562,7 +562,10 @@ export async function listCoupons(filters: ListCouponsQueryInput) {
     prisma.coupon.findMany({
       where,
       include: COUPON_INCLUDE,
-      orderBy: { createdAt: "desc" },
+      // Switched-off coupons (used ones cannot be deleted) sink below the live
+      // ones, so the list does not fill up with them; newest first within each. The
+      // coupons of one batch share a createdAt, so id keeps the pages stable.
+      orderBy: [{ isActive: "desc" }, { createdAt: "desc" }, { id: "asc" }],
       skip: (filters.page - 1) * filters.pageSize,
       take: filters.pageSize,
     }),

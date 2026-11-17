@@ -604,6 +604,20 @@ describe("listCoupons", () => {
     ).coupons.map((x) => x.id);
     expect(ids).toEqual([second.id, first.id]);
   });
+
+  it("lists switched-off coupons after the live ones, newest first in each group", async () => {
+    const tag = `sink-${RUN}`;
+    const oldOn = await createCoupon(make({ name: `${MARK} ${tag} 1` }), ADMIN);
+    const off = await createCoupon(make({ name: `${MARK} ${tag} 2` }), ADMIN);
+    const newOn = await createCoupon(make({ name: `${MARK} ${tag} 3` }), ADMIN);
+    await toggleCouponStatus(off.id, ADMIN);
+
+    const ids = (
+      await listCoupons({ page: 1, pageSize: 20, search: tag })
+    ).coupons.map((x) => x.id);
+    // The switched-off one was created between the two live ones, yet it is last.
+    expect(ids).toEqual([newOn.id, oldOn.id, off.id]);
+  });
 });
 
 describe("search treats % _ and \\ literally", () => {
