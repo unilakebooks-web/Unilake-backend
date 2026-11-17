@@ -354,6 +354,19 @@ describe("the two forms of the eligibility rule agree", () => {
   });
 });
 
+describe("an already-marked order that is cancelled afterwards", () => {
+  it("keeps its date, and a repeat mark succeeds with the same date", async () => {
+    const id = await makeOrder(customer, "CONFIRMED", true);
+    const first = await setOrderSentToPrinter(id, true, ADMIN);
+    await prisma.order.update({ where: { id }, data: { status: "CANCELLED" } });
+    const again = await setOrderSentToPrinter(id, true, ADMIN);
+    expect(again.sentToPrinterAt).toEqual(first.sentToPrinterAt);
+    expect((await readOrder(id)).sentToPrinterAt).toEqual(
+      first.sentToPrinterAt
+    );
+  });
+});
+
 describe("an empty PDF path is not a print-ready PDF", () => {
   it("is refused by the mark and reported as not markable", async () => {
     const id = await makeOrder(customer, "CONFIRMED", true);

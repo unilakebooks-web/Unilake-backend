@@ -703,8 +703,9 @@ function canMarkSentToPrinter(order: {
 // would also write updatedAt from the client, and marking is bookkeeping that
 // must not move it (updatedAt is a sort key and the order's "last real
 // change"). RETURNING gives the answer from the same statement, so there is
-// no second read to race with. The first date is kept: a second mark changes
-// nothing.
+// no second read to race with. The time is written as UTC explicitly (the column
+// has no time zone, and Prisma writes UTC), so it does not depend on the
+// connection's time zone. The first date is kept: a second mark changes nothing.
 export async function setOrderSentToPrinter(
   orderId: string,
   sent: boolean,
@@ -712,7 +713,7 @@ export async function setOrderSentToPrinter(
 ) {
   if (sent) {
     const marked = await prisma.$queryRaw<{ sentToPrinterAt: Date }[]>`
-      UPDATE "orders" SET "sentToPrinterAt" = now()
+      UPDATE "orders" SET "sentToPrinterAt" = (now() AT TIME ZONE 'UTC')
       WHERE "id" = ${orderId}
         AND "sentToPrinterAt" IS NULL
         AND "pdfUrl" IS NOT NULL AND "pdfUrl" <> ''
