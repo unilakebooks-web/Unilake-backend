@@ -149,6 +149,25 @@ describe.skipIf(!hasPdftotext)(
         expect(texts).toContain("Grand");
       });
 
+      it("prints the title saved when the bill was issued, not the book's current one, and falls back to the current one for an older bill", async () => {
+        const saved = words(
+          await renderBillOfSupplyPdf({
+            ...sampleBill(),
+            billBookTitle: "Frozen Title",
+          } as never)
+        ).map((x) => x.text);
+        expect(saved).toContain("Aarav_Book_Frozen");
+        expect(saved).not.toContain("Aarav_Book_Alphabet");
+
+        const older = words(
+          await renderBillOfSupplyPdf({
+            ...sampleBill(),
+            billBookTitle: null,
+          } as never)
+        ).map((x) => x.text);
+        expect(older).toContain("Aarav_Book_Alphabet");
+      });
+
       it("has the same layout as a bill with no coupon: the Discount row is always there", async () => {
         const plain = words(await renderBillOfSupplyPdf(sampleBill() as never));
         const coupon = words(

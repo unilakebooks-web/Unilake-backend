@@ -7,7 +7,7 @@
 //      gives the order its permanent serial ("BOS-26-00001") and issue date.
 //   2. buildBillOfSupplyPdf — builds the PDF in memory when an admin downloads
 //      it. Nothing is stored: not the PDF, not in R2. Re-downloading rebuilds
-//      the same bill from the order's saved number, date and snapshot fields.
+//      the same bill from the order's saved number, date, book title and snapshot fields.
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -86,6 +86,14 @@ export async function assignBillNumber(
 ): Promise<string> {
   const financialYear = financialYearOf(paidAt);
 
+  // The book's title as it is now, kept on the order so that renaming the book
+  // later does not change this bill. Read first, before the counter row below is
+  // locked, so that lock is held for as short a time as possible.
+  const { orderSession } = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { orderSession: { select: { comic: { select: { title: true } } } } },
+  });
+
   const [counter] = await tx.$queryRaw<{ lastSerial: number }[]>`
     INSERT INTO "bill_counters" ("financialYear", "lastSerial", "updatedAt")
     VALUES (${financialYear}, 1, NOW())
@@ -103,7 +111,11 @@ export async function assignBillNumber(
 
   await tx.order.update({
     where: { id: orderId },
-    data: { billNumber, billIssuedAt: paidAt },
+    data: {
+      billNumber,
+      billIssuedAt: paidAt,
+      billBookTitle: orderSession.comic.title,
+    },
   });
 
   return billNumber;
@@ -120,6 +132,7 @@ async function loadBillData(orderId: string) {
     select: {
       billNumber: true,
       billIssuedAt: true,
+      billBookTitle: true,
       amount: true,
       listAmount: true,
       discountAmount: true,
@@ -391,6 +404,10 @@ export async function buildBillOfSupplyPdf(
 
 export type BillData = Awaited<ReturnType<typeof loadBillData>>;
 
+/** The title printed on the bill: the one saved when it was issued, else the book's current title. */
+const billTitle = (data: BillData) =>
+  (data.billBookTitle ?? data.orderSession.comic.title).trim();
+
 /** Draws the bill from already-loaded data. Pure — no DB access. */
 export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -407,7 +424,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     data.shippingZip,
     data.shippingPhone,
     data.orderSession.childName,
-    data.orderSession.comic.title,
+    billTitle(data),
   ].join(" ");
   const { regular, bold } = await embedFonts(pdf, DEVANAGARI.test(customerText));
   const logo = await pdf.embedPng(await readFile(path.join(ASSETS_DIR, "unilake-logo.png")));
@@ -694,7 +711,7 @@ function drawTable(
   // The single line item, described as "<kid name>_Book_<book title>": the
   // client's format, for example "Anuj_Book_Alphabet Train".
   const childName = data.orderSession.childName?.trim() || "Child";
-  const bookTitle = data.orderSession.comic.title.trim();
+  const bookTitle = billTitle(data);
   const row = ["1", `${childName}_Book_${bookTitle}`, HSN_CODE, itemAmount, "1", itemAmount];
   row.forEach((text, col) => cell(col, HEADER_BOTTOM, ROW_BOTTOM, text, fonts.regular));
 

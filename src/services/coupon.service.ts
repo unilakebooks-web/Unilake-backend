@@ -731,8 +731,64 @@ export async function searchCouponCustomers(search: string) {
 }
 
 // ============================================================
-// SWITCH OFF EXPIRED COUPONS
+// SWITCH OFF EXPIRED AND USED-UP COUPONS
 // ============================================================
+
+/**
+ * Turns off every active coupon whose total usage limit has been reached by paid
+ * uses (REDEEMED), so a used single-use code leaves the live part of the admin
+ * list by itself. A coupon with no total limit is never used up. Unpaid holds
+ * (RESERVED) do not count: they may still lapse. Checkout does not depend on this,
+ * it counts the uses itself, so a used-up coupon is refused either way; only the
+ * message changes (an off coupon reads "not valid" instead of "used up").
+ *
+ * With `couponIds` only those coupons are looked at; without, every active coupon
+ * with a limit (the sweep, which also catches coupons used up before this existed).
+ * The check and the switch-off are one statement, so an admin raising the limit at
+ * the same moment keeps the coupon on.
+ *
+ * Returns how many coupons were switched off.
+ */
+export async function switchOffUsedUpCoupons(
+  couponIds?: string[]
+): Promise<number> {
+  // An empty list names no coupon (and Prisma.join refuses one).
+  if (couponIds?.length === 0) return 0;
+  return switchOffUsedUp(
+    couponIds
+      ? Prisma.sql`AND c."id" IN (${Prisma.join(couponIds)})`
+      : Prisma.empty
+  );
+}
+
+/** The payment path: switches off the coupon of a just-paid order if that was its last use. */
+export async function switchOffUsedUpCouponOfOrder(orderId: string) {
+  await switchOffUsedUp(
+    Prisma.sql`AND c."id" IN (
+      SELECT "couponId" FROM "coupon_redemptions"
+      WHERE "orderId" = ${orderId} AND "status" = 'REDEEMED'
+    )`
+  );
+}
+
+// One statement, so the count of paid uses and the switch-off are decided on the
+// same row at the same moment: two payments, or an admin raising the limit, cannot
+// slip between a read and a write. "updatedAt" is set by hand (a raw statement
+// does not), which also makes a customer applying that exact code try again.
+async function switchOffUsedUp(scope: Prisma.Sql): Promise<number> {
+  const count = await prisma.$executeRaw`
+    UPDATE "coupons" AS c
+    SET "isActive" = false, "updatedAt" = NOW()
+    WHERE c."isActive" = true
+      AND c."usageLimit" IS NOT NULL
+      ${scope}
+      AND (
+        SELECT COUNT(*) FROM "coupon_redemptions" AS r
+        WHERE r."couponId" = c."id" AND r."status" = 'REDEEMED'
+      ) >= c."usageLimit"`;
+  if (count > 0) logger.info({ count }, "Used-up coupons switched off");
+  return count;
+}
 
 /**
  * Turns off every active coupon whose end date has passed, so the admin list
@@ -752,5 +808,6 @@ export async function sweepExpiredCoupons(): Promise<number> {
     data: { isActive: false },
   });
   if (count > 0) logger.info({ count }, "Expired coupons switched off");
-  return count;
+  // The same timer also retires the coupons that have been used up.
+  return count + (await switchOffUsedUpCoupons());
 }
