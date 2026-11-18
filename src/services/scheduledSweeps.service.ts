@@ -28,18 +28,35 @@ const SWEEPS: { name: string; run: () => Promise<number> }[] = [
 // One run at a time per instance: a second call while one is running is a no-op.
 let running = false;
 
+// A sweep that never answers (Redis or the database unreachable) must not keep "running" set for ever: after
+// this long it is reported as timed out and the next call may start. The hung call itself cannot be cancelled.
+export const SWEEP_TIMEOUT_MS = 120_000;
+
+function withTimeout(work: Promise<number>): Promise<number> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), SWEEP_TIMEOUT_MS);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function runScheduledSweeps(): Promise<{
   skipped: boolean;
   results: SweepResult[];
 }> {
-  if (running) return { skipped: true, results: [] };
+  if (running) {
+    logger.warn(
+      "[Scheduled sweeps] a run is still in progress, this call did nothing"
+    );
+    return { skipped: true, results: [] };
+  }
   running = true;
   try {
     const results: SweepResult[] = [];
     for (const sweep of SWEEPS) {
       const startedAt = Date.now();
       try {
-        const count = await sweep.run();
+        const count = await withTimeout(sweep.run());
         results.push({
           name: sweep.name,
           count,
@@ -53,7 +70,11 @@ export async function runScheduledSweeps(): Promise<{
           name: sweep.name,
           count: null,
           ms: Date.now() - startedAt,
-          error: err instanceof Error ? err.message : "unknown error",
+          // Detail stays in the log; the response only says what kind of failure it was.
+          error:
+            err instanceof Error && err.message === "timed out"
+              ? "timed out"
+              : "failed",
         });
       }
     }

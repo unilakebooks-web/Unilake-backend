@@ -70,4 +70,31 @@ describe("POST /api/internal/sweeps handler", () => {
       },
     });
   });
+
+  it("answers 500 with the results when any sweep failed, so Cloud Scheduler can alert", async () => {
+    holder.config.scheduledSweepSecret = "right-secret";
+    const outcome = {
+      skipped: false,
+      results: [
+        { name: "stuck pages", count: null, ms: 5, error: "timed out" },
+      ],
+    };
+    holder.run.mockResolvedValue(outcome);
+    const c = call("right-secret");
+    await c.done;
+    expect(c.status).toHaveBeenCalledWith(500);
+    expect(c.json).toHaveBeenCalledWith({
+      success: false,
+      error: { code: "SWEEP_FAILED", message: "One or more sweeps failed" },
+      data: outcome,
+    });
+  });
+
+  it("a skipped run (one already in progress) is still a 200", async () => {
+    holder.config.scheduledSweepSecret = "right-secret";
+    holder.run.mockResolvedValue({ skipped: true, results: [] });
+    const c = call("right-secret");
+    await c.done;
+    expect(c.status).toHaveBeenCalledWith(200);
+  });
 });

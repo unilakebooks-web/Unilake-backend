@@ -21,6 +21,16 @@ export const runSweepsHandler = asyncHandler(
     ) {
       throw new UnauthorizedError("Invalid sweep secret");
     }
-    sendSuccess(res, 200, await runScheduledSweeps());
+    const outcome = await runScheduledSweeps();
+    // A failed or timed-out sweep answers 500 so Cloud Scheduler can show and alert on it; a skipped run is 200.
+    if (outcome.results.some((r) => r.error)) {
+      res.status(500).json({
+        success: false,
+        error: { code: "SWEEP_FAILED", message: "One or more sweeps failed" },
+        data: outcome,
+      });
+      return;
+    }
+    sendSuccess(res, 200, outcome);
   }
 );

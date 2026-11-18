@@ -18,9 +18,14 @@ vi.mock("../../src/lib/logger.js", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-import { runScheduledSweeps } from "../../src/services/scheduledSweeps.service.js";
+import { logger } from "../../src/lib/logger.js";
+import {
+  runScheduledSweeps,
+  SWEEP_TIMEOUT_MS,
+} from "../../src/services/scheduledSweeps.service.js";
 
 beforeEach(() => {
+  vi.mocked(logger.warn).mockClear();
   sweeps.sessions.mockReset().mockResolvedValue(2);
   sweeps.pages.mockReset().mockResolvedValue(1);
   sweeps.coupons.mockReset().mockResolvedValue(0);
@@ -43,14 +48,16 @@ describe("runScheduledSweeps", () => {
   });
 
   it("a failing sweep is reported and does not stop the others", async () => {
-    sweeps.pages.mockRejectedValue(new Error("database is down"));
+    sweeps.pages.mockRejectedValue(
+      new Error('database is down: relation "pages" detail')
+    );
     const out = await runScheduledSweeps();
     expect(sweeps.sessions).toHaveBeenCalledTimes(1);
     expect(sweeps.coupons).toHaveBeenCalledTimes(1);
     expect(out.results[1]).toMatchObject({
       name: "stuck pages",
       count: null,
-      error: "database is down",
+      error: "failed",
     });
     expect(out.results[0]?.error).toBeNull();
     expect(out.results[2]?.error).toBeNull();
@@ -78,8 +85,50 @@ describe("runScheduledSweeps", () => {
     for (const f of Object.values(sweeps))
       f.mockRejectedValue(new Error("boom"));
     const bad = await runScheduledSweeps();
-    expect(bad.results.every((r) => r.error === "boom")).toBe(true);
+    expect(bad.results.every((r) => r.error === "failed")).toBe(true);
     for (const f of Object.values(sweeps)) f.mockResolvedValue(0);
     expect((await runScheduledSweeps()).skipped).toBe(false);
+  });
+
+  it("never puts the raw error text of a failing sweep into the result", async () => {
+    sweeps.coupons.mockRejectedValue(
+      new Error("connect ECONNREFUSED 10.0.0.1:5432 secret-detail")
+    );
+    const out = await runScheduledSweeps();
+    expect(JSON.stringify(out)).not.toMatch(/ECONNREFUSED|secret-detail/);
+  });
+
+  it("a sweep that never answers is reported as timed out and does not block the next run", async () => {
+    vi.useFakeTimers();
+    try {
+      sweeps.pages.mockImplementation(() => new Promise<number>(() => {}));
+      const run = runScheduledSweeps();
+      await vi.advanceTimersByTimeAsync(SWEEP_TIMEOUT_MS + 1);
+      const out = await run;
+      expect(out.results.map((r) => [r.name, r.error])).toEqual([
+        ["expired sessions", null],
+        ["stuck pages", "timed out"],
+        ["expired coupons", null],
+      ]);
+      sweeps.pages.mockResolvedValue(0);
+      const next = await runScheduledSweeps();
+      expect(next.skipped).toBe(false);
+      expect(next.results.every((r) => r.error === null)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("logs a warning when a call is skipped because a run is in progress", async () => {
+    let release!: () => void;
+    sweeps.sessions.mockImplementation(
+      () => new Promise<number>((r) => (release = () => r(0)))
+    );
+    const first = runScheduledSweeps();
+    await Promise.resolve();
+    await runScheduledSweeps();
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    release();
+    await first;
   });
 });
