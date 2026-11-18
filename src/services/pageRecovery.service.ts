@@ -51,6 +51,13 @@ const RESTORE_FROM: OrderSessionStatus[] = [
 
 class QueueTimeoutError extends Error {}
 
+/** A refusal because some pages are in their cooldown: the admin may repeat it with "Restart anyway". Its own code, so the screen never has to read the message. */
+class CoolingDownError extends AppError {
+  constructor(message: string) {
+    super(message, 409, "COOLING_DOWN");
+  }
+}
+
 /** The queue could not be asked at all, before anything was written: the same request can be repeated at once. */
 class QueueDownBeforeWriteError extends AppError {
   constructor() {
@@ -577,6 +584,7 @@ export async function regenerateOrderPages(
     // that is not one of ours (a database error: the transaction rolled back) is the same.
     if (
       err instanceof ConflictError ||
+      err instanceof CoolingDownError ||
       err instanceof QueueDownBeforeWriteError ||
       !(err instanceof AppError)
     ) {
@@ -673,7 +681,7 @@ async function run(
         .map((p) => p.cls.cooldownEndsAt)
         .filter((d): d is Date => d !== null)
         .sort((a, b) => b.getTime() - a.getTime())[0];
-      throw new ConflictError(
+      throw new CoolingDownError(
         until
           ? `Some pages were restarted or failed a few minutes ago. They can be restarted at ${clock(until)}, or use Restart anyway. Nothing was changed.`
           : "Some pages look like they are still running. Use Restart anyway to restart them. Nothing was changed."

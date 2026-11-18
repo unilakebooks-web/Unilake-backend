@@ -832,6 +832,7 @@ describe("POST restart: a session that failed after payment", () => {
     });
     const err = await refusal(regenerateOrderPages(s.orderId, ADMIN, {}));
     expect(err?.statusCode).toBe(409);
+    expect(err?.code).toBe("COOLING_DOWN"); // the screen offers "Restart anyway" on this code only
     expect(err?.message).toMatch(/Nothing was changed/);
     expect((await readRow(s, "2:0")).status).toBe("FAILED");
     expect(await sessionStatus(s)).toBe("FAILED");
