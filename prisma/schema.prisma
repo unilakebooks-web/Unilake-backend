@@ -175,6 +175,12 @@ model Page {
   artworkWidth  Int?
   artworkHeight Int?
 
+  // Original file names as the admin's browser reported them when the file was
+  // uploaded. Display only: never used in a key, a path or a URL. Null for files
+  // uploaded before these columns existed (the name was never sent then).
+  artworkFileName String?
+  maskFileName    String?
+
   hasFace       Boolean @default(false) // does the child's face appear on this page
   mirrorFace    Boolean @default(false) // should the face be flipped
   faceDirection String? // "front" | "three-quarter" | "side"
