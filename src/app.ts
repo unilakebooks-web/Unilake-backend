@@ -12,6 +12,7 @@ import publicRouter from "./routes/public.js";
 import userRouter from "./routes/user.js";
 import { requireLoggedIn } from "./middlewares/requireLoggedIn.js";
 import webhookRouter from "./routes/webhooks.js";
+import internalRouter from "./routes/internal.js";
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
@@ -67,6 +68,7 @@ app.get("/health", (req, res) => {
 app.use("/api/admin", requireAdmin, adminRoutes);
 app.use("/api/user", requireLoggedIn, userRouter);
 app.use("/api/public", publicRouter);
+app.use("/api/internal", internalRouter);
 
 app.use(errorHandler);
 
