@@ -550,9 +550,9 @@ export async function regenerateOrderPages(
     throw new ConflictError(rule.blockedReason ?? "Not allowed");
 
   // Finishing an order whose pages are all done needs no queue: it must work while Redis is
-  // down (a Redis outage is what leaves such orders stuck). A restart that names pages never
-  // turns into a repair.
-  if (input.repairOnly || !input.pageNumbers) {
+  // down (a Redis outage is what leaves such orders stuck). Only an explicit "finish"
+  // (repairOnly) repairs: a restart, whole book or named pages, never turns into the email.
+  if (input.repairOnly) {
     const earlyRows = await loadRows(ctx.session.id);
     const unclassified = ctx.pages.map((p) => ({
       ...p,
@@ -607,7 +607,7 @@ async function run(
     throw new QueueDownBeforeWriteError();
   }
 
-  if (needsRepairOf(ctx, pages) && (input.repairOnly || !input.pageNumbers)) {
+  if (input.repairOnly && needsRepairOf(ctx, pages)) {
     return repairOrder(ctx);
   }
   if (input.repairOnly) {
@@ -909,8 +909,10 @@ async function run(
       { ...log, err },
       "[Page recovery] Queue rejected the restart; putting the pages back"
     );
-    // Only rows whose old job was cleared (or never existed) and so would have been added: a
-    // row left running, or not reached yet, still has a live job and must not be failed.
+    // Only rows whose old job was cleared (or never existed) and so would have been added are
+    // put back. A row left running, the row the queue failed on, and rows not reached yet are
+    // not: their old job may still be live (a waiting job is), so failing them could announce
+    // a book ready while a job still runs. They sit QUEUED and can be restarted after 2 minutes.
     for (const { pageVersionId: rowId } of toAdd) {
       await settleTerminalPageFailure(rowId, "Could not be queued", {
         source: "admin-regenerate",
@@ -923,9 +925,11 @@ async function run(
       );
     }
     throw new AppError(
-      toAdd.length > 0
-        ? "The queue is not reachable. The pages were put back to failed; wait about 10 minutes or use Restart anyway."
-        : "The queue did not answer, so some pages may not have started. Look at the order page in a couple of minutes: pages that did not start can be restarted again.",
+      toAdd.length === 0
+        ? "The queue did not answer, so some pages may not have started. Look at the order page in a couple of minutes: pages that did not start can be restarted again."
+        : toAdd.length === reset.length
+          ? "The queue is not reachable. The pages were put back to failed; wait about 10 minutes or use Restart anyway."
+          : `The queue is not reachable. ${toAdd.length} of ${reset.length} pages were put back to failed (wait about 10 minutes or use Restart anyway); the others may not have started. Look at the order page in a couple of minutes.`,
       503,
       "QUEUE_UNAVAILABLE"
     );

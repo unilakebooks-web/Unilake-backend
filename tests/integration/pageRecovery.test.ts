@@ -966,7 +966,9 @@ describe("POST restart: finishing an order whose pages are all done", () => {
       });
       const before = await getOrderPageStatus(s.orderId);
       expect(before.needsRepair).toBe(true);
-      const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+      const result = await regenerateOrderPages(s.orderId, ADMIN, {
+        repairOnly: true,
+      });
       expect(result.repaired).toBe(true);
       expect(await sessionStatus(s)).toBe("PAID_PAGES_READY");
       expect((await orderRow(s)).status).toBe("GENERATED");
@@ -1007,7 +1009,9 @@ describe("review round 1 fixes", () => {
       rows: finished(1, 2, 3, 4, 5),
     });
     expect((await getOrderPageStatus(s.orderId)).needsRepair).toBe(true);
-    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {
+      repairOnly: true,
+    });
     expect(result.repaired).toBe(true);
     expect(await sessionStatus(s)).toBe("PAID_PAGES_READY");
     expect((await orderRow(s)).status).toBe("GENERATED");
@@ -1197,7 +1201,9 @@ describe("review round 2 fixes", () => {
       rows: finished(2, 3, 4, 5), // page 1 (free preview) has no row
     });
     expect((await getOrderPageStatus(s.orderId)).needsRepair).toBe(true);
-    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {
+      repairOnly: true,
+    });
     expect(result.repaired).toBe(true);
     expect(await sessionStatus(s)).toBe("PAID_PAGES_READY");
   });
@@ -1307,6 +1313,9 @@ describe("review round 3 fixes", () => {
       (c) => (c as unknown as [string])[0]
     );
     expect(settled).toEqual([s.rows["2:0"]]);
+    expect(err?.message).toMatch(
+      /1 of 3 pages were put back to failed.*the others may not have started/
+    );
   });
 
   it("'Finish this order' works while Redis is down", async () => {
@@ -1334,6 +1343,19 @@ describe("review round 3 fixes", () => {
     expect(result.repaired).toBe(false);
     expect(result.skipped.map((x) => x.reason)).toEqual(["FINISHED"]);
     expect(await sessionStatus(s)).toBe("GENERATING_PAID");
+    expect(fake.notifyBookReady).not.toHaveBeenCalled();
+  });
+
+  it("a plain 'restart all' never turns into the repair, even if the pages all finished meanwhile", async () => {
+    const s = await stage({
+      label: "restart-all-vs-repair",
+      session: "FAILED",
+      rows: finished(1, 2, 3, 4, 5),
+    });
+    const result = await regenerateOrderPages(s.orderId, ADMIN, {});
+    expect(result.repaired).toBe(false);
+    expect(result.queued).toHaveLength(0);
+    expect(await sessionStatus(s)).toBe("FAILED");
     expect(fake.notifyBookReady).not.toHaveBeenCalled();
   });
 });
