@@ -744,7 +744,10 @@ export const generationWorker = new Worker<GeneratePageJobData>(
 export async function settleTerminalPageFailure(
   pageVersionId: string,
   reason: unknown,
-  opts: { source: "failed-event" | "sweeper"; staleBefore?: Date }
+  opts: {
+    source: "failed-event" | "sweeper" | "admin-regenerate";
+    staleBefore?: Date;
+  }
 ): Promise<{ flipped: boolean }> {
   // The job data only carries pageVersionId. Look up the session so we can
   // pass it to the completion check. This runs OUTSIDE the worker's

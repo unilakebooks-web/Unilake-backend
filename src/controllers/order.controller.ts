@@ -8,6 +8,7 @@ import {
   getTrackingForUser,
   listAdminOrders,
   getAdminOrderDetail,
+  setOrderSentToPrinter,
 } from "../services/order.service.js";
 import { listAdminOrdersQuerySchema } from "../validators/order.schema.js";
 import { pushDimensionsAssignAwbAndSchedulePickup, retryPhaseAForFailedOrder, getLabelForOrder, refreshTrackingForOrder} from "../services/shiprocket.service.js";
@@ -249,6 +250,32 @@ export const getBillOfSupplyHandler = asyncHandler(
     // Customer name and address — never let a shared cache keep a copy.
     res.setHeader("Cache-Control", "no-store");
     res.status(200).send(Buffer.from(bytes));
+  }
+);
+
+// PATCH /api/admin/orders/:orderId/sent-to-printer
+// Auth: requireAdmin (applied at router mount in app.ts). Body { sent } is
+// validated by validateBody in the route.
+const setSentToPrinterParamsSchema = z.object({
+  orderId: z.string().uuid("Invalid order ID format"),
+});
+
+export const setSentToPrinterHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const parseResult = setSentToPrinterParamsSchema.safeParse(req.params);
+    if (!parseResult.success) {
+      throw new ValidationError(
+        parseResult.error.issues[0]?.message ?? "Invalid order ID"
+      );
+    }
+
+    const result = await setOrderSentToPrinter(
+      parseResult.data.orderId,
+      req.body.sent,
+      req.user!.id
+    );
+
+    sendSuccess(res, 200, result);
   }
 );
 

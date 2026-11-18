@@ -283,3 +283,13 @@ export type GetComicVideoUploadUrlInput = z.infer<
 
 // export const updateComicSchema = createComicSchema.partial();
 // export type UpdateComicInput = z.infer<typeof updateComicSchema>;
+
+// The published books, in the new order (copy of reorderFaqsSchema).
+export const reorderComicsSchema = z.object({
+  orderedIds: z
+    .array(z.string().uuid())
+    .min(1, "orderedIds cannot be empty")
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "orderedIds cannot contain duplicates",
+    }),
+});

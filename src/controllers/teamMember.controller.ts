@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/response.js";
-import { createTeamMember, deleteTeamMember, getActiveTeamMembers, getAllTeamMembers, getTeamMemberUploadUrl, toggleTeamMemberStatus, updateTeamMember } from "../services/teamMember.service.js";
+import { createTeamMember, deleteTeamMember, getActiveTeamMembers, getAllTeamMembers, getTeamMemberUploadUrl, reorderTeamMembers, toggleTeamMemberStatus, updateTeamMember } from "../services/teamMember.service.js";
 
 export const getTeamMemberUploadUrlHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -47,6 +47,14 @@ export const deleteTeamMemberHandler = asyncHandler(
 export const getAllTeamMembersHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const teamMembers = await getAllTeamMembers();
+    sendSuccess(res, 200, teamMembers);
+  }
+);
+
+
+export const reorderTeamMembersHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const teamMembers = await reorderTeamMembers(req.body.orderedIds);
     sendSuccess(res, 200, teamMembers);
   }
 );

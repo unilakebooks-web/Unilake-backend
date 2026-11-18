@@ -2,6 +2,7 @@
 import { Router } from "express";
 import {
   createComicHandler,
+  reorderComicsHandler,
   deleteComicHandler,
   getAdminComicsHandler,
   getAdminComicDetailHandler,
@@ -23,6 +24,7 @@ import {
 import { validateBody } from "../middlewares/validateBody.js";
 import {
   createComicSchema,
+  reorderComicsSchema,
   getComicVideoUploadUrlSchema,
   getLoraUploadUrlSchema,
   updateComicPricingSchema,
@@ -115,6 +117,7 @@ import {
 import {
   createTeamMemberSchema,
   getTeamMemberUploadUrlSchema,
+  reorderTeamMembersSchema,
   updateTeamMemberSchema,
 } from "../validators/teamMember.schema.js";
 import {
@@ -123,6 +126,7 @@ import {
   getActiveTeamMembersHandler,
   getAllTeamMembersHandler,
   getTeamMemberUploadUrlHandler,
+  reorderTeamMembersHandler,
   toggleTeamMemberStatusHandler,
   updateTeamMemberHandler,
 } from "../controllers/teamMember.controller.js";
@@ -174,8 +178,8 @@ import {
   toggleBlogStatusHandler,
   updateBlogHandler,
 } from "../controllers/blog.controller.js";
-import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler } from "../controllers/order.controller.js";
-import { confirmDimensionsBodySchema } from "../validators/order.schema.js";
+import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler, setSentToPrinterHandler } from "../controllers/order.controller.js";
+import { confirmDimensionsBodySchema, setSentToPrinterBodySchema } from "../validators/order.schema.js";
 import {
   getAdminSitePageHandler,
   getAdminSitePagesHandler,
@@ -239,6 +243,10 @@ import {
   createCouponSchema,
   updateCouponSchema,
 } from "../validators/coupon.schema.js";
+import {
+  getOrderPagesHandler,
+  regenerateOrderPagesHandler,
+} from "../controllers/pageRecovery.controller.js";
 
 const router = Router();
 
@@ -266,6 +274,13 @@ router.get("/comics/:comicId", getAdminComicDetailHandler); // single comic full
 router.post("/comics/thumbnails/upload-urls", getThumbnailUploadUrlsBatchHandler);
 router.post("/comics", validateBody(createComicSchema), createComicHandler); // create comic
 router.delete("/comics/:comicId", deleteComicHandler); // delete comic
+// NOTE: /comics/reorder MUST stay above /comics/:comicId — both are PATCH with the
+// same segment count, so Express matches whichever is registered first.
+router.patch(
+  "/comics/reorder",
+  validateBody(reorderComicsSchema),
+  reorderComicsHandler
+);
 router.patch(
   "/comics/:comicId",
   validateBody(updateComicSchema),
@@ -483,6 +498,13 @@ router.post(
   validateBody(createTeamMemberSchema),
   createTeamMemberHandler
 );
+// NOTE: /team-members/reorder MUST stay above /team-members/:id — both are PATCH
+// with the same segment count, so Express matches whichever is registered first.
+router.patch(
+  "/team-members/reorder",
+  validateBody(reorderTeamMembersSchema),
+  reorderTeamMembersHandler
+);
 router.patch(
   "/team-members/:id",
   validateBody(updateTeamMemberSchema),
@@ -551,6 +573,16 @@ router.post(
 );
 router.post("/orders/:orderId/retry-shiprocket", retryShiprocketHandler);
 router.post("/orders/:orderId/refresh-tracking", refreshTrackingHandler);
+router.patch(
+  "/orders/:orderId/sent-to-printer",
+  validateBody(setSentToPrinterBodySchema),
+  setSentToPrinterHandler
+);
+
+// ORDER PAGES (restart stuck or failed pages of a paid book)
+// Literal 3rd segments under /orders/:orderId, same as the orders block above: no ordering hazard.
+router.get("/orders/:orderId/pages", getOrderPagesHandler);
+router.post("/orders/:orderId/regenerate-pages", regenerateOrderPagesHandler);
 
 // USERS (admin user management)
 // List every account; promote/demote. No ordering hazard: the PATCH has a

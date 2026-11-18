@@ -150,6 +150,10 @@ export async function createPage(comicId: string, input: CreatePageInput) {
   if (input.artworkUrl !== undefined)
     data.artworkUrl = getPublicUrl(input.artworkUrl);
   if (input.maskUrl !== undefined) data.maskUrl = getPublicUrl(input.maskUrl);
+  // Display-only names, stored only together with their file.
+  if (input.artworkUrl !== undefined)
+    data.artworkFileName = input.artworkFileName ?? null;
+  if (input.maskUrl !== undefined) data.maskFileName = input.maskFileName ?? null;
   if (input.faceDirection !== undefined) data.faceDirection = input.faceDirection;
   if (input.pagePrompt !== undefined) data.pagePrompt = input.pagePrompt;
   if (input.steps !== undefined) data.steps = input.steps;
@@ -250,6 +254,11 @@ export async function updatePage(pageId: string, input: UpdatePageInput) {
   if (input.artworkUrl !== undefined) {
     const newArtworkUrl = getPublicUrl(input.artworkUrl);
     data.artworkUrl = newArtworkUrl;
+    // The stored name belongs to the stored file: it is replaced (or cleared when
+    // no name was sent) only when the URL really changes. Not tied to an old
+    // file existing, so a first upload keeps its name too.
+    if (page.artworkUrl !== newArtworkUrl)
+      data.artworkFileName = input.artworkFileName ?? null;
 
     if (page.artworkUrl && page.artworkUrl !== newArtworkUrl) {
       oldR2KeysToDelete.push(page.artworkUrl.replace(`${publicBase}/`, ""));
@@ -259,6 +268,8 @@ export async function updatePage(pageId: string, input: UpdatePageInput) {
   if (input.maskUrl !== undefined) {
     const newMaskUrl = getPublicUrl(input.maskUrl);
     data.maskUrl = newMaskUrl;
+    if (page.maskUrl !== newMaskUrl)
+      data.maskFileName = input.maskFileName ?? null;
 
     if (page.maskUrl && page.maskUrl !== newMaskUrl) {
       oldR2KeysToDelete.push(page.maskUrl.replace(`${publicBase}/`, ""));
