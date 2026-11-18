@@ -243,6 +243,10 @@ import {
   createCouponSchema,
   updateCouponSchema,
 } from "../validators/coupon.schema.js";
+import {
+  getOrderPagesHandler,
+  regenerateOrderPagesHandler,
+} from "../controllers/pageRecovery.controller.js";
 
 const router = Router();
 
@@ -574,6 +578,11 @@ router.patch(
   validateBody(setSentToPrinterBodySchema),
   setSentToPrinterHandler
 );
+
+// ORDER PAGES (restart stuck or failed pages of a paid book)
+// Literal 3rd segments under /orders/:orderId, same as the orders block above: no ordering hazard.
+router.get("/orders/:orderId/pages", getOrderPagesHandler);
+router.post("/orders/:orderId/regenerate-pages", regenerateOrderPagesHandler);
 
 // USERS (admin user management)
 // List every account; promote/demote. No ordering hazard: the PATCH has a

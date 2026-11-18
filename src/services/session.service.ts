@@ -153,7 +153,7 @@ async function filterRowsNeedingJobs(rowIds: string[]): Promise<Set<string>> {
  * and the batch goes in whole or not at all — the parallel version left books
  * half-queued when some adds threw and others had already landed.
  */
-async function addPageJobs(
+export async function addPageJobs(
   rows: { pageVersionId: string; pageNumber: number }[]
 ): Promise<void> {
   if (rows.length === 0) return;
@@ -802,6 +802,26 @@ const REGENERATABLE_STATUSES: OrderSessionStatus[] = [
   "FAILED",
 ];
 
+/**
+ * A session that FAILED after the customer paid: every paid page failed, so
+ * maybeMarkPaidReady set the session to FAILED and left the order at PAID. It is
+ * still a paid book. Treated like an unpaid FAILED session it expired after seven
+ * days, got the free-preview regeneration cap, and was sent back to the preview
+ * stage, from where it reached PREVIEW_READY with the order still PAID and could
+ * never be printed.
+ */
+async function isFailedAfterPayment(session: {
+  id: string;
+  status: OrderSessionStatus;
+}): Promise<boolean> {
+  if (session.status !== "FAILED") return false;
+  const order = await prisma.order.findUnique({
+    where: { orderSessionId: session.id },
+    select: { status: true },
+  });
+  return order?.status === "PAID";
+}
+
 export async function regeneratePage(sessionId: string, pageNumber: number) {
   const session = await prisma.orderSession.findUnique({
     where: { id: sessionId },
@@ -811,7 +831,10 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
     throw new NotFoundError("OrderSession not found");
   }
 
-  await assertNotExpired(session);
+  const failedAfterPayment = await isFailedAfterPayment(session);
+
+  // A paid session does not expire, whatever state it is in.
+  if (!failedAfterPayment) await assertNotExpired(session);
 
   // Only a page of THIS session's book can be regenerated — a page the admin
   // added after the session started is not part of it.
@@ -832,7 +855,8 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
     );
   }
 
-  const hasPaid = POST_PAYMENT_STATUSES.includes(session.status);
+  const hasPaid =
+    failedAfterPayment || POST_PAYMENT_STATUSES.includes(session.status);
   const cap = hasPaid
     ? MAX_VARIANTS_AFTER_PAYMENT
     : MAX_VARIANTS_BEFORE_PAYMENT;
@@ -875,16 +899,21 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
   // GENERATING_PREVIEW is itself regeneratable, so the user retrying re-enters
   // the normal path, and a rollback would race a sibling regeneration that did
   // enqueue successfully.
+  //
+  // A session that failed AFTER payment goes back to GENERATING_PAID, the stage
+  // whose completion check (maybeMarkPaidReady) ends in PAID_PAGES_READY and the
+  // order GENERATED; GENERATING_PREVIEW would end in PREVIEW_READY.
   if (session.status === "FAILED") {
+    const to = failedAfterPayment ? "GENERATING_PAID" : "GENERATING_PREVIEW";
     const { count } = await prisma.orderSession.updateMany({
       where: { id: sessionId, status: "FAILED" },
-      data: { status: "GENERATING_PREVIEW" },
+      data: { status: to },
     });
 
     if (count > 0) {
       logger.info(
-        { sessionId, pageNumber },
-        "Session moved FAILED → GENERATING_PREVIEW to accept a regeneration"
+        { sessionId, pageNumber, to },
+        "Session moved out of FAILED to accept a regeneration"
       );
     }
   }
@@ -1061,6 +1090,21 @@ export async function maybeMarkPaidReady(
 
   // No paid pages in this book means nothing was enqueued. Never flip.
   if (totalPaidPages === 0) return "not-done";
+
+  // A page that is being made again is not settled, even if an older variant of
+  // it failed: the terminal-row count below would otherwise call the book ready
+  // (and email the customer) while a page is still running. Same rule
+  // sendToPrint already enforces. A row that never leaves flight is failed by the
+  // stuck-page sweeper, whose failure path calls this function again.
+  const stillBeingMade = await prisma.pageVersion.findFirst({
+    where: {
+      orderSessionId,
+      pageId: { in: paidPageIds },
+      status: { notIn: ["SD_READY", "FAILED"] },
+    },
+    select: { id: true },
+  });
+  if (stillBeingMade) return "not-done";
 
   // Every terminal PageVersion row for this session's paid pages. Same shape
   // as the preview helper — deliberately NOT distinct on pageId because a
