@@ -115,6 +115,7 @@ import {
 import {
   createTeamMemberSchema,
   getTeamMemberUploadUrlSchema,
+  reorderTeamMembersSchema,
   updateTeamMemberSchema,
 } from "../validators/teamMember.schema.js";
 import {
@@ -123,6 +124,7 @@ import {
   getActiveTeamMembersHandler,
   getAllTeamMembersHandler,
   getTeamMemberUploadUrlHandler,
+  reorderTeamMembersHandler,
   toggleTeamMemberStatusHandler,
   updateTeamMemberHandler,
 } from "../controllers/teamMember.controller.js";
@@ -482,6 +484,13 @@ router.post(
   "/team-members",
   validateBody(createTeamMemberSchema),
   createTeamMemberHandler
+);
+// NOTE: /team-members/reorder MUST stay above /team-members/:id — both are PATCH
+// with the same segment count, so Express matches whichever is registered first.
+router.patch(
+  "/team-members/reorder",
+  validateBody(reorderTeamMembersSchema),
+  reorderTeamMembersHandler
 );
 router.patch(
   "/team-members/:id",

@@ -778,6 +778,11 @@ model TeamMember {
   instagramUrl String?
   twitterUrl   String?
   isActive     Boolean  @default(true)
+
+  // Website order on the Team page, ascending. Renumbered 0..N-1 by the admin's
+  // reorder (hidden members keep a slot); a new member takes max + 1 (the end).
+  sortOrder Int @default(0)
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

@@ -3,9 +3,32 @@ import { deleteFile, getPublicUrl, getSignedUploadUrl } from "../lib/r2.js";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { config } from "../config/env.js";
-import { NotFoundError } from "../utils/errors.js";
+import { ConflictError, NotFoundError } from "../utils/errors.js";
 
 const UPLOAD_EXPIRY_SECONDS = 15 * 60;
+
+// The order customers and the admin see: the admin's arrangement first.
+// createdAt and id only break ties (two concurrent creates can read the same
+// max), so the order is always deterministic.
+const TEAM_MEMBER_ORDER_BY = [
+  { sortOrder: "asc" as const },
+  { createdAt: "desc" as const },
+  { id: "asc" as const },
+];
+
+// Where a new member appears (D-032): at the END, so adding someone never pushes
+// the people the admin placed first down. Change this one constant to put new
+// members at the start instead.
+const NEW_TEAM_MEMBER_POSITION: "start" | "end" = "end";
+
+async function nextTeamMemberSortOrder() {
+  const edge = await prisma.teamMember.findFirst({
+    orderBy: { sortOrder: NEW_TEAM_MEMBER_POSITION === "end" ? "desc" : "asc" },
+    select: { sortOrder: true },
+  });
+  if (!edge) return 0;
+  return NEW_TEAM_MEMBER_POSITION === "end" ? edge.sortOrder + 1 : edge.sortOrder - 1;
+}
 
 
 export async function getTeamMemberUploadUrl(data: {
@@ -37,10 +60,13 @@ export async function createTeamMember(data: {
   instagramUrl?: string;
   twitterUrl?: string;
 }) {
+  const sortOrder = await nextTeamMemberSortOrder();
+
   const teamMember = await prisma.teamMember.create({
     data: {
       name: data.name,
       role: data.role,
+      sortOrder,
       ...(data.description !== undefined && { description: data.description }),
       ...(data.imageKey !== undefined && { imageUrl: getPublicUrl(data.imageKey) }),
       ...(data.linkedinUrl !== undefined && { linkedinUrl: data.linkedinUrl }),
@@ -176,7 +202,7 @@ export async function deleteTeamMember(id: string) {
 
 export async function getAllTeamMembers() {
   const teamMembers = await prisma.teamMember.findMany({
-    orderBy: { createdAt: "desc" },
+    orderBy: TEAM_MEMBER_ORDER_BY,
   });
 
   return teamMembers;
@@ -186,8 +212,54 @@ export async function getAllTeamMembers() {
 export async function getActiveTeamMembers() {
   const teamMembers = await prisma.teamMember.findMany({
     where: { isActive: true },
-    orderBy: { createdAt: "desc" },
+    orderBy: TEAM_MEMBER_ORDER_BY,
   });
 
   return teamMembers;
+}
+
+export async function reorderTeamMembers(orderedIds: string[]) {
+  // The admin table shows every member, hidden ones too, so the reorder must be
+  // the COMPLETE list. If it is not (another admin added or removed someone
+  // since the page loaded) the order saved would be wrong: refuse and let the
+  // admin reload.
+  const existing = await prisma.teamMember.findMany({
+    where: { id: { in: orderedIds } },
+    select: { id: true },
+  });
+  const total = await prisma.teamMember.count();
+
+  if (existing.length !== orderedIds.length || total !== orderedIds.length) {
+    logger.warn(
+      { expected: total, received: orderedIds.length },
+      "Team reorder refused: the list is not the current team"
+    );
+    throw new ConflictError(
+      "The team list has changed since you opened it. Reload and try again."
+    );
+  }
+
+  // Renumber by array position, one transaction. No unique constraint on
+  // sortOrder, so no two-phase renumber is needed (same as reorderFaqs).
+  try {
+    await prisma.$transaction(
+      orderedIds.map((id, index) =>
+        prisma.teamMember.update({ where: { id }, data: { sortOrder: index } })
+      )
+    );
+  } catch (err) {
+    // P2025: someone was deleted between the check above and the write. The
+    // transaction rolled back, so nothing changed; answer the same 409 so the
+    // admin's screen reloads instead of showing a server error.
+    if ((err as { code?: string }).code === "P2025") {
+      throw new ConflictError(
+        "The team list has changed since you opened it. Reload and try again."
+      );
+    }
+    throw err;
+  }
+
+  logger.info({ orderedIds }, "Team members reordered");
+
+  return prisma.teamMember.findMany({ orderBy: TEAM_MEMBER_ORDER_BY });
 }
