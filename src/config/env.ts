@@ -87,6 +87,8 @@ export const config = {
     pickupLocationName: process.env.SHIPROCKET_PICKUP_LOCATION_NAME!,
     webhookToken: process.env.SHIPROCKET_WEBHOOK_TOKEN!,
   },
+  // Shared secret for POST /api/internal/sweeps (Cloud Scheduler). Optional: when empty the endpoint answers 404.
+  scheduledSweepSecret: process.env.SWEEP_SECRET ?? "",
   email: {
     resendApiKey: process.env.RESEND_API_KEY!,
     fromAddress: process.env.EMAIL_FROM_ADDRESS!,
