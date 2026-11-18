@@ -62,26 +62,32 @@ function sampleBill(overrides: Record<string, unknown> = {}, hindi = false) {
     shippingState: "Maharashtra",
     shippingZip: "400001",
     shippingPhone: "9999999999",
-    orderSession: { childName: "Aarav" },
+    orderSession: { childName: "Aarav", comic: { title: "Alphabet Train" } },
     listAmount: null,
     discountAmount: D("0"),
-    couponCode: null,
     ...overrides,
   };
 }
 
-const discounted = (code = "FESTIVE-25") =>
+const discounted = () =>
   sampleBill({
     amount: D("799.20"),
     listAmount: D("999.00"),
     discountAmount: D("199.80"),
-    couponCode: code,
   });
 
-const golden = (name: string) =>
-  readFileSync(path.join(__dirname, "..", "fixtures", name), "utf8")
-    .trim()
-    .split("\n");
+// The stored word positions of a bill with no coupon. They pin the layout, so a
+// deliberate layout change means regenerating them:
+//   UPDATE_BILL_GOLDEN=1 npx vitest run tests/integration/billOfSupply.test.ts
+// and reading the diff of tests/fixtures before committing it.
+const expectGolden = (name: string, actual: string[]) => {
+  const file = path.join(__dirname, "..", "fixtures", name);
+  if (process.env.UPDATE_BILL_GOLDEN === "1") {
+    writeFileSync(file, `${actual.join("\n")}\n`);
+    return;
+  }
+  expect(actual).toEqual(readFileSync(file, "utf8").trim().split("\n"));
+};
 const asLines = (list: Word[]) =>
   list.map(
     (w) =>
@@ -92,25 +98,43 @@ describe.skipIf(!hasPdftotext)(
   "Bill of Supply layout (needs pdftotext)",
   () => {
     describe("a bill with no coupon", () => {
-      it("is laid out exactly as before coupons existed (golden word positions)", async () => {
-        expect(
+      it("keeps its layout (stored word positions)", async () => {
+        expectGolden(
+          "bill-no-coupon.words.txt",
           asLines(words(await renderBillOfSupplyPdf(sampleBill() as never)))
-        ).toEqual(golden("bill-no-coupon.words.txt"));
+        );
       });
 
-      it("is unchanged for a Hindi address too", async () => {
-        expect(
+      it("keeps its layout for a Hindi address too", async () => {
+        expectGolden(
+          "bill-no-coupon-hindi.words.txt",
           asLines(
             words(await renderBillOfSupplyPdf(sampleBill({}, true) as never))
           )
-        ).toEqual(golden("bill-no-coupon-hindi.words.txt"));
+        );
       });
 
-      it("is unchanged for an order placed before coupons existed (no list amount, zero discount)", async () => {
-        const legacy = sampleBill({ listAmount: null, couponCode: null });
+      it("is the same for an order placed before coupons existed (no list amount, zero discount)", async () => {
+        const legacy = sampleBill({ listAmount: null });
         expect(
           asLines(words(await renderBillOfSupplyPdf(legacy as never)))
-        ).toEqual(golden("bill-no-coupon.words.txt"));
+        ).toEqual(
+          asLines(words(await renderBillOfSupplyPdf(sampleBill() as never)))
+        );
+      });
+    });
+
+    describe("a bill with no discount", () => {
+      it("still has a Discount row, showing 0.00 with no minus sign", async () => {
+        const w = words(await renderBillOfSupplyPdf(sampleBill() as never));
+        const texts = w.map((x) => x.text);
+        expect(texts).toContain("Discount");
+        expect(texts.filter((t) => t === "₹0.00")).toHaveLength(1);
+        expect(texts.some((t) => t.startsWith("-₹"))).toBe(false);
+        const label = w.find((x) => x.text === "Discount")!;
+        const amount = w.find((x) => x.text === "₹0.00")!;
+        expect(Math.abs(label.y1 - amount.y1)).toBeLessThan(4);
+        expect(label.x2).toBeLessThan(amount.x1);
       });
     });
 
@@ -118,15 +142,33 @@ describe.skipIf(!hasPdftotext)(
       it("shows the list price, a signed discount line and the amount paid", async () => {
         const w = words(await renderBillOfSupplyPdf(discounted() as never));
         const texts = w.map((x) => x.text);
-        expect(texts).toContain("Coupon");
-        expect(texts).toContain("(FESTIVE-25)");
+        expect(texts).toContain("Discount");
         expect(texts).toContain("-₹199.80");
         expect(texts.filter((t) => t === "₹999.00")).toHaveLength(2); // Rate and Amount of the item row
         expect(texts.filter((t) => t === "₹799.20")).toHaveLength(1); // Grand Total only
         expect(texts).toContain("Grand");
       });
 
-      it("puts the discount row between the item row and the Grand Total, and moves what is below it down by one row", async () => {
+      it("prints the title saved when the bill was issued, not the book's current one, and falls back to the current one for an older bill", async () => {
+        const saved = words(
+          await renderBillOfSupplyPdf({
+            ...sampleBill(),
+            billBookTitle: "Frozen Title",
+          } as never)
+        ).map((x) => x.text);
+        expect(saved).toContain("Aarav_Book_Frozen");
+        expect(saved).not.toContain("Aarav_Book_Alphabet");
+
+        const older = words(
+          await renderBillOfSupplyPdf({
+            ...sampleBill(),
+            billBookTitle: null,
+          } as never)
+        ).map((x) => x.text);
+        expect(older).toContain("Aarav_Book_Alphabet");
+      });
+
+      it("has the same layout as a bill with no coupon: the Discount row is always there", async () => {
         const plain = words(await renderBillOfSupplyPdf(sampleBill() as never));
         const coupon = words(
           await renderBillOfSupplyPdf(discounted() as never)
@@ -134,35 +176,36 @@ describe.skipIf(!hasPdftotext)(
         const at = (list: Word[], text: string) =>
           list.find((w) => w.text === text)!;
 
-        const item = at(coupon, "Aarav_Personalized");
-        expect(item.y1).toBeCloseTo(at(plain, "Aarav_Personalized").y1, 2); // item row did not move
-
-        const discountY = at(coupon, "-₹199.80").y1;
-        const totalY = at(coupon, "Grand").y1;
-        expect(discountY).toBeGreaterThan(item.y1);
-        expect(totalY).toBeGreaterThan(discountY);
-
-        const shift = totalY - at(plain, "Grand").y1; // one row (40 points)
-        expect(shift).toBeCloseTo(40, 0);
-        expect(
-          at(coupon, "Declaration:").y1 - at(plain, "Declaration:").y1
-        ).toBeCloseTo(shift, 1);
+        for (const text of [
+          "Aarav_Book_Alphabet",
+          "Discount",
+          "Grand",
+          "Declaration:",
+        ]) {
+          expect(at(coupon, text).y1).toBeCloseTo(at(plain, text).y1, 2);
+        }
+        const item = at(coupon, "Aarav_Book_Alphabet").y1;
+        expect(at(coupon, "-₹199.80").y1).toBeGreaterThan(item);
+        expect(at(coupon, "Grand").y1).toBeGreaterThan(at(coupon, "-₹199.80").y1);
       });
 
-      it("fits the longest allowed code inside the row, left of the Amount column", async () => {
-        const long = "A".repeat(32);
-        const w = words(await renderBillOfSupplyPdf(discounted(long) as never));
-        const amount = w.find((x) => x.text === "-₹199.80")!;
-        // the label words sit on the same line as the amount (within a few points)
-        const label = w.filter(
-          (x) =>
-            x !== amount && Math.abs(x.y1 - amount.y1) < 4 && x.x1 < amount.x1
+      it("never prints the coupon code", async () => {
+        const w = words(
+          await renderBillOfSupplyPdf({
+            ...discounted(),
+            couponCode: "WELCOME10",
+          } as never)
         );
-        expect(label.map((x) => x.text).join(" ")).toContain(long);
-        for (const word of label) {
-          expect(word.x1).toBeGreaterThan(24.5);
-          expect(word.x2).toBeLessThan(484.5);
-        }
+        expect(w.some((x) => x.text.includes("WELCOME10"))).toBe(false);
+      });
+
+      it("puts the Discount label left of the amount, on the same line", async () => {
+        const w = words(await renderBillOfSupplyPdf(discounted() as never));
+        const amount = w.find((x) => x.text === "-₹199.80")!;
+        const label = w.find((x) => x.text === "Discount")!;
+        expect(Math.abs(label.y1 - amount.y1)).toBeLessThan(4);
+        expect(label.x2).toBeLessThan(amount.x1);
+        expect(label.x1).toBeGreaterThan(24);
       });
 
       it("renders on one page", async () => {
@@ -191,6 +234,142 @@ describe.skipIf(!hasPdftotext)(
           } as never)
         );
         expect(w.filter((x) => x.text === "₹999.00")).toHaveLength(2);
+      });
+    });
+
+    // Positions read from the client's final layout ("Bill of Supply with discount
+    // tab - final"), in points from the top-left corner. The sample is set in
+    // Arial and the bill in Noto Sans, so the checks are on left edges and on
+    // distances between lines of the same size, with a margin for that.
+    describe("matches the client's final layout", () => {
+      const near = (actual: number, expected: number, margin = 1.5) =>
+        expect(Math.abs(actual - expected)).toBeLessThanOrEqual(margin);
+      const render = async (bill = discounted()) =>
+        words(await renderBillOfSupplyPdf(bill as never));
+      const first = (list: Word[], text: string) =>
+        list.find((w) => w.text === text)!;
+
+      it("starts each column where the sample does", async () => {
+        const w = await render();
+        near(first(w, "Billed").x1, 30.64); // Billed By
+        near(w.filter((x) => x.text === "Billed")[1]!.x1, 193.01); // Billed To
+        near(first(w, "Unique").x1, 359.3);
+        near(first(w, "#BOS-26-00001").x1, 451.8);
+        near(first(w, "Declaration:").x1, 23.08);
+        near(first(w, "*").x1, 321.57);
+      });
+
+      it("centres the title on the page", async () => {
+        const w = await render();
+        const title = [first(w, "Bill"), first(w, "of"), first(w, "Supply")];
+        near((title[0]!.x1 + title[2]!.x2) / 2, 297.6);
+      });
+
+      it("spaces the details block as the sample does", async () => {
+        const w = await render();
+        const unique = first(w, "Unique").y1;
+        near(first(w, "No:").y1 - unique, 15, 1);
+        near(first(w, "Date").y1 - unique, 45, 1);
+        near(first(w, "Place").y1 - unique, 75, 1);
+        near(first(w, "Unilake").y1 - first(w, "Billed").y1, 15, 1);
+      });
+
+      it("has rows of the sample's height: item, Discount, Grand Total, then the notes", async () => {
+        const w = await render();
+        const item = first(w, "Aarav_Book_Alphabet").y1;
+        const discount = first(w, "Discount").y1;
+        const total = first(w, "Grand").y1;
+        near(discount - item, 42.9);
+        near(total - discount, 38.99, 0.6);
+        near(first(w, "Declaration:").y1 - total, 32.2);
+      });
+
+      it("describes the book as <kid name>_Book_<book title>", async () => {
+        const texts = (await render()).map((x) => x.text);
+        expect(texts).toContain("Aarav_Book_Alphabet");
+        expect(texts).toContain("Train");
+        expect(texts).not.toContain("Aarav_Personalized");
+      });
+
+      it("cuts a title that cannot fit even at the smallest size, instead of running over the border", async () => {
+        const huge = discounted();
+        huge.orderSession.comic.title = Array.from(
+          { length: 40 },
+          (_, i) => `Adventure${i}`
+        ).join(" ");
+        const w = await render(huge);
+        const inColumn = w.filter((x) => x.x1 > 67 && x.x2 < 298 && x.y1 < 300);
+        expect(inColumn.length).toBeGreaterThan(0);
+        for (const word of inColumn) {
+          expect(word.y2).toBeLessThanOrEqual(281.89);
+        }
+        expect(inColumn.some((x) => x.text.endsWith("…"))).toBe(true);
+      });
+
+      it("embeds the Devanagari font for a Hindi book title, even when the customer's details are English", async () => {
+        const hindi = discounted();
+        hindi.orderSession.comic.title = "अलका की यात्रा";
+        const dir = mkdtempSync(path.join(tmpdir(), "bill-fonts-"));
+        try {
+          const file = path.join(dir, "bill.pdf");
+          writeFileSync(file, await renderBillOfSupplyPdf(hindi as never));
+          const fonts = spawnSync("pdffonts", [file], { encoding: "utf8" });
+          expect(fonts.stdout).toContain("NotoSansDevanagari");
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      });
+
+      it("does not embed the Devanagari font for an English bill", async () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "bill-fonts-"));
+        try {
+          const file = path.join(dir, "bill.pdf");
+          writeFileSync(file, await renderBillOfSupplyPdf(discounted() as never));
+          const fonts = spawnSync("pdffonts", [file], { encoding: "utf8" });
+          expect(fonts.stdout).not.toContain("NotoSansDevanagari");
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      });
+
+      it("cuts a title made of emoji without failing", async () => {
+        const emoji = discounted();
+        emoji.orderSession.comic.title = "🚂".repeat(100);
+        const w = await render(emoji);
+        const description = w.find((x) => x.text.startsWith("Aarav_Book_"))!;
+        expect(description.text.endsWith("…")).toBe(true);
+      });
+
+      it("keeps a title with no spaces inside its column", async () => {
+        const single = discounted();
+        single.orderSession.comic.title = "A".repeat(200);
+        const w = await render(single);
+        const description = w.find((x) => x.text.startsWith("Aarav_Book_A"))!;
+        expect(description.x2).toBeLessThanOrEqual(298);
+        expect(description.text.endsWith("…")).toBe(true);
+      });
+
+      it("keeps a very long book title inside the item row, and the rest of the bill where it was", async () => {
+        const long = discounted();
+        long.orderSession.comic.title =
+          "The Incredible Adventures of a Brave Little Explorer Who Travels Through Forests, Oceans, Deserts and Mountains";
+        const w = await render(long);
+        const plain = await render();
+
+        const inRow = w.filter(
+          (x) => x.y1 > 236 && x.y2 < 281 && x.x1 > 67 && x.x2 < 298
+        );
+        const description = ["Aarav_Book_The", "Mountains"];
+        for (const text of description) {
+          expect(inRow.map((x) => x.text)).toContain(text);
+        }
+        // Nothing below the item row moved.
+        near(first(w, "Grand").y1, first(plain, "Grand").y1, 0.01);
+        near(
+          first(w, "Declaration:").y1,
+          first(plain, "Declaration:").y1,
+          0.01
+        );
       });
     });
   }

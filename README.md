@@ -147,6 +147,9 @@ be promoted from the admin panel's Users page.
 | `npx prisma migrate dev --create-only --name <name>` | Create a migration without applying it (see [Database migrations](#database-migrations)) |
 | `npx prisma migrate deploy` | Apply pending migrations |
 | `npx prisma studio` | Browse your dev database |
+| `npx tsx src/scripts/optimise-existing-images.ts` | Converts comic thumbnails and hero slides that were stored before the WebP conversion. Dry run by default; `--commit` writes, `--delete-old` (only together with `--commit`, and only well after it) removes the old files. It prints the database host and bucket first: check them |
+
+Comic thumbnails and hero slides: the admin uploads the raw file straight to R2 (`comics/temp/`, `hero-images/`); saving the comic or slide downloads it, shrinks it to a WebP of at most 1200 px (`src/services/imageUpload.service.ts`), stores `<folder>/<uuid>.webp` and deletes the raw file after the row is saved. A key that a book or slide already stores is refused as an upload.
 
 ---
 
@@ -442,7 +445,7 @@ unpaid here, by design. Shiprocket webhooks are set up the same way, with
 
 ## Coupon codes
 
-Admin: `/api/admin/coupons` (list, create, edit, switch on or off, delete, and `/coupons/customers` to search accounts for a customer-only coupon). Customers: `POST /api/public/sessions/:id/coupon-preview` prices a code, `GET /api/public/sessions/:id/coupon-offers` lists the codes that fit the order, and `POST .../checkout` takes an optional `{ couponCode }`.
+Admin: `/api/admin/coupons` (list, create, edit, switch on or off, delete, `POST /coupons/bulk` to create up to `MAX_BULK_COUPONS` single-use coupons with generated codes in one go, and `/coupons/customers` to search accounts for a customer-only coupon). Customers: `POST /api/public/sessions/:id/coupon-preview` prices a code, `GET /api/public/sessions/:id/coupon-offers` lists the codes that fit the order, and `POST .../checkout` takes an optional `{ couponCode }`.
 
 - The price is always computed on the server (`utils/couponPricing.ts`). `Order.amount` is the amount paid; `listAmount`, `discountAmount` and `couponCode` record how it was reached. The minimum payable is 1.00.
 - Checkout reserves a use under a lock on the coupon row. A reservation lapses after 60 minutes (no job needed); payment turns it into a redemption inside the webhook transaction. If a customer pays on a Razorpay order that was replaced, the event is linked to the order (`supersededRazorpayOrderIds`) and the admin order page shows a notice.

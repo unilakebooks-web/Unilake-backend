@@ -2,8 +2,12 @@ import { randomUUID } from "node:crypto";
 import { getPublicUrl, getSignedUploadUrl, deleteFile } from "../lib/r2.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/prisma.js";
-import { NotFoundError } from "../utils/errors.js";
+import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { config } from "../config/env.js";
+import {
+  deleteUploadedFiles,
+  optimiseUploadedImage,
+} from "./imageUpload.service.js";
 
 const UPLOAD_EXPIRY_SECONDS = 15 * 60;
 
@@ -27,13 +31,37 @@ export async function getHeroImageUploadUrl(data: {
 }
 
 export async function createHeroImage(data: { imageKey: string }) {
-  const imageUrl = getPublicUrl(data.imageKey);
+  // A key a slide already uses is not a new upload: converting it would delete
+  // the file that slide shows.
+  const inUse = await prisma.heroImage.findFirst({
+    where: { imageUrl: getPublicUrl(data.imageKey) },
+    select: { id: true },
+  });
+  if (inUse) {
+    throw new ValidationError(
+      "An uploaded image is not valid. Please upload it again."
+    );
+  }
+
+  // The raw upload is shrunk to a web-sized WebP; the slide stores that. The raw
+  // file is deleted once the slide is saved.
+  const optimised = await optimiseUploadedImage(
+    data.imageKey,
+    "hero-images",
+    "hero-images/"
+  );
+  const imageUrl = getPublicUrl(optimised.key);
 
   const heroImage = await prisma.heroImage.create({
     data: {
       imageUrl,
     },
+  }).catch(async (error) => {
+    // Not saved: remove the optimised file again; the raw upload stays for a retry.
+    await deleteUploadedFiles([optimised.key]);
+    throw error;
   });
+  await deleteUploadedFiles([optimised.originalKey]);
 
   logger.info({ heroImageId: heroImage.id }, "Hero image created");
 

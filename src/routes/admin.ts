@@ -231,6 +231,7 @@ import {
   listAdminCustomersHandler,
 } from "../controllers/customer.controller.js";
 import {
+  createBulkCouponsHandler,
   createCouponHandler,
   deleteCouponHandler,
   getAllCouponsHandler,
@@ -240,6 +241,7 @@ import {
   updateCouponHandler,
 } from "../controllers/coupon.controller.js";
 import {
+  createBulkCouponsSchema,
   createCouponSchema,
   updateCouponSchema,
 } from "../validators/coupon.schema.js";
@@ -649,6 +651,7 @@ router.delete("/contact-enquiries/:id", deleteContactEnquiryHandler);
 // would be read as a coupon id.
 router.get("/coupons", getAllCouponsHandler);
 router.post("/coupons", validateBody(createCouponSchema), createCouponHandler);
+router.post("/coupons/bulk", validateBody(createBulkCouponsSchema), createBulkCouponsHandler);
 router.get("/coupons/customers", searchCouponCustomersHandler);
 router.get("/coupons/:id", getCouponHandler);
 router.patch(

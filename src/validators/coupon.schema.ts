@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { COUPON_CODE_MAX, COUPON_CODE_MIN } from "../config/coupon.js";
+import {
+  COUPON_CODE_MAX,
+  COUPON_CODE_MIN,
+  MAX_BULK_COUPONS,
+} from "../config/coupon.js";
 import {
   isValidCouponCode,
   normalizeCouponCode,
@@ -138,6 +142,29 @@ export const createCouponSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
+// Several single-use coupons at once: the same rules, one generated code each.
+// What would make no sense for a batch is left out: a typed code, the kind (it is
+// always single use, with a total limit of 1), a customer to reserve them for,
+// and showing them at checkout (a single-use code is handed out one by one).
+export const createBulkCouponsSchema = createCouponSchema
+  .omit({
+    code: true,
+    kind: true,
+    usageLimit: true,
+    restrictedToUserId: true,
+    showAtCheckout: true,
+  })
+  .extend({
+    quantity: z
+      .number({ message: "Quantity must be a number" })
+      .int("Quantity must be a whole number")
+      .min(1, "Quantity must be at least 1")
+      .max(
+        MAX_BULK_COUPONS,
+        `You can create at most ${MAX_BULK_COUPONS} codes at once`
+      ),
+  });
+
 // Every field optional on update; null clears an optional field.
 export const updateCouponSchema = z
   .object({
@@ -201,6 +228,7 @@ export const listCouponsQuerySchema = z.object({
 });
 
 export type CreateCouponInput = z.infer<typeof createCouponSchema>;
+export type CreateBulkCouponsInput = z.infer<typeof createBulkCouponsSchema>;
 export type UpdateCouponInput = z.infer<typeof updateCouponSchema>;
 export type CouponStatusBodyInput = z.infer<typeof couponStatusBodySchema>;
 export type ListCouponsQueryInput = z.infer<typeof listCouponsQuerySchema>;

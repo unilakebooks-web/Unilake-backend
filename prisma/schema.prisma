@@ -532,6 +532,12 @@ model Order {
   billNumber   String?   @unique
   billIssuedAt DateTime?
 
+  // The book title as it was when the bill was issued, so renaming a book later
+  // does not change a bill already given out. Written with the bill number, in
+  // the same transaction. Null on a bill issued before this column existed and
+  // not backfilled; the PDF then falls back to the book's current title.
+  billBookTitle String?
+
   // Internal only, never returned to customers: when an admin recorded that
   // the print-ready PDF was handed to the printer. Null means not sent.
   sentToPrinterAt DateTime?

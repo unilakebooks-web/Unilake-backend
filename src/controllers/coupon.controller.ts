@@ -9,6 +9,7 @@ import {
   searchCustomersQuerySchema,
 } from "../validators/coupon.schema.js";
 import {
+  createBulkCoupons,
   createCoupon,
   deleteCoupon,
   getCoupon,
@@ -39,6 +40,13 @@ export const createCouponHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const coupon = await createCoupon(req.body, req.user!.id);
     sendSuccess(res, 201, coupon);
+  }
+);
+
+export const createBulkCouponsHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const coupons = await createBulkCoupons(req.body, req.user!.id);
+    sendSuccess(res, 201, { coupons });
   }
 );
 

@@ -1,4 +1,4 @@
-import { randomInt } from "crypto";
+import { randomInt, randomUUID } from "crypto";
 import { Prisma } from "../generated/prisma/client.js";
 import type { CoverType } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
@@ -14,6 +14,7 @@ import { couponShapeIssues, pastDateIssues } from "../utils/couponShape.js";
 import type { CouponShape } from "../utils/couponShape.js";
 import { reservationCutoff } from "../utils/couponPricing.js";
 import type {
+  CreateBulkCouponsInput,
   CreateCouponInput,
   ListCouponsQueryInput,
   UpdateCouponInput,
@@ -281,6 +282,127 @@ export async function createCoupon(data: CreateCouponInput, adminId: string) {
 
   // Unreachable: the loop either returns or throws.
   throw duplicateCodeError();
+}
+
+/**
+ * Creates several single-use coupons in one go: the same rules and one generated
+ * code each. Everything is checked once up front, then the whole batch is written
+ * in one transaction of three statements (the coupons, their comic links, a read
+ * back), however many codes there are: each round trip to the database costs
+ * about 0.35 s, so one create per code would take far too long.
+ *
+ * The codes are generated and de-duplicated in memory first. If one of them is
+ * already taken the insert fails as a whole (nothing is kept) and a fresh batch of
+ * codes is tried, as createCoupon retries a single generated code.
+ *
+ * ⚠️ The rule checks mirror createCoupon; change both together.
+ */
+export async function createBulkCoupons(
+  data: CreateBulkCouponsInput,
+  adminId: string
+) {
+  const allComics = data.allComics;
+  const comicIds = allComics ? [] : [...new Set(data.comicIds)];
+  // A first-order coupon is used once per customer; an empty limit becomes 1.
+  const perCustomerLimit =
+    data.firstOrderOnly && data.perCustomerLimit === undefined
+      ? 1
+      : (data.perCustomerLimit ?? null);
+
+  assertWellFormed({
+    kind: "SINGLE_USE",
+    discountType: data.discountType,
+    percentOff: data.percentOff ?? null,
+    amountOff: data.amountOff ?? null,
+    maxDiscount: data.maxDiscount ?? null,
+    currency: data.currency ?? null,
+    startsAt: data.startsAt ?? null,
+    endsAt: data.endsAt ?? null,
+    usageLimit: 1,
+    perCustomerLimit,
+    allComics,
+    comicCount: comicIds.length,
+    restrictedToUserId: null,
+    showAtCheckout: false,
+    firstOrderOnly: data.firstOrderOnly,
+  });
+  await assertReferencesExist(prisma, null, comicIds);
+  await assertCountriesExist(prisma, data.countryCodes);
+  await assertCurrencyFitsCountries(
+    prisma,
+    data.currency ?? null,
+    data.countryCodes
+  );
+
+  for (let attempt = 1; attempt <= CODE_ATTEMPTS; attempt++) {
+    const codes = new Set<string>();
+    while (codes.size < data.quantity) {
+      codes.add(randomCode(data.codeLength));
+    }
+    const ids = [...codes].map((code) => ({ code, id: randomUUID() }));
+
+    try {
+      const rows = await prisma.$transaction(async (tx) => {
+        await tx.coupon.createMany({
+          data: ids.map(({ code, id }) => ({
+            id,
+            code,
+            name: data.name,
+            description: data.description ?? null,
+            kind: "SINGLE_USE" as const,
+            discountType: data.discountType,
+            percentOff: toDecimal(data.percentOff),
+            amountOff: toDecimal(data.amountOff),
+            maxDiscount: toDecimal(data.maxDiscount),
+            currency: data.currency ?? null,
+            startsAt: data.startsAt ?? null,
+            endsAt: data.endsAt ?? null,
+            usageLimit: 1,
+            perCustomerLimit,
+            restrictedToUserId: null,
+            allComics,
+            countryCodes: data.countryCodes,
+            coverTypes: data.coverTypes as CoverType[],
+            combinable: data.combinable,
+            showAtCheckout: false,
+            firstOrderOnly: data.firstOrderOnly,
+            isActive: data.isActive,
+            createdById: adminId,
+            updatedById: adminId,
+          })),
+        });
+        if (comicIds.length > 0) {
+          await tx.couponComic.createMany({
+            data: ids.flatMap(({ id }) =>
+              comicIds.map((comicId) => ({ couponId: id, comicId }))
+            ),
+          });
+        }
+        return tx.coupon.findMany({
+          where: { id: { in: ids.map(({ id }) => id) } },
+          include: COUPON_INCLUDE,
+          orderBy: { code: "asc" },
+        });
+      }, COUPON_TRANSACTION_OPTIONS);
+
+      logger.info(
+        { count: rows.length, createdById: adminId },
+        "Single-use coupons created in bulk"
+      );
+      return rows.map((row) => toCouponResponse(row, { redeemed: 0, reserved: 0 }));
+    } catch (error: any) {
+      if (error.code === "P2002" && attempt < CODE_ATTEMPTS) continue;
+      if (error.code === "P2002") {
+        throw new ConflictError(
+          "Could not generate enough unused codes. Try again, or choose a longer code length"
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Unreachable: the loop either returns or throws.
+  throw new ConflictError("Could not generate enough unused codes. Try again");
 }
 
 // ============================================================
@@ -562,7 +684,10 @@ export async function listCoupons(filters: ListCouponsQueryInput) {
     prisma.coupon.findMany({
       where,
       include: COUPON_INCLUDE,
-      orderBy: { createdAt: "desc" },
+      // Switched-off coupons (used ones cannot be deleted) sink below the live
+      // ones, so the list does not fill up with them; newest first within each. The
+      // coupons of one batch share a createdAt, so id keeps the pages stable.
+      orderBy: [{ isActive: "desc" }, { createdAt: "desc" }, { id: "asc" }],
       skip: (filters.page - 1) * filters.pageSize,
       take: filters.pageSize,
     }),
@@ -606,8 +731,64 @@ export async function searchCouponCustomers(search: string) {
 }
 
 // ============================================================
-// SWITCH OFF EXPIRED COUPONS
+// SWITCH OFF EXPIRED AND USED-UP COUPONS
 // ============================================================
+
+/**
+ * Turns off every active coupon whose total usage limit has been reached by paid
+ * uses (REDEEMED), so a used single-use code leaves the live part of the admin
+ * list by itself. A coupon with no total limit is never used up. Unpaid holds
+ * (RESERVED) do not count: they may still lapse. Checkout does not depend on this,
+ * it counts the uses itself, so a used-up coupon is refused either way; only the
+ * message changes (an off coupon reads "not valid" instead of "used up").
+ *
+ * With `couponIds` only those coupons are looked at; without, every active coupon
+ * with a limit (the sweep, which also catches coupons used up before this existed).
+ * The check and the switch-off are one statement, so an admin raising the limit at
+ * the same moment keeps the coupon on.
+ *
+ * Returns how many coupons were switched off.
+ */
+export async function switchOffUsedUpCoupons(
+  couponIds?: string[]
+): Promise<number> {
+  // An empty list names no coupon (and Prisma.join refuses one).
+  if (couponIds?.length === 0) return 0;
+  return switchOffUsedUp(
+    couponIds
+      ? Prisma.sql`AND c."id" IN (${Prisma.join(couponIds)})`
+      : Prisma.empty
+  );
+}
+
+/** The payment path: switches off the coupon of a just-paid order if that was its last use. */
+export async function switchOffUsedUpCouponOfOrder(orderId: string) {
+  await switchOffUsedUp(
+    Prisma.sql`AND c."id" IN (
+      SELECT "couponId" FROM "coupon_redemptions"
+      WHERE "orderId" = ${orderId} AND "status" = 'REDEEMED'
+    )`
+  );
+}
+
+// One statement, so the count of paid uses and the switch-off are decided on the
+// same row at the same moment: two payments, or an admin raising the limit, cannot
+// slip between a read and a write. "updatedAt" is set by hand (a raw statement
+// does not), which also makes a customer applying that exact code try again.
+async function switchOffUsedUp(scope: Prisma.Sql): Promise<number> {
+  const count = await prisma.$executeRaw`
+    UPDATE "coupons" AS c
+    SET "isActive" = false, "updatedAt" = NOW()
+    WHERE c."isActive" = true
+      AND c."usageLimit" IS NOT NULL
+      ${scope}
+      AND (
+        SELECT COUNT(*) FROM "coupon_redemptions" AS r
+        WHERE r."couponId" = c."id" AND r."status" = 'REDEEMED'
+      ) >= c."usageLimit"`;
+  if (count > 0) logger.info({ count }, "Used-up coupons switched off");
+  return count;
+}
 
 /**
  * Turns off every active coupon whose end date has passed, so the admin list
@@ -627,5 +808,6 @@ export async function sweepExpiredCoupons(): Promise<number> {
     data: { isActive: false },
   });
   if (count > 0) logger.info({ count }, "Expired coupons switched off");
-  return count;
+  // The same timer also retires the coupons that have been used up.
+  return count + (await switchOffUsedUpCoupons());
 }

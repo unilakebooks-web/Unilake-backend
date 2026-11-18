@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   couponStatusBodySchema,
+  createBulkCouponsSchema,
   createCouponSchema,
   searchCustomersQuerySchema,
   listCouponsQuerySchema,
@@ -475,5 +476,67 @@ describe("couponStatusBodySchema", () => {
         String(isActive)
       ).toBe(false);
     }
+  });
+});
+
+describe("createBulkCouponsSchema", () => {
+  const bulk = { ...base, quantity: 10 };
+
+  it("accepts the rules of a coupon plus a quantity", () => {
+    expect(createBulkCouponsSchema.parse(bulk)).toMatchObject({
+      name: "Festive offer",
+      quantity: 10,
+      allComics: true,
+      isActive: true,
+    });
+  });
+
+  it("needs a quantity of 1 to 100, as a whole number", () => {
+    expect(createBulkCouponsSchema.safeParse({ ...base }).success).toBe(false);
+    for (const quantity of [0, -1, 101, 2.5, "10", null]) {
+      expect(createBulkCouponsSchema.safeParse({ ...base, quantity }).success).toBe(
+        false
+      );
+    }
+    for (const quantity of [1, 100]) {
+      expect(createBulkCouponsSchema.safeParse({ ...base, quantity }).success).toBe(
+        true
+      );
+    }
+  });
+
+  it("drops the fields that make no sense for a batch", () => {
+    const parsed = createBulkCouponsSchema.parse({
+      ...bulk,
+      code: "TYPED-CODE",
+      kind: "PUBLIC",
+      usageLimit: 5,
+      restrictedToUserId: "someone",
+      showAtCheckout: true,
+    });
+    for (const key of [
+      "code",
+      "kind",
+      "usageLimit",
+      "restrictedToUserId",
+      "showAtCheckout",
+    ]) {
+      expect(parsed).not.toHaveProperty(key);
+    }
+  });
+
+  it("still checks each field the way a single coupon does", () => {
+    expect(
+      createBulkCouponsSchema.safeParse({ ...bulk, percentOff: -5 }).success
+    ).toBe(false);
+    expect(
+      createBulkCouponsSchema.safeParse({ ...bulk, codeLength: 3 }).success
+    ).toBe(false);
+    expect(
+      createBulkCouponsSchema.safeParse({ ...bulk, codeLength: 12 }).success
+    ).toBe(true);
+    expect(
+      createBulkCouponsSchema.safeParse({ ...bulk, name: "   " }).success
+    ).toBe(false);
   });
 });

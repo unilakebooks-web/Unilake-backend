@@ -7,7 +7,7 @@
 //      gives the order its permanent serial ("BOS-26-00001") and issue date.
 //   2. buildBillOfSupplyPdf — builds the PDF in memory when an admin downloads
 //      it. Nothing is stored: not the PDF, not in R2. Re-downloading rebuilds
-//      the same bill from the order's saved number, date and snapshot fields.
+//      the same bill from the order's saved number, date, book title and snapshot fields.
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -86,6 +86,14 @@ export async function assignBillNumber(
 ): Promise<string> {
   const financialYear = financialYearOf(paidAt);
 
+  // The book's title as it is now, kept on the order so that renaming the book
+  // later does not change this bill. Read first, before the counter row below is
+  // locked, so that lock is held for as short a time as possible.
+  const { orderSession } = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { orderSession: { select: { comic: { select: { title: true } } } } },
+  });
+
   const [counter] = await tx.$queryRaw<{ lastSerial: number }[]>`
     INSERT INTO "bill_counters" ("financialYear", "lastSerial", "updatedAt")
     VALUES (${financialYear}, 1, NOW())
@@ -103,7 +111,11 @@ export async function assignBillNumber(
 
   await tx.order.update({
     where: { id: orderId },
-    data: { billNumber, billIssuedAt: paidAt },
+    data: {
+      billNumber,
+      billIssuedAt: paidAt,
+      billBookTitle: orderSession.comic.title,
+    },
   });
 
   return billNumber;
@@ -120,10 +132,10 @@ async function loadBillData(orderId: string) {
     select: {
       billNumber: true,
       billIssuedAt: true,
+      billBookTitle: true,
       amount: true,
       listAmount: true,
       discountAmount: true,
-      couponCode: true,
       currency: true,
       shippingName: true,
       shippingLine1: true,
@@ -132,7 +144,9 @@ async function loadBillData(orderId: string) {
       shippingState: true,
       shippingZip: true,
       shippingPhone: true,
-      orderSession: { select: { childName: true } },
+      orderSession: {
+        select: { childName: true, comic: { select: { title: true } } },
+      },
     },
   });
 
@@ -326,9 +340,15 @@ function formatIssueDate(date: Date): string {
 
 // ── Layout ──────────────────────────────────────────────────────────────────
 //
-// A4 portrait, measured from the client's sample: 1px of the 900px-wide
-// sample ≈ 0.661pt. pdf-lib's y axis runs UP from the bottom edge, so `top()`
-// converts a distance from the top of the page.
+// A4 portrait, measured from the client's final layout ("Bill of Supply with
+// discount tab - final", 595.5 x 842.25 pt): every position below is read from
+// that PDF's own drawing instructions, in points from the top-left corner.
+// pdf-lib's y axis runs UP from the bottom edge, so `top()` converts a distance
+// from the top of the page.
+//
+// The sample is set in Arial; the bill uses Noto Sans (it also carries the ₹ sign
+// and Hindi), which is a little wider, so the font sizes below are the ones at
+// which Noto Sans text is as wide as the sample's.
 
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
@@ -336,30 +356,39 @@ const top = (fromTop: number) => PAGE_HEIGHT - fromTop;
 
 const BLACK = rgb(0, 0, 0);
 const WHITE = rgb(1, 1, 1);
-const HEADER_FILL = rgb(0.137, 0.137, 0.137); // #232323
-const BRAND_PURPLE = rgb(0.569, 0.29, 0.549); // #914A8C
+const HEADER_FILL = rgb(0.149, 0.149, 0.149); // #262626
+const LOGO_TILE_FILL = rgb(0.549, 0.239, 0.494); // #8C3D7E
 
-const BODY_SIZE = 10.5;
+const BODY_SIZE = 10.8;
 const LINE_GAP = 15;
 
 /** Table column edges (pt), left to right: S.No | Description | HSN | Rate | QTY | Amount. */
-const COLS: readonly number[] = [24.5, 80.6, 291.5, 355, 429.6, 484.5, 575];
-const TABLE_LEFT = 24.5;
-const TABLE_RIGHT = 575;
+const COLS: readonly number[] = [23.83, 66.29, 297.5, 345.8, 418.6, 471.75, 559.86];
+const TABLE_LEFT = 23.83;
+const TABLE_RIGHT = 559.86;
 const AMOUNT_COL = 5;
 /** Left edge of column `i` (i = 0..6, where 6 is the table's right edge). */
 const colX = (i: number): number => COLS[i]!;
-const TABLE_TOP = 214;
-const HEADER_BOTTOM = 266;
-const ROW_BOTTOM = 323;
-const TOTAL_BOTTOM = 363;
+const TABLE_TOP = 185.22;
+const HEADER_BOTTOM = 235.05;
+const ROW_BOTTOM = 281.89;
+const TOTAL_BOTTOM = 320.88;
 /**
- * A bill for an order with a coupon has one extra row, the coupon discount,
- * between the item row and the Grand Total, the same height as the Grand Total
- * row. The Grand Total row and the footer notes move down by this much. A bill
- * with no discount is laid out exactly as before.
+ * Every bill has a Discount row between the item row and the Grand Total, the
+ * same height as the Grand Total row (the client's layout). With no coupon it
+ * shows 0.00. The Grand Total row and the footer notes sit below it.
  */
 const DISCOUNT_ROW_HEIGHT = TOTAL_BOTTOM - ROW_BOTTOM;
+/** Distance from the right end of a row label (Discount, Grand Total) to the Amount column's left edge. */
+const LABEL_GAP = 9.4;
+/** A long description is shrunk to fit its row, but never below this size. */
+const MIN_CELL_FONT = 8;
+/** Line height of cell text, as a multiple of its font size. */
+const CELL_LINE_HEIGHT = 1.35;
+/** Space kept free above and below wrapped cell text, in points. */
+const CELL_PADDING = 8;
+/** The narrow S.No header is set smaller than the other headers. */
+const SNO_HEADER_SIZE = 9;
 
 /**
  * Builds the Bill of Supply PDF for one order, entirely in memory.
@@ -374,6 +403,10 @@ export async function buildBillOfSupplyPdf(
 }
 
 export type BillData = Awaited<ReturnType<typeof loadBillData>>;
+
+/** The title printed on the bill: the one saved when it was issued, else the book's current title. */
+const billTitle = (data: BillData) =>
+  (data.billBookTitle ?? data.orderSession.comic.title).trim();
 
 /** Draws the bill from already-loaded data. Pure — no DB access. */
 export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array> {
@@ -391,6 +424,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     data.shippingZip,
     data.shippingPhone,
     data.orderSession.childName,
+    billTitle(data),
   ].join(" ");
   const { regular, bold } = await embedFonts(pdf, DEVANAGARI.test(customerText));
   const logo = await pdf.embedPng(await readFile(path.join(ASSETS_DIR, "unilake-logo.png")));
@@ -398,43 +432,45 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
   const page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
 
   // ── Logo: the wordmark on a rounded purple tile ────────────────────────────
-  const tile = { x: 32, top: 24, width: 123, height: 47, radius: 8 };
+  const tile = { x: 30.64, top: 23.26, width: 95.15, height: 36.23, radius: 9.74 };
   page.drawSvgPath(roundedRectPath(tile.width, tile.height, tile.radius), {
     x: tile.x,
     y: top(tile.top),
-    color: BRAND_PURPLE,
+    color: LOGO_TILE_FILL,
   });
-  const logoHeight = tile.height - 10;
-  const logoWidth = (logo.width / logo.height) * logoHeight;
+  // The wordmark file has a little transparent margin; it is placed so that its
+  // visible part (83.5pt wide) sits where it does in the client's layout.
+  const logoBox = { x: 25.14, top: 26.08, width: 100.7, height: 32.8 };
   page.drawImage(logo, {
-    x: tile.x + (tile.width - logoWidth) / 2,
-    y: top(tile.top + tile.height - 5),
-    width: logoWidth,
-    height: logoHeight,
+    x: logoBox.x,
+    y: top(logoBox.top + logoBox.height),
+    width: logoBox.width,
+    height: logoBox.height,
   });
 
   // ── Title ──────────────────────────────────────────────────────────────────
   const title = "Bill of Supply";
-  const titleSize = 26;
+  const titleSize = 26.35;
   drawText(page, title, {
-    x: 305 - textWidth(title, titleSize, bold) / 2,
-    y: top(57),
+    x: 297.6 - textWidth(title, titleSize, bold) / 2,
+    y: top(53.1),
     size: titleSize,
     fonts: bold,
   });
 
   // ── Billed By ──────────────────────────────────────────────────────────────
-  const blockTop = 99;
-  drawText(page, "Billed By", { x: 32, y: top(blockTop), size: BODY_SIZE, fonts: regular });
+  const blockTop = 81.96;
+  const leftX = 30.64;
+  drawText(page, "Billed By", { x: leftX, y: top(blockTop), size: BODY_SIZE, fonts: regular });
   drawText(page, SELLER_NAME, {
-    x: 32,
+    x: leftX,
     y: top(blockTop + LINE_GAP),
     size: BODY_SIZE,
     fonts: bold,
   });
   SELLER_LINES.forEach((line, i) =>
     drawText(page, line, {
-      x: 32,
+      x: leftX,
       y: top(blockTop + LINE_GAP * (i + 2)),
       size: BODY_SIZE,
       fonts: regular,
@@ -444,8 +480,8 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
   // ── Billed To ──────────────────────────────────────────────────────────────
   // Name, then the address wrapped to the column, then the phone — the phone
   // sits on the seller's phone line unless the address runs past it.
-  const toX = 198;
-  const toWidth = 160;
+  const toX = 193.01;
+  const toWidth = 155;
   const addressText = [
     data.shippingLine1,
     data.shippingLine2,
@@ -481,27 +517,27 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
   }
 
   // ── Bill details (right column) ────────────────────────────────────────────
-  const labelX = 368;
-  const valueX = 463;
-  const valueWidth = PAGE_WIDTH - 24 - valueX;
+  const labelX = 359.3;
+  const valueX = 451.8;
+  const valueWidth = TABLE_RIGHT - valueX;
 
   drawText(page, "Unique Serial", { x: labelX, y: top(blockTop), size: BODY_SIZE, fonts: regular });
-  drawText(page, "No:", { x: labelX + 12, y: top(blockTop + LINE_GAP), size: BODY_SIZE, fonts: regular });
+  drawText(page, "No:", { x: labelX + 3.1, y: top(blockTop + LINE_GAP), size: BODY_SIZE, fonts: regular });
   drawText(page, `#${data.billNumber}`, { x: valueX, y: top(blockTop), size: BODY_SIZE, fonts: regular });
 
-  drawText(page, "Date of Issue:", { x: labelX, y: top(blockTop + 37), size: BODY_SIZE, fonts: regular });
+  drawText(page, "Date of Issue:", { x: labelX, y: top(blockTop + 45), size: BODY_SIZE, fonts: regular });
   drawText(page, formatIssueDate(data.billIssuedAt), {
     x: valueX,
-    y: top(blockTop + 37),
+    y: top(blockTop + 45),
     size: BODY_SIZE,
     fonts: regular,
   });
 
-  drawText(page, "Place of Supply:", { x: labelX, y: top(blockTop + 68), size: BODY_SIZE, fonts: regular });
+  drawText(page, "Place of Supply:", { x: labelX, y: top(blockTop + 75), size: BODY_SIZE, fonts: regular });
   wrapText(data.shippingState ?? "", valueWidth, BODY_SIZE, regular).forEach((line, i) =>
     drawText(page, line, {
       x: valueX,
-      y: top(blockTop + 68 + LINE_GAP * i),
+      y: top(blockTop + 75 + LINE_GAP * i),
       size: BODY_SIZE,
       fonts: regular,
     })
@@ -511,24 +547,24 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
   drawTable(page, data, { regular, bold });
 
   // ── Footer notes ───────────────────────────────────────────────────────────
-  const footerTop = 385 + (data.discountAmount.gt(0) ? DISCOUNT_ROW_HEIGHT : 0);
-  const noteSize = 9.5;
+  const footerTop = TOTAL_BOTTOM + DISCOUNT_ROW_HEIGHT + 16.3;
+  const noteSize = 10.5;
   wrapText(
     "Declaration: We declare that the goods sold are intended for end user consumption and not for resale.",
     270,
     noteSize,
     regular
   ).forEach((line, i) =>
-    drawText(page, line, { x: 28, y: top(footerTop + 14 * i), size: noteSize, fonts: regular })
+    drawText(page, line, { x: 23.08, y: top(footerTop + 15 * i), size: noteSize, fonts: regular })
   );
 
   wrapText(
     "* This is a computer generated bill and does not require a physical signature",
     240,
-    11,
+    11.3,
     regular
   ).forEach((line, i) =>
-    drawText(page, line, { x: 330, y: top(footerTop + 16 * i), size: 11, fonts: regular })
+    drawText(page, line, { x: 321.57, y: top(footerTop + 0.65 + 16.5 * i), size: 11.3, fonts: regular })
   );
 
   return pdf.save();
@@ -541,15 +577,13 @@ function drawTable(
 ) {
   const left = TABLE_LEFT;
   const right = TABLE_RIGHT;
-  const border = { thickness: 1.3, color: BLACK };
+  const border = { thickness: 1.5, color: BLACK };
 
-  // With a coupon the table has one more row, the discount, above the Grand Total.
-  const hasDiscount = data.discountAmount.gt(0);
+  // The discount row sits above the Grand Total; it is there with or without a coupon.
+  const hasCoupon = data.discountAmount.gt(0);
   const discountBottom = ROW_BOTTOM + DISCOUNT_ROW_HEIGHT;
-  const totalTop = hasDiscount ? discountBottom : ROW_BOTTOM;
-  const totalBottom = hasDiscount
-    ? discountBottom + (TOTAL_BOTTOM - ROW_BOTTOM)
-    : TOTAL_BOTTOM;
+  const totalTop = discountBottom;
+  const totalBottom = TOTAL_BOTTOM + DISCOUNT_ROW_HEIGHT;
 
   // Header band.
   page.drawRectangle({
@@ -569,9 +603,7 @@ function drawTable(
     borderWidth: border.thickness,
     borderColor: BLACK,
   });
-  for (const y of hasDiscount
-    ? [HEADER_BOTTOM, ROW_BOTTOM, discountBottom]
-    : [HEADER_BOTTOM, ROW_BOTTOM]) {
+  for (const y of [HEADER_BOTTOM, ROW_BOTTOM, discountBottom]) {
     page.drawLine({ start: { x: left, y: top(y) }, end: { x: right, y: top(y) }, ...border });
   }
 
@@ -586,10 +618,10 @@ function drawTable(
     });
   });
 
-  const size = 11;
+  const size = 11.25;
   const amount = formatRupees(data.amount);
   // The item row shows the price before the coupon; the Grand Total is what was paid.
-  const itemAmount = hasDiscount
+  const itemAmount = hasCoupon
     ? formatRupees(data.listAmount ?? data.amount.plus(data.discountAmount))
     : amount;
 
@@ -604,19 +636,50 @@ function drawTable(
     rowBottom: number,
     text: string,
     cellFonts: Fonts,
-    color = BLACK
+    color = BLACK,
+    baseSize = size
   ) => {
     const x0 = colX(col);
     const x1 = colX(col + 1);
     const maxWidth = x1 - x0 - 10;
 
     const isSingleToken = !/\s/.test(text.trim());
-    const fitted = isSingleToken
-      ? Math.min(size, (maxWidth / textWidth(text, size, cellFonts)) * size)
-      : size;
-    const lines = isSingleToken ? [text] : wrapText(text, maxWidth, fitted, cellFonts);
+    let fitted = isSingleToken
+      ? Math.min(baseSize, (maxWidth / textWidth(text, baseSize, cellFonts)) * baseSize)
+      : baseSize;
+    let lines = isSingleToken ? [text] : wrapText(text, maxWidth, fitted, cellFonts);
+    // Text that still does not fit at the smallest size is cut short with "…"
+    // instead of running over the row's border.
+    const ellipsize = (line: string) => {
+      let body = line.replace(/…$/, "");
+      while (body.length > 1 && textWidth(`${body}…`, fitted, cellFonts) > maxWidth) {
+        body = body.slice(0, -1).trimEnd();
+      }
+      return `${body}…`;
+    };
+    if (isSingleToken && fitted < MIN_CELL_FONT) {
+      fitted = MIN_CELL_FONT;
+      lines = [ellipsize(text)];
+    }
+    // A long description wraps onto more lines; if they would not fit the row, the
+    // text is made smaller until they do (down to MIN_CELL_FONT).
+    while (
+      !isSingleToken &&
+      fitted > MIN_CELL_FONT &&
+      lines.length * fitted * CELL_LINE_HEIGHT > rowBottom - rowTop - CELL_PADDING
+    ) {
+      fitted -= 0.5;
+      lines = wrapText(text, maxWidth, fitted, cellFonts);
+    }
+    const maxLines = Math.max(
+      1,
+      Math.floor((rowBottom - rowTop - CELL_PADDING) / (fitted * CELL_LINE_HEIGHT))
+    );
+    if (!isSingleToken && lines.length > maxLines) {
+      lines = [...lines.slice(0, maxLines - 1), ellipsize(lines[maxLines - 1]!)];
+    }
 
-    const lineHeight = fitted * 1.35;
+    const lineHeight = fitted * CELL_LINE_HEIGHT;
     const blockHeight = lines.length * lineHeight;
     const firstBaseline =
       rowTop + (rowBottom - rowTop - blockHeight) / 2 + fitted;
@@ -632,53 +695,51 @@ function drawTable(
     );
   };
 
-  // Header — bold where the sample is bold (S.No, HSN, Amount).
-  const headers: [string, Fonts][] = [
-    ["S.No", fonts.bold],
+  // Header — bold where the sample is bold (S.No, HSN, Amount); S.No is set smaller.
+  const headers: [string, Fonts, number?][] = [
+    ["S.No", fonts.bold, SNO_HEADER_SIZE],
     ["Description", fonts.regular],
     ["HSN", fonts.bold],
     ["Rate", fonts.regular],
     ["QTY.", fonts.regular],
     ["Amount", fonts.bold],
   ];
-  headers.forEach(([text, f], col) => cell(col, TABLE_TOP, HEADER_BOTTOM, text, f, WHITE));
+  headers.forEach(([text, f, headerSize], col) =>
+    cell(col, TABLE_TOP, HEADER_BOTTOM, text, f, WHITE, headerSize)
+  );
 
-  // The single line item. Underscore format is the client's.
+  // The single line item, described as "<kid name>_Book_<book title>": the
+  // client's format, for example "Anuj_Book_Alphabet Train".
   const childName = data.orderSession.childName?.trim() || "Child";
-  const row = ["1", `${childName}_Personalized Book`, HSN_CODE, itemAmount, "1", itemAmount];
+  const bookTitle = billTitle(data);
+  const row = ["1", `${childName}_Book_${bookTitle}`, HSN_CODE, itemAmount, "1", itemAmount];
   row.forEach((text, col) => cell(col, HEADER_BOTTOM, ROW_BOTTOM, text, fonts.regular));
 
-  // Coupon discount — only when there is one. Same look as the Grand Total row;
-  // a very long code shrinks the label to fit to the left of the Amount column.
-  if (hasDiscount) {
-    const discountLabel = `Coupon discount (${data.couponCode ?? ""})`;
-    const available = colX(AMOUNT_COL) - 12 - (TABLE_LEFT + 8);
-    const labelSize = Math.min(
-      size,
-      (available / textWidth(discountLabel, size, fonts.regular)) * size
-    );
+  // Discount — always shown, never with the coupon code. Same look as the Grand
+  // Total row: the label right-aligned against the Amount column, the discount in
+  // it ("-" in front when there is one, plain 0.00 when there is none).
+  const drawDiscountRow = () => {
+    const discountLabel = "Discount";
     drawText(page, discountLabel, {
-      x:
-        colX(AMOUNT_COL) -
-        12 -
-        textWidth(discountLabel, labelSize, fonts.regular),
-      y: top((ROW_BOTTOM + discountBottom) / 2 + labelSize / 3),
-      size: labelSize,
+      x: colX(AMOUNT_COL) - LABEL_GAP - textWidth(discountLabel, size, fonts.regular),
+      y: top((ROW_BOTTOM + discountBottom) / 2 + size / 3),
+      size,
       fonts: fonts.regular,
     });
     cell(
       AMOUNT_COL,
       ROW_BOTTOM,
       discountBottom,
-      `-${formatRupees(data.discountAmount)}`,
+      `${hasCoupon ? "-" : ""}${formatRupees(data.discountAmount)}`,
       fonts.regular
     );
-  }
+  };
+  drawDiscountRow();
 
   // Grand Total — label right-aligned against the Amount column.
   const label = "Grand Total";
   drawText(page, label, {
-    x: colX(AMOUNT_COL) - 12 - textWidth(label, size, fonts.regular),
+    x: colX(AMOUNT_COL) - LABEL_GAP - textWidth(label, size, fonts.regular),
     y: top((totalTop + totalBottom) / 2 + size / 3),
     size,
     fonts: fonts.regular,

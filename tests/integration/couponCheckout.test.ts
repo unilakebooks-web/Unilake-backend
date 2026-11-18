@@ -12,6 +12,8 @@ import {
   vi,
 } from "vitest";
 import { createHmac } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Prisma } from "../../src/generated/prisma/client.js";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { prisma } from "../../src/lib/prisma.js";
@@ -27,6 +29,9 @@ import {
 } from "../../src/validators/coupon.schema.js";
 import {
   createCoupon,
+  switchOffUsedUpCouponOfOrder,
+  switchOffUsedUpCoupons,
+  sweepExpiredCoupons,
   updateCoupon,
 } from "../../src/services/coupon.service.js";
 import {
@@ -47,6 +52,7 @@ import {
 import { recordFailedCouponAttempt } from "../../src/utils/attemptLimiter.js";
 import { config } from "../../src/config/env.js";
 import { handleRazorpayWebhook } from "../../src/services/webhook.service.js";
+import { assignBillNumber } from "../../src/services/billOfSupply.service.js";
 import { listAdminOrders } from "../../src/services/order.service.js";
 import { acquireSlot } from "../../src/utils/keyedQueue.js";
 import { AppError } from "../../src/utils/errors.js";
@@ -1489,5 +1495,301 @@ describe("listCouponOffers", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("used-up coupons are switched off", () => {
+  const isActive = async (id: string) =>
+    (await prisma.coupon.findUniqueOrThrow({ where: { id } })).isActive;
+
+  it("switches off a single-use coupon once its paid use is redeemed", async () => {
+    const c = await createCoupon(make({ kind: "SINGLE_USE" }), ADMIN);
+    const buyer = await makeUser("used-up");
+    const { orderId } = await makeOrder(buyer);
+    await redemption(c.id, buyer, orderId, "RESERVED");
+
+    // Reserved, not paid: still on.
+    await switchOffUsedUpCouponOfOrder(orderId);
+    expect(await isActive(c.id)).toBe(true);
+
+    await prisma.$transaction((tx) => redeemCouponInTx(tx, orderId));
+    await switchOffUsedUpCouponOfOrder(orderId);
+    expect(await isActive(c.id)).toBe(false);
+  });
+
+  it("keeps a coupon on until its total limit is reached, and never switches off one with no total limit", async () => {
+    const two = await createCoupon(make({ usageLimit: 2 }), ADMIN);
+    const unlimited = await createCoupon(make(), ADMIN);
+    const a = await makeUser("limit-a");
+    const b = await makeUser("limit-b");
+    const oa = await makeOrder(a);
+    const ob = await makeOrder(b);
+    await redemption(two.id, a, oa.orderId, "REDEEMED");
+    await redemption(unlimited.id, b, ob.orderId, "REDEEMED");
+
+    await switchOffUsedUpCouponOfOrder(oa.orderId);
+    await switchOffUsedUpCouponOfOrder(ob.orderId);
+    expect(await isActive(two.id)).toBe(true); // 1 of 2
+    expect(await isActive(unlimited.id)).toBe(true); // no total limit
+
+    const c2 = await makeUser("limit-c");
+    const oc = await makeOrder(c2);
+    await redemption(two.id, c2, oc.orderId, "REDEEMED");
+    await switchOffUsedUpCouponOfOrder(oc.orderId);
+    expect(await isActive(two.id)).toBe(false); // 2 of 2
+  });
+
+  it("does not count an unpaid hold or a released use", async () => {
+    const c = await createCoupon(make({ usageLimit: 1 }), ADMIN);
+    const a = await makeUser("hold-a");
+    const b = await makeUser("hold-b");
+    const oa = await makeOrder(a);
+    const ob = await makeOrder(b);
+    await redemption(c.id, a, oa.orderId, "RESERVED");
+    await redemption(c.id, b, ob.orderId, "RELEASED");
+    expect(await switchOffUsedUpCoupons([c.id])).toBe(0);
+    expect(await isActive(c.id)).toBe(true);
+  });
+
+  it("does nothing for an order that was paid without a coupon", async () => {
+    const buyer = await makeUser("no-coupon");
+    const { orderId } = await makeOrder(buyer);
+    await expect(switchOffUsedUpCouponOfOrder(orderId)).resolves.toBeUndefined();
+  });
+
+  it("switches off a coupon whose paid uses went past the limit (a late payment)", async () => {
+    const c = await createCoupon(make({ usageLimit: 1 }), ADMIN);
+    const a = await makeUser("over-a");
+    const b = await makeUser("over-b");
+    const oa = await makeOrder(a);
+    const ob = await makeOrder(b);
+    await redemption(c.id, a, oa.orderId, "REDEEMED");
+    await redemption(c.id, b, ob.orderId, "REDEEMED");
+    await switchOffUsedUpCouponOfOrder(ob.orderId);
+    expect(await isActive(c.id)).toBe(false);
+  });
+
+  it("the sweep retires a coupon that was used up earlier, leaves the rest, and does it only once", async () => {
+    const used = await createCoupon(make({ usageLimit: 1 }), ADMIN);
+    const fresh = await createCoupon(make({ usageLimit: 1 }), ADMIN);
+    const off = await createCoupon(make({ usageLimit: 1, isActive: false }), ADMIN);
+    const buyer = await makeUser("sweep");
+    const { orderId } = await makeOrder(buyer);
+    await redemption(used.id, buyer, orderId, "REDEEMED");
+
+    expect(await sweepExpiredCoupons()).toBeGreaterThanOrEqual(1);
+    expect(await isActive(used.id)).toBe(false);
+    expect(await isActive(fresh.id)).toBe(true);
+    expect(await isActive(off.id)).toBe(false);
+    expect(await switchOffUsedUpCoupons([used.id])).toBe(0);
+  });
+
+  it("leaves a coupon on when the admin has raised its limit", async () => {
+    const c = await createCoupon(make({ usageLimit: 1 }), ADMIN);
+    const buyer = await makeUser("raised");
+    const { orderId } = await makeOrder(buyer);
+    await redemption(c.id, buyer, orderId, "REDEEMED");
+    await prisma.coupon.update({ where: { id: c.id }, data: { usageLimit: 5 } });
+    expect(await switchOffUsedUpCoupons([c.id])).toBe(0);
+    expect(await isActive(c.id)).toBe(true);
+  });
+
+  it("an empty list of coupons switches nothing off and does not fail", async () => {
+    await expect(switchOffUsedUpCoupons([])).resolves.toBe(0);
+  });
+
+  it("a payment still goes through when the switch-off fails afterwards", async () => {
+    const buyer = await makeUser("wh-switch-fails");
+    const { orderId } = await makeOrder(buyer);
+    const rzp = `order_${MARK}_swf_${orderId.slice(0, 8)}`;
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { razorpayOrderId: rzp },
+    });
+    const c = await createCoupon(make({ kind: "SINGLE_USE" }), ADMIN);
+    await redemption(c.id, buyer, orderId, "RESERVED");
+    const body = JSON.stringify({
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_${MARK}_swf`,
+            order_id: rzp,
+            amount: 99900,
+            currency: "INR",
+            status: "captured",
+          },
+        },
+      },
+    });
+    const signature = createHmac("sha256", config.razorpay.razorpayWebhookSecret)
+      .update(body)
+      .digest("hex");
+
+    // Only the switch-off uses a raw "execute" in this flow; make it fail.
+    const client = prisma as unknown as { $executeRaw: unknown };
+    const realExecute = client.$executeRaw;
+    client.$executeRaw = () => Promise.reject(new Error("database timeout"));
+    try {
+      await expect(
+        handleRazorpayWebhook(
+          Buffer.from(body),
+          signature,
+          `evt_${MARK}_swf_${orderId.slice(0, 8)}`
+        )
+      ).resolves.toBeUndefined();
+    } finally {
+      client.$executeRaw = realExecute;
+    }
+
+    expect(
+      (await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status
+    ).toBe("PAID");
+    expect(
+      (await prisma.couponRedemption.findUniqueOrThrow({ where: { orderId } })).status
+    ).toBe("REDEEMED");
+    expect(await isActive(c.id)).toBe(true); // not switched off; the sweep does it later
+    expect(await sweepExpiredCoupons()).toBeGreaterThanOrEqual(1);
+    expect(await isActive(c.id)).toBe(false);
+  });
+
+  it("a paid last use switches the coupon off through the payment webhook, and the bill keeps the book title", async () => {
+    const buyer = await makeUser("wh-switch");
+    const { orderId } = await makeOrder(buyer);
+    const rzp = `order_${MARK}_sw_${orderId.slice(0, 8)}`;
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { razorpayOrderId: rzp },
+    });
+    const c = await createCoupon(make({ kind: "SINGLE_USE" }), ADMIN);
+    await redemption(c.id, buyer, orderId, "RESERVED");
+    const body = JSON.stringify({
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_${MARK}_sw`,
+            order_id: rzp,
+            amount: 99900,
+            currency: "INR",
+            status: "captured",
+          },
+        },
+      },
+    });
+    const signature = createHmac("sha256", config.razorpay.razorpayWebhookSecret)
+      .update(body)
+      .digest("hex");
+
+    await handleRazorpayWebhook(
+      Buffer.from(body),
+      signature,
+      `evt_${MARK}_sw_${orderId.slice(0, 8)}`
+    );
+
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      select: {
+        status: true,
+        billNumber: true,
+        billBookTitle: true,
+        orderSession: { select: { comic: { select: { title: true } } } },
+      },
+    });
+    expect(order.status).toBe("PAID");
+    expect(order.billNumber).not.toBeNull();
+    expect(order.billBookTitle).toBe(order.orderSession.comic.title);
+    expect(
+      (await prisma.couponRedemption.findUniqueOrThrow({ where: { orderId } })).status
+    ).toBe("REDEEMED");
+    expect(await isActive(c.id)).toBe(false);
+
+    // The same payment delivered again changes nothing: one bill number, same title.
+    await handleRazorpayWebhook(
+      Buffer.from(body),
+      signature,
+      `evt_${MARK}_sw_again_${orderId.slice(0, 8)}`
+    );
+    const again = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { billNumber: true, billBookTitle: true },
+    });
+    expect(again).toEqual({
+      billNumber: order.billNumber,
+      billBookTitle: order.billBookTitle,
+    });
+  });
+});
+
+describe("the bill keeps the book title it was issued with", () => {
+  it("saves the title with the bill number, and a later rename does not change it", async () => {
+    const buyer = await makeUser("bill-title");
+    const { orderId } = await makeOrder(buyer);
+    const before = await prisma.comic.findUniqueOrThrow({
+      where: { id: COMIC_ID },
+      select: { title: true },
+    });
+
+    await prisma.$transaction((tx) => assignBillNumber(tx, orderId, new Date()));
+    try {
+      await prisma.comic.update({
+        where: { id: COMIC_ID },
+        data: { title: `${before.title} (renamed)` },
+      });
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: orderId },
+        select: { billBookTitle: true },
+      });
+      expect(order.billBookTitle).toBe(before.title);
+    } finally {
+      await prisma.comic.update({
+        where: { id: COMIC_ID },
+        data: { title: before.title },
+      });
+    }
+  });
+
+  it("the migration's backfill fills only billed orders that have no title, and is safe to run again", async () => {
+    const dir = readdirSync(join(process.cwd(), "prisma/migrations")).find((d) =>
+      d.endsWith("_add_bill_book_title")
+    );
+    if (!dir) throw new Error("migration directory not found");
+    const sql = readFileSync(
+      join(process.cwd(), "prisma/migrations", dir, "migration.sql"),
+      "utf8"
+    );
+    const start = sql.indexOf('UPDATE "orders"');
+    if (start < 0) throw new Error("backfill statement not found");
+    const backfill = sql.slice(start);
+
+    const u = await makeUser("backfill");
+    const billed = await makeOrder(u);
+    const unbilled = await makeOrder(await makeUser("backfill-2"));
+    const frozen = await makeOrder(await makeUser("backfill-3"));
+    await prisma.order.update({
+      where: { id: billed.orderId },
+      data: { billNumber: `BOS-VT-${RUN}-1`, billIssuedAt: new Date() },
+    });
+    await prisma.order.update({
+      where: { id: frozen.orderId },
+      data: {
+        billNumber: `BOS-VT-${RUN}-2`,
+        billIssuedAt: new Date(),
+        billBookTitle: "Title at billing",
+      },
+    });
+
+    await prisma.$executeRawUnsafe(backfill);
+    await prisma.$executeRawUnsafe(backfill);
+
+    const comic = await prisma.comic.findUniqueOrThrow({
+      where: { id: COMIC_ID },
+      select: { title: true },
+    });
+    const title = async (id: string) =>
+      (await prisma.order.findUniqueOrThrow({ where: { id } })).billBookTitle;
+    expect(await title(billed.orderId)).toBe(comic.title);
+    expect(await title(unbilled.orderId)).toBeNull();
+    expect(await title(frozen.orderId)).toBe("Title at billing");
   });
 });

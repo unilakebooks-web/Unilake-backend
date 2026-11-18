@@ -7,6 +7,7 @@ import { config } from "../config/env.js";
 import { processShiprocketStatusUpdate } from "./shiprocket.service.js";
 import { notifyPaymentReceived } from "./notification.service.js";
 import { assignBillNumber } from "./billOfSupply.service.js";
+import { switchOffUsedUpCouponOfOrder } from "./coupon.service.js";
 import {
   findOrderBySupersededRazorpayOrderId,
   redeemCouponInTx,
@@ -326,6 +327,16 @@ async function handlePaymentCaptured(
       );
     });
   }
+
+  // The paid use may have been the coupon's last: switch it off. One statement,
+  // last and best effort, so it never delays the paid-page jobs or the reply and
+  // can never fail a payment; the coupon sweep catches a miss.
+  await switchOffUsedUpCouponOfOrder(order.id).catch((err) => {
+    logger.warn(
+      { orderId: order.id, err },
+      "Could not switch off a used-up coupon after payment"
+    );
+  });
 }
 
 export class WebhookVerificationError extends Error {
