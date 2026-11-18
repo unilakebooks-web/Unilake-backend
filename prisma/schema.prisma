@@ -149,6 +149,11 @@ model Comic {
 
   isBestseller Boolean @default(false)
 
+  // Website order, ascending: the order customers see (home, Our Books, Explore
+  // more). Only PUBLISHED comics' relative order matters. Renumbered by the
+  // admin's reorder; a new comic takes the top (smallest number minus one).
+  sortOrder Int @default(0)
+
   description String?    @db.Text
   themes      Theme[]
   ageGroups   AgeGroup[] @default([])

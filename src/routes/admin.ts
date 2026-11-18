@@ -2,6 +2,7 @@
 import { Router } from "express";
 import {
   createComicHandler,
+  reorderComicsHandler,
   deleteComicHandler,
   getAdminComicsHandler,
   getAdminComicDetailHandler,
@@ -23,6 +24,7 @@ import {
 import { validateBody } from "../middlewares/validateBody.js";
 import {
   createComicSchema,
+  reorderComicsSchema,
   getComicVideoUploadUrlSchema,
   getLoraUploadUrlSchema,
   updateComicPricingSchema,
@@ -268,6 +270,13 @@ router.get("/comics/:comicId", getAdminComicDetailHandler); // single comic full
 router.post("/comics/thumbnails/upload-urls", getThumbnailUploadUrlsBatchHandler);
 router.post("/comics", validateBody(createComicSchema), createComicHandler); // create comic
 router.delete("/comics/:comicId", deleteComicHandler); // delete comic
+// NOTE: /comics/reorder MUST stay above /comics/:comicId — both are PATCH with the
+// same segment count, so Express matches whichever is registered first.
+router.patch(
+  "/comics/reorder",
+  validateBody(reorderComicsSchema),
+  reorderComicsHandler
+);
 router.patch(
   "/comics/:comicId",
   validateBody(updateComicSchema),
