@@ -24,6 +24,12 @@ import {
 } from "../config/shipping.js";
 import type { CoverType, OrderStatus } from "../generated/prisma/client.js";
 import { notifyAwbGenerated, notifyOrderDelivered } from "./notification.service.js";
+import {
+  assertAddressSyncedForAwb,
+  assertNoAddressChangeSince,
+  closeAddressChangesAfterAwb,
+  getLatestAddressSeq,
+} from "./orderAddress.service.js";
 
 /**
  * Shiprocket's public tracking page for an AWB. Works from the moment the AWB
@@ -481,6 +487,15 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
     "[Shiprocket Service] Phase B — pushDimensionsAssignAwbAndSchedulePickup start"
   );
 
+  // An admin may have changed the delivery address. While Shiprocket might still
+  // hold the old one, booking the AWB would send the parcel there, so refuse.
+  // This comes BEFORE the order is read, and the latest change number is read before
+  // the check: a change committed after this point is caught by the second check,
+  // just before the AWB is booked (which also covers the address read below); one
+  // committed in between shows up as unsynced in the check itself.
+  const addressSeqAtStart = await getLatestAddressSeq(orderId);
+  await assertAddressSyncedForAwb(orderId);
+
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -567,6 +582,9 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
   await shiprocketUpdateOrder(params);
   logger.info({ orderId }, "[Shiprocket Service] Phase B — updateOrder done");
 
+  // The address must not have been changed since this function began (see above).
+  await assertNoAddressChangeSince(orderId, addressSeqAtStart);
+
   // 3. Assign AWB
   const awbResult = await shiprocketAssignAwb({
     shipmentId: order.shiprocketShipmentId,
@@ -591,6 +609,15 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
     { orderId, awbCode: awbResult.awbCode, courierName: awbResult.courierName },
     "[Shiprocket Service] Phase B — assignAwb done"
   );
+
+  // An address edit that committed during the assignAwb call above cannot be sent in time:
+  // close it with a "check the label" message instead of leaving it waiting.
+  await closeAddressChangesAfterAwb(orderId, addressSeqAtStart).catch((err) => {
+    logger.error(
+      { err, orderId },
+      "[Shiprocket Service] closing address changes after the AWB failed (swallowed)"
+    );
+  });
 
   // Packed-and-ready email — exactly once: Phase B refuses to run again once
   // awbNumber is set (guard above). Sent here, after the AWB rather than after

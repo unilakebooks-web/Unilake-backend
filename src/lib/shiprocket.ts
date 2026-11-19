@@ -1504,6 +1504,191 @@ export async function trackByAwb(
 
 
 // ============================================================
+// ADDRESS CHANGE (admin edits the delivery address of an order)
+// ============================================================
+//
+// Shiprocket's /orders/update/adhoc cannot carry an address: its own reply lists
+// every billing and shipping field under `not_updated_fields`. The address has a
+// separate call, POST /orders/address/update, and these two functions wrap it
+// and the read that confirms it.
+//
+// Both use their own fetch instead of shiprocketFetch, for two reasons:
+//   - the address call answers 202 with NO body, and shiprocketFetch runs
+//     res.json() on every success except 204, which would throw on success;
+//   - shiprocketFetch has no timeout, and an admin is waiting on this call.
+// shiprocketFetch itself is deliberately left as it is (every other Shiprocket
+// call goes through it).
+//
+// Checked against a real order on a Shiprocket test account: the change shows
+// in GET /orders/show within a couple of seconds, in the `customer_*` fields;
+// the phone is masked in that read (so it cannot be verified); validation is
+// synchronous (422 with field messages, e.g. the phone must be exactly 10
+// digits); the order's country reads back as a name ("India").
+
+const ADDRESS_CALL_TIMEOUT_MS = 15_000;
+
+async function shiprocketAddressFetch(
+  path: string,
+  options: {
+    method: "GET" | "POST";
+    body?: object;
+    errorCode: string;
+  }
+): Promise<unknown> {
+  const token = await getAuthToken();
+
+  const res = await fetch(`${SHIPROCKET_BASE_URL}${path}`, {
+    method: options.method,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(ADDRESS_CALL_TIMEOUT_MS),
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    // The reply can echo the address or phone, so the log gets only the status and the
+    // NAMES of the fields it complains about, never its text; the thrown message (which
+    // callers may store) carries the status and nothing else.
+    let errorFields: string[] = [];
+    try {
+      const parsed = JSON.parse(text) as { errors?: object };
+      errorFields = Object.keys(parsed.errors ?? {});
+    } catch {
+      // not JSON: nothing of the reply is logged
+    }
+    logger.error(
+      { path, method: options.method, status: res.status, errorFields },
+      "Shiprocket API returned non-OK"
+    );
+    throw new AppError(
+      `Shiprocket ${path} failed with HTTP ${res.status}`,
+      502,
+      options.errorCode
+    );
+  }
+
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+export type UpdateOrderAddressParams = {
+  /** Shiprocket's own order id (Order.shiprocketOrderId), not our Order.id. */
+  shiprocketOrderId: string;
+  name: string;
+  /** Digits only, exactly 10 — Shiprocket answers 422 for anything else. */
+  phone: string;
+  line1: string;
+  line2?: string | null;
+  city: string;
+  state: string;
+  /** The country NAME as Shiprocket stores it ("India"), not our ISO code. */
+  country: string;
+  /** Digits only. */
+  pincode: string;
+};
+
+// toPositiveIntField's message repeats the value, and Number() accepts "1e5" and "0x10": a
+// phone or pincode must not reach a log, and only plain digits may be sent.
+function plainNumber(value: string, field: string): number {
+  try {
+    if (!/^\d+$/.test(value)) throw new Error("not plain digits");
+    return toPositiveIntField(value, field);
+  } catch {
+    throw new ValidationError(
+      `Shiprocket address update: '${field}' must be a plain number`
+    );
+  }
+}
+
+/**
+ * Changes the name and delivery address of an order that Shiprocket already
+ * holds, via POST /orders/address/update.
+ *
+ * Shiprocket answers 202 with no body: the change is accepted, not confirmed.
+ * Callers confirm it with getOrderAddress.
+ */
+export async function updateOrderAddress(
+  params: UpdateOrderAddressParams
+): Promise<void> {
+  await shiprocketAddressFetch("/orders/address/update", {
+    method: "POST",
+    body: {
+      order_id: plainNumber(params.shiprocketOrderId, "order_id"),
+      shipping_customer_name: params.name,
+      shipping_phone: plainNumber(params.phone, "shipping_phone"),
+      shipping_address: params.line1,
+      shipping_address_2: params.line2 ?? "",
+      shipping_city: params.city,
+      shipping_state: params.state,
+      shipping_country: params.country,
+      shipping_pincode: plainNumber(params.pincode, "shipping_pincode"),
+    },
+    errorCode: "SHIPROCKET_UPDATE_ADDRESS_FAILED",
+  });
+
+  logger.info(
+    { shiprocketOrderId: params.shiprocketOrderId },
+    "Shiprocket: address change accepted"
+  );
+}
+
+/** The address Shiprocket holds for an order. The phone is not here: Shiprocket masks it. */
+export type ShiprocketOrderAddress = {
+  name: string;
+  line1: string;
+  line2: string;
+  city: string;
+  state: string;
+  pincode: string;
+  /** The country name ("India"). */
+  country: string;
+};
+
+/**
+ * Reads the address Shiprocket holds for an order (GET /orders/show/{id}).
+ * Every field is a string; a field Shiprocket returns as null becomes "".
+ * Throws when the reply has no order in it.
+ */
+export async function getOrderAddress(
+  shiprocketOrderId: string
+): Promise<ShiprocketOrderAddress> {
+  const raw = (await shiprocketAddressFetch(
+    `/orders/show/${encodeURIComponent(shiprocketOrderId)}`,
+    { method: "GET", errorCode: "SHIPROCKET_GET_ORDER_FAILED" }
+  )) as { data?: Record<string, unknown> } | null;
+
+  const data = raw?.data;
+  if (!data || typeof data !== "object") {
+    throw new AppError(
+      "Shiprocket returned no order for the address check",
+      502,
+      "SHIPROCKET_GET_ORDER_FAILED"
+    );
+  }
+
+  const text = (value: unknown): string =>
+    value === null || value === undefined ? "" : String(value);
+
+  return {
+    name: text(data.customer_name),
+    line1: text(data.customer_address),
+    line2: text(data.customer_address_2),
+    city: text(data.customer_city),
+    state: text(data.customer_state),
+    pincode: text(data.customer_pincode),
+    country: text(data.customer_country),
+  };
+}
+
+// ============================================================
 // PUBLIC API — CANCEL ORDER
 // ============================================================
 

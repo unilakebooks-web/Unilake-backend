@@ -475,7 +475,7 @@ model Order {
 
   notificationEmail String?
 
-  // Shipping address snapshot — copied from OrderSession at order creation, never changes
+  // Shipping address — copied from OrderSession at order creation. Changed only by an admin address edit, which keeps every old value in OrderAddressChange.
   shippingName    String?
   shippingLine1   String?
   shippingLine2   String?
@@ -548,6 +548,8 @@ model Order {
   webhookEvents WebhookEvent[]
 
   couponRedemption CouponRedemption?
+
+  addressChanges OrderAddressChange[]
 
   @@map("orders")
 }
@@ -1026,4 +1028,56 @@ model ContactEnquiry {
 
   @@index([status, createdAt])
   @@map("contact_enquiries")
+}
+
+// Where an admin address change stands with Shiprocket. NOT_REQUIRED only while
+// no Shiprocket order can exist or be in the making (PAID, GENERATED).
+// UNVERIFIED: Shiprocket accepted the push but the order could not be read back.
+// PENDING, SYNCING, FAILED and UNVERIFIED all block "Generate AWB".
+// ⚠️ These values are also written out in unilake-frontend app/types/order.ts and
+// components/admin/order/AddressHistory.tsx.
+enum AddressSyncStatus {
+  NOT_REQUIRED
+  PENDING
+  SYNCING
+  SYNCED
+  FAILED
+  UNVERIFIED
+  MANUAL
+}
+
+// History of admin changes to an order's delivery address: old value, new
+// value, who, when, and whether Shiprocket has the new one. Kept with the order.
+model OrderAddressChange {
+  id      String @id @default(uuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  // Monotonic order of the changes of one order. Not createdAt: Postgres sets
+  // that to the transaction start, so two edits can commit in the opposite order.
+  seq Int @default(autoincrement())
+
+  // The eight shipping fields, as { name, line1, line2, city, state, zip, country, phone }.
+  // ⚠️ The same keys are OrderAddressValues in unilake-frontend app/types/order.ts and
+  // ShippingAddress in services/orderAddress.service.ts.
+  before Json
+  after  Json
+
+  // Admin who made the change. Plain strings, no foreign key on purpose (same as
+  // Coupon.createdById): the history must outlive a changed or removed account.
+  changedById    String
+  changedByEmail String
+
+  syncStatus    AddressSyncStatus
+  syncError     String? // a fixed generic message; Shiprocket's reply is never stored or logged (it can echo the address), only its status and field names are logged
+  syncNote      String? // required when a Master admin marks a change as synced by hand (MANUAL)
+  syncStartedAt DateTime? // when the current SYNCING claim began; an old claim counts as failed
+  syncedAt      DateTime?
+  syncedById    String?
+  syncedByEmail String?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, seq])
+  @@map("order_address_changes")
 }

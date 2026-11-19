@@ -14,6 +14,11 @@ import { listAdminOrdersQuerySchema } from "../validators/order.schema.js";
 import { pushDimensionsAssignAwbAndSchedulePickup, retryPhaseAForFailedOrder, getLabelForOrder, refreshTrackingForOrder} from "../services/shiprocket.service.js";
 import { buildBillOfSupplyPdf } from "../services/billOfSupply.service.js";
 import { z } from "zod";
+import {
+  editOrderAddress,
+  syncOrderAddress,
+  markOrderAddressSynced,
+} from "../services/orderAddress.service.js";
 
 export const listUserOrdersHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -273,6 +278,68 @@ export const setSentToPrinterHandler = asyncHandler(
       parseResult.data.orderId,
       req.body.sent,
       req.user!.id
+    );
+
+    sendSuccess(res, 200, result);
+  }
+);
+
+// PATCH /api/admin/orders/:orderId/shipping-address
+// Auth: requireAdmin (applied at router mount in app.ts)
+//
+// Changes the delivery address of an order (until its AWB exists), keeps the old
+// value in the history, and pushes the new one to Shiprocket. Answers 200 with
+// the sync state: a failed push does not undo the change, it is shown to the
+// admin, who can retry it.
+
+const orderAddressParamsSchema = z.object({
+  orderId: z.string().uuid("Invalid order ID format"),
+});
+
+function parseAddressOrderId(params: unknown): string {
+  const parseResult = orderAddressParamsSchema.safeParse(params);
+  if (!parseResult.success) {
+    throw new ValidationError(
+      parseResult.error.issues[0]?.message ?? "Invalid order ID"
+    );
+  }
+  return parseResult.data.orderId;
+}
+
+export const editOrderAddressHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await editOrderAddress(
+      parseAddressOrderId(req.params),
+      req.body,
+      { id: req.user!.id, email: req.user!.email }
+    );
+
+    sendSuccess(res, 200, result);
+  }
+);
+
+// POST /api/admin/orders/:orderId/shipping-address/retry-sync
+// Auth: requireAdmin (applied at router mount in app.ts)
+export const retryAddressSyncHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await syncOrderAddress(parseAddressOrderId(req.params), {
+      id: req.user!.id,
+      email: req.user!.email,
+    });
+
+    sendSuccess(res, 200, result);
+  }
+);
+
+// POST /api/admin/orders/:orderId/shipping-address/mark-synced
+// Auth: requireAdmin (applied at router mount in app.ts)
+// For a Master admin who has checked the address in Shiprocket's own panel.
+export const markAddressSyncedHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await markOrderAddressSynced(
+      parseAddressOrderId(req.params),
+      { note: req.body.note, upToSeq: req.body.upToSeq },
+      { id: req.user!.id, email: req.user!.email }
     );
 
     sendSuccess(res, 200, result);
