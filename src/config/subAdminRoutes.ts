@@ -30,6 +30,8 @@ export const SUB_ADMIN_ROUTES: StaffRoute[] = [
   staffRoute("PATCH", `/orders/${ID}/sent-to-printer`),
   staffRoute("GET", `/orders/${ID}/pages`),
   staffRoute("POST", `/orders/${ID}/regenerate-pages`),
+  staffRoute("PATCH", `/orders/${ID}/shipping-address`),
+  staffRoute("POST", `/orders/${ID}/shipping-address/retry-sync`),
 ];
 
 /** True when a SUB_ADMIN may call this method and path (the path as seen below the /api/admin mount). */

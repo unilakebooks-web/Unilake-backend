@@ -247,7 +247,7 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
 
 ### Staff roles
 
-`requireStaff` guards the whole `/api/admin` router. A Master admin (`ADMIN`) passes everything; a `SUB_ADMIN` passes only the routes listed in `src/config/subAdminRoutes.ts` (the order routes), and everything not listed is closed to them. A role change applies on the next request (the role is read on every request). `tests/integration/adminRouteWalk.test.ts` walks every route the admin router registers (it needs the `.env.test` file but does not query the database), so a new route fails it until it is classified as staff or master in `tests/fixtures/adminRouteClassification.ts`. `requireAdmin` is kept but is no longer mounted.
+`requireStaff` guards the whole `/api/admin` router. A Master admin (`ADMIN`) passes everything; a `SUB_ADMIN` passes only the routes listed in `src/config/subAdminRoutes.ts` (the order routes, including changing a delivery address and retrying its carrier sync), and everything not listed is closed to them. Marking an address as synced and the sample-book routes are Master only. A role change applies on the next request (the role is read on every request). `tests/integration/adminRouteWalk.test.ts` walks every route the admin router registers (it needs the `.env.test` file but does not query the database), so a new route fails it until it is classified as staff or master in `tests/fixtures/adminRouteClassification.ts`. `requireAdmin` is kept but is no longer mounted.
 
 The route files (`src/routes/*.ts`) are the index — each route has a one-line
 comment, and ordering notes where a literal path must come before a `:param`

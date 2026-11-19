@@ -7,7 +7,7 @@ import { STAFF_ROUTES } from "../fixtures/adminRouteClassification.js";
 
 const ID = "7f3c2d9e-1a4b-4c8d-9e5f-0a1b2c3d4e5f";
 
-describe("isSubAdminRoute: the ten order routes are open", () => {
+describe("isSubAdminRoute: the order routes are open", () => {
   const open: [string, string][] = [
     ["GET", "/orders"],
     ["GET", `/orders/${ID}`],
@@ -19,6 +19,8 @@ describe("isSubAdminRoute: the ten order routes are open", () => {
     ["PATCH", `/orders/${ID}/sent-to-printer`],
     ["GET", `/orders/${ID}/pages`],
     ["POST", `/orders/${ID}/regenerate-pages`],
+    ["PATCH", `/orders/${ID}/shipping-address`],
+    ["POST", `/orders/${ID}/shipping-address/retry-sync`],
   ];
 
   it("is the same set of routes the classification lists as staff", () => {
@@ -74,6 +76,14 @@ describe("isSubAdminRoute: everything else is closed", () => {
     ["GET", `/orders/${ID}/pages/extra`],
     ["GET", `/orders/${ID}/pages//`],
     ["OPTIONS", "/orders"],
+    // Marking an address as synced switches off the "Generate AWB" address check: Master only.
+    ["POST", `/orders/${ID}/shipping-address/mark-synced`],
+    ["GET", `/orders/${ID}/shipping-address`],
+    ["DELETE", `/orders/${ID}/shipping-address`],
+    ["GET", "/samples"],
+    ["POST", "/samples"],
+    ["DELETE", `/samples/${ID}`],
+    ["POST", `/samples/${ID}/pdf`],
   ])("%s %s", (method, path) => {
     expect(isSubAdminRoute(method, path)).toBe(false);
   });

@@ -15,6 +15,8 @@ export const STAFF_ROUTES: string[] = [
   "PATCH /orders/:orderId/sent-to-printer",
   "GET /orders/:orderId/pages",
   "POST /orders/:orderId/regenerate-pages",
+  "PATCH /orders/:orderId/shipping-address",
+  "POST /orders/:orderId/shipping-address/retry-sync",
 ];
 
 export const MASTER_ROUTES: string[] = [
@@ -133,4 +135,11 @@ export const MASTER_ROUTES: string[] = [
   "PATCH /coupons/:id",
   "PATCH /coupons/:id/status",
   "DELETE /coupons/:id",
+  // mark-synced switches off the "Generate AWB" address check, so it stays Master-only.
+  "POST /orders/:orderId/shipping-address/mark-synced",
+  // Sample books spend generation credits: Master-only.
+  "GET /samples",
+  "POST /samples",
+  "DELETE /samples/:sessionId",
+  "POST /samples/:sessionId/pdf",
 ];

@@ -204,11 +204,11 @@ describe("the admin routes are all classified", () => {
   it("the check itself reports an unclassified route, a stale entry and a double listing", () => {
     expect(
       classificationProblems(
-        [...keys, "GET /samples"],
+        [...keys, "GET /reports"],
         STAFF_ROUTES,
         MASTER_ROUTES
       )
-    ).toEqual(["not classified (add it as staff or master): GET /samples"]);
+    ).toEqual(["not classified (add it as staff or master): GET /reports"]);
     expect(
       classificationProblems(keys, STAFF_ROUTES, [
         ...MASTER_ROUTES,
