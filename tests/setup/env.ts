@@ -29,3 +29,11 @@ if (process.env.NODE_ENV === "production") {
     "Refusing to run integration tests with NODE_ENV=production."
   );
 }
+
+// Tests that delete stored files must only ever see the local MinIO bucket, never a real R2 account.
+const r2Endpoint = process.env.R2_ENDPOINT ?? "";
+if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(r2Endpoint)) {
+  throw new Error(
+    "Refusing to run integration tests: R2_ENDPOINT is not a local MinIO address."
+  );
+}

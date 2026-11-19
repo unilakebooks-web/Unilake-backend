@@ -4,6 +4,7 @@ const sweeps = vi.hoisted(() => ({
   sessions: vi.fn(),
   pages: vi.fn(),
   coupons: vi.fn(),
+  samples: vi.fn(),
 }));
 vi.mock("../../src/services/session.service.js", () => ({
   sweepExpiredSessions: sweeps.sessions,
@@ -13,6 +14,9 @@ vi.mock("../../src/jobs/workers/stuckPageSweeper.js", () => ({
 }));
 vi.mock("../../src/services/coupon.service.js", () => ({
   sweepExpiredCoupons: sweeps.coupons,
+}));
+vi.mock("../../src/jobs/workers/sampleSweeper.js", () => ({
+  sweepSampleSessions: sweeps.samples,
 }));
 vi.mock("../../src/lib/logger.js", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
@@ -29,21 +33,24 @@ beforeEach(() => {
   sweeps.sessions.mockReset().mockResolvedValue(2);
   sweeps.pages.mockReset().mockResolvedValue(1);
   sweeps.coupons.mockReset().mockResolvedValue(0);
+  sweeps.samples.mockReset().mockResolvedValue(3);
 });
 
 describe("runScheduledSweeps", () => {
-  it("runs the three sweeps in order and reports each count", async () => {
+  it("runs the four sweeps in order and reports each count", async () => {
     const order: string[] = [];
     sweeps.sessions.mockImplementation(async () => (order.push("sessions"), 2));
     sweeps.pages.mockImplementation(async () => (order.push("pages"), 1));
     sweeps.coupons.mockImplementation(async () => (order.push("coupons"), 0));
+    sweeps.samples.mockImplementation(async () => (order.push("samples"), 3));
     const out = await runScheduledSweeps();
     expect(out.skipped).toBe(false);
-    expect(order).toEqual(["sessions", "pages", "coupons"]);
+    expect(order).toEqual(["sessions", "pages", "coupons", "samples"]);
     expect(out.results.map((r) => [r.name, r.count, r.error])).toEqual([
       ["expired sessions", 2, null],
       ["stuck pages", 1, null],
       ["expired coupons", 0, null],
+      ["sample books", 3, null],
     ]);
   });
 
@@ -109,6 +116,7 @@ describe("runScheduledSweeps", () => {
         ["expired sessions", null],
         ["stuck pages", "timed out"],
         ["expired coupons", null],
+        ["sample books", null],
       ]);
       sweeps.pages.mockResolvedValue(0);
       const next = await runScheduledSweeps();

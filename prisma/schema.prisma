@@ -360,6 +360,11 @@ model OrderSession {
 
   wsRoomToken String @unique @default(uuid()) // used to authenticate WS connection
 
+  // An admin's sample book: a real session that an admin made to try a book without paying. It
+  // never gets an Order, its files and rows are deleted soon after it expires, and the customer
+  // routes that lead to payment refuse it. Set once when the sample is created, never changed.
+  isSample Boolean @default(false)
+
   pageVersions PageVersion[]
   sessionPages SessionPage[]
   order        Order?
@@ -368,6 +373,7 @@ model OrderSession {
   updatedAt DateTime @updatedAt
   expiresAt DateTime // 24hr TTL equivalent, enforced at query time / cleanup job
 
+  @@index([isSample, expiresAt])
   @@map("order_sessions")
 }
 

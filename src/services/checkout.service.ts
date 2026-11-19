@@ -11,6 +11,7 @@ import {
 import type { OrderSession } from "../generated/prisma/client.js";
 import { assertNotExpired } from "./session.service.js";
 import { COUPON_TRANSACTION_OPTIONS } from "../config/coupon.js";
+import { SAMPLE_REFUSAL_MESSAGE } from "../config/sample.js";
 import { acquireSlot } from "../utils/keyedQueue.js";
 import {
   assertSessionOwner,
@@ -106,6 +107,10 @@ export async function initiateCheckout(
 
   if (!session) {
     throw new NotFoundError("Session not found");
+  }
+
+  if (session.isSample) {
+    throw new ConflictError(SAMPLE_REFUSAL_MESSAGE);
   }
 
   await assertNotExpired(session);

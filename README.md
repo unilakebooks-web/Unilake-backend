@@ -344,7 +344,7 @@ call site sits behind a status change that only one caller can win.
   paying RunPod for) the same page twice.
 - Generation jobs use **page number as priority**, so books progress side by
   side instead of one customer's whole book blocking the next.
-- The **expiry sweeper** runs hourly from `jobs/workers/index.ts`.
+- The **expiry sweeper** runs hourly from `jobs/workers/index.ts`. The **sample sweeper** (every 5 minutes, also run by the scheduled-sweeps endpoint) deletes the files and rows of admin sample books once they are over.
 - Workers shut down gracefully on `SIGTERM`/`SIGINT`, finishing in-flight jobs.
 
 ---
@@ -453,11 +453,20 @@ Admin: `/api/admin/coupons` (list, create, edit, switch on or off, delete, `POST
 - Wrong guesses are limited to 10 per 10 minutes per customer (Redis; fails open if Redis is down).
 - Several rules live only in the migration SQL as CHECK constraints (percent between 0 and 100, positive amounts, one discount type); the schema file cannot express them.
 
+### Sample books
+
+An admin can try a book without paying: `/api/admin/samples` (list, create, `DELETE /:sessionId` to discard, `POST /:sessionId/pdf` to download the chosen versions). A sample is an ordinary `OrderSession` with `isSample = true`, made with only the pages the admin chose, so the photo, generate and regenerate steps use the normal session routes. Limits and the 6-hour life are in `config/sample.ts`.
+
+- A sample never gets an Order. `initiateCheckout`, `updateOrderSession`, `attachUserToSession` and `sendToPrint` refuse a sample (409), so it cannot reach payment, be edited, be claimed or be printed.
+- The PDF is built on request from the chosen versions and is not stored (`services/sampleBook.service.ts`; its page steps copy `compilePdfForSession`, so change both together). It is capped at `MAX_SAMPLE_PDF_BYTES`.
+- `jobs/workers/sampleSweeper.ts` removes a sample's files from both buckets (`deletePrefix` in `lib/r2.ts`, which only accepts a `sessions/<uuid>/` folder) and then its rows, 10 minutes after it expired, skipping any with a page still generating. With the 5-minute Scheduler job the files are gone about 15 minutes after the sample ends. The R2 token needs list and delete permission.
+- Deleting a comic is refused while it has a sample, live or waiting for the cleanup.
+
 ---
 
 ## Quality checks
 
-Tests cover the coupon feature (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host. Everything else has no automated tests yet. Before opening a PR:
+Tests cover the coupon and sample-book features (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host, or if `R2_ENDPOINT` is not a local MinIO address (the sample tests delete stored files). Everything else has no automated tests yet. Before opening a PR:
 
 - `npx tsc --noEmit` passes, and `npm test` passes.
 - You have exercised the changed flow end to end against your dev database.
