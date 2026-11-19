@@ -7,6 +7,7 @@ import {
 } from "../utils/orderStatusMapping.js";
 import type { ListAdminOrdersQueryInput } from "../validators/order.schema.js";
 import type { Prisma } from "../generated/prisma/client.js";
+import { ADDRESS_HISTORY_SELECT, getAddressEditState } from "./orderAddress.service.js";
 
 /**
  * List all orders belonging to a user, most recent first.
@@ -580,6 +581,11 @@ export async function getAdminOrderDetail(orderId: string) {
           payloadJson: true,
         },
       },
+      // Every admin change of the delivery address, newest first.
+      addressChanges: {
+        orderBy: { seq: "desc" },
+        select: ADDRESS_HISTORY_SELECT,
+      },
     },
   });
 
@@ -681,6 +687,11 @@ export async function getAdminOrderDetail(orderId: string) {
     generatedCover: pickGeneratedCover(order.orderSession.pageVersions),
 
     webhookEvents: order.webhookEvents,
+
+    // Delivery address edits: whether one is allowed now (and why not), and the
+    // history with the sync state of each change.
+    addressEditable: getAddressEditState(order),
+    addressHistory: order.addressChanges,
   };
 }
 

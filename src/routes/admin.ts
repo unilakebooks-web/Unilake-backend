@@ -180,6 +180,8 @@ import {
 } from "../controllers/blog.controller.js";
 import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler, setSentToPrinterHandler } from "../controllers/order.controller.js";
 import { confirmDimensionsBodySchema, setSentToPrinterBodySchema } from "../validators/order.schema.js";
+import { editOrderAddressHandler, retryAddressSyncHandler, markAddressSyncedHandler } from "../controllers/order.controller.js";
+import { editOrderAddressBodySchema, markAddressSyncedBodySchema } from "../validators/order.schema.js";
 import {
   getAdminSitePageHandler,
   getAdminSitePagesHandler,
@@ -579,6 +581,19 @@ router.patch(
   "/orders/:orderId/sent-to-printer",
   validateBody(setSentToPrinterBodySchema),
   setSentToPrinterHandler
+);
+router.patch(
+  "/orders/:orderId/shipping-address",
+  validateBody(editOrderAddressBodySchema),
+  editOrderAddressHandler
+);
+router.post("/orders/:orderId/shipping-address/retry-sync", retryAddressSyncHandler);
+// ⚠️ mark-synced switches off the "Generate AWB" address check, so it is for a Master admin only:
+// when the sub-admin role is added, it must stay out of the sub-admin route list.
+router.post(
+  "/orders/:orderId/shipping-address/mark-synced",
+  validateBody(markAddressSyncedBodySchema),
+  markAddressSyncedHandler
 );
 
 // ORDER PAGES (restart stuck or failed pages of a paid book)
