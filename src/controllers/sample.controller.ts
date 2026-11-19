@@ -10,7 +10,7 @@ import {
 } from "../services/sampleBook.service.js";
 import { sampleSessionParamsSchema } from "../validators/sample.schema.js";
 
-// Auth: requireAdmin at the router mount in app.ts. Bodies are validated by validateBody in the routes.
+// Auth: requireStaff at the router mount in app.ts; Master only (not in subAdminRoutes.ts). Bodies are validated by validateBody in the routes.
 
 function parseSessionId(params: Request["params"]): string {
   const parsed = sampleSessionParamsSchema.safeParse(params);

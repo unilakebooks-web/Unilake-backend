@@ -285,7 +285,7 @@ export const setSentToPrinterHandler = asyncHandler(
 );
 
 // PATCH /api/admin/orders/:orderId/shipping-address
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
 // Changes the delivery address of an order (until its AWB exists), keeps the old
 // value in the history, and pushes the new one to Shiprocket. Answers 200 with
@@ -319,7 +319,7 @@ export const editOrderAddressHandler = asyncHandler(
 );
 
 // POST /api/admin/orders/:orderId/shipping-address/retry-sync
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 export const retryAddressSyncHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const result = await syncOrderAddress(parseAddressOrderId(req.params), {
@@ -332,7 +332,7 @@ export const retryAddressSyncHandler = asyncHandler(
 );
 
 // POST /api/admin/orders/:orderId/shipping-address/mark-synced
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts); Master only, see subAdminRoutes.ts
 // For a Master admin who has checked the address in Shiprocket's own panel.
 export const markAddressSyncedHandler = asyncHandler(
   async (req: Request, res: Response) => {

@@ -599,7 +599,7 @@ router.patch(
 );
 router.post("/orders/:orderId/shipping-address/retry-sync", retryAddressSyncHandler);
 // ⚠️ mark-synced switches off the "Generate AWB" address check, so it is for a Master admin only:
-// when the sub-admin role is added, it must stay out of the sub-admin route list.
+// it must stay out of the sub-admin route list (src/config/subAdminRoutes.ts).
 router.post(
   "/orders/:orderId/shipping-address/mark-synced",
   validateBody(markAddressSyncedBodySchema),
@@ -689,7 +689,7 @@ router.delete("/coupons/:id", deleteCouponHandler);
 
 
 // sample books — an admin's try-out of a book, never paid for.
-// Admin only: requireAdmin at the router mount in app.ts.
+// Master admin only: requireStaff at the router mount in app.ts (not in subAdminRoutes.ts).
 router.get("/samples", listSamplesHandler);
 router.post("/samples", validateBody(createSampleBodySchema), createSampleHandler);
 router.delete("/samples/:sessionId", discardSampleHandler);
