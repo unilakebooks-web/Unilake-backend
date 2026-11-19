@@ -15,7 +15,7 @@ import type {
 // created and owned by Better Auth; this service only ever reads them and
 // writes the `role` column.
 //
-// A role change takes effect on the target's very next request: requireAdmin
+// A role change takes effect on the target's very next request: requireStaff
 // calls auth.api.getSession() per request and Better Auth's cookie cache is
 // off, so the role is re-read from the DB every time. A demoted admin is NOT
 // signed out — they simply become a normal customer (agreed behaviour).
@@ -84,6 +84,38 @@ export async function listAdminUsers(filters: ListAdminUsersQueryInput) {
   };
 }
 
+const ROLE_CHANGED_MESSAGE =
+  "This user's role changed while you were saving. Reload and try again.";
+
+/**
+ * The write for a change that is not a demotion. It only applies if the role is still the one that was
+ * read: promoting someone to ADMIN while this request holds an older read would otherwise be undone
+ * without the last-admin check and the lock (a demotion that looked like a non-demotion).
+ */
+async function changeRoleIfUnchanged(
+  userId: string,
+  expectedRole: string,
+  newRole: UserRole
+) {
+  const { count } = await prisma.user.updateMany({
+    where: { id: userId, role: expectedRole },
+    data: { role: newRole },
+  });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: ADMIN_USER_SELECT,
+  });
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+  // Nothing matched: another request changed this user first. If it already made the change that was asked
+  // for (two Master admins doing the same thing at once), that is a success; anything else is refused.
+  if (count === 0 && user.role !== newRole) {
+    throw new ConflictError(ROLE_CHANGED_MESSAGE);
+  }
+  return { user, changed: count === 1 };
+}
+
 /**
  * Change a user's role.
  *
@@ -91,11 +123,14 @@ export async function listAdminUsers(filters: ListAdminUsersQueryInput) {
  *   1. Target must exist                         → 404
  *   2. Already that role                         → no-op, returned as-is
  *   3. An admin cannot demote themselves         → 409
- *   4. The last remaining admin cannot be demoted → 409
+ *   4. The last remaining Master admin cannot be demoted → 409
+ *      (inside the lock the target is read again: already changed → success, no longer a Master → 409)
  *
  * Guard 4 and the write share one transaction behind an advisory lock — see
- * ROLE_CHANGE_LOCK_KEY. Promotions can't reduce the admin count, so they skip
- * the lock.
+ * ROLE_CHANGE_LOCK_KEY. Inside it the target is read again (it may have changed since the first
+ * read), and only Master admins are counted. A change that is not a demotion cannot lower the
+ * Master count, so it skips the lock; its write only applies if the role is still the one read
+ * (changeRoleIfUnchanged).
  */
 export async function updateUserRole(
   actorId: string,
@@ -118,34 +153,51 @@ export async function updateUserRole(
   const isDemotion = target.role === "ADMIN" && newRole !== "ADMIN";
 
   if (isDemotion && actorId === targetUserId) {
-    throw new ConflictError("You can't remove your own admin access.");
+    throw new ConflictError("You can't remove your own Master admin access.");
   }
 
-  const updated = isDemotion
+  const result = isDemotion
     ? await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ROLE_CHANGE_LOCK_KEY}))`;
 
-        const adminCount = await tx.user.count({ where: { role: "ADMIN" } });
-        if (adminCount <= 1) {
-          throw new ConflictError("There must be at least one admin.");
+        // The read above was made before the lock: read again, now that nobody else can change a role.
+        const current = await tx.user.findUnique({
+          where: { id: targetUserId },
+          select: ADMIN_USER_SELECT,
+        });
+        if (!current) {
+          throw new NotFoundError("User not found");
+        }
+        if (current.role === newRole) {
+          return { user: current, changed: false };
+        }
+        if (current.role !== "ADMIN") {
+          throw new ConflictError(ROLE_CHANGED_MESSAGE);
         }
 
-        return tx.user.update({
+        const adminCount = await tx.user.count({ where: { role: "ADMIN" } });
+        if (adminCount <= 1) {
+          throw new ConflictError("There must be at least one Master admin.");
+        }
+
+        const user = await tx.user.update({
           where: { id: targetUserId },
           data: { role: newRole },
           select: ADMIN_USER_SELECT,
         });
+        return { user, changed: true };
       })
-    : await prisma.user.update({
-        where: { id: targetUserId },
-        data: { role: newRole },
-        select: ADMIN_USER_SELECT,
-      });
+    : await changeRoleIfUnchanged(targetUserId, target.role, newRole);
+
+  // Someone else already made this change: nothing was written here, so nothing is logged.
+  if (!result.changed) {
+    return result.user;
+  }
 
   logger.info(
     { actorId, targetUserId, from: target.role, to: newRole },
     "User role changed"
   );
 
-  return updated;
+  return result.user;
 }

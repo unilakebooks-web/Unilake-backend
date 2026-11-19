@@ -134,6 +134,9 @@ Sign up through the frontend, then set your user's `role` to `ADMIN` directly in
 your dev database (e.g. with `npx prisma studio`). After that, other users can
 be promoted from the admin panel's Users page.
 
+There are two staff roles: `ADMIN` (Master admin, full access) and `SUB_ADMIN`
+(order handling only). Only a Master admin gives or removes either role.
+
 ---
 
 ## Scripts and everyday commands
@@ -174,7 +177,7 @@ backend/
 │   ├── controllers/           # parse request → call service → send response
 │   ├── services/              # all business logic, one file per domain
 │   ├── validators/            # Zod schemas for bodies, params and queries
-│   ├── middlewares/           # requireAdmin, requireLoggedIn, validateBody, errorHandler
+│   ├── middlewares/           # requireStaff (mounted on /api/admin), requireAdmin, requireLoggedIn, validateBody, errorHandler
 │   ├── jobs/
 │   │   ├── queues.ts          # BullMQ queue definitions + default retry policy
 │   │   └── workers/           # generation, pdf, shiprocket workers
@@ -237,10 +240,14 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
 | `/api/auth/*` | — | Better Auth (sign-in, sign-up, OAuth callbacks, session) |
 | `/api/public/*` | none | Catalogue, CMS content, and the personalisation flow (sessions, photo upload, generation, checkout) |
 | `/api/user/*` | logged in | The customer's addresses, orders, tracking, and send-to-print |
-| `/api/admin/*` | `ADMIN` role | Comics, pages, speech bubbles, fonts, pricing, CMS, orders and shipping, users, customers, stats |
+| `/api/admin/*` | `ADMIN` role; `SUB_ADMIN` only the order routes | Comics, pages, speech bubbles, fonts, pricing, CMS, orders and shipping, users, customers, stats (see "Staff roles" below) |
 | `/api/webhooks/*` | signature / token | Razorpay and Shiprocket callbacks (raw body) |
 | `/health` | none | Liveness |
 | WebSocket `/?sessionId=…&token=…` | `wsRoomToken` | Live generation events for one session |
+
+### Staff roles
+
+`requireStaff` guards the whole `/api/admin` router. A Master admin (`ADMIN`) passes everything; a `SUB_ADMIN` passes only the routes listed in `src/config/subAdminRoutes.ts` (the order routes), and everything not listed is closed to them. A role change applies on the next request (the role is read on every request). `tests/integration/adminRouteWalk.test.ts` walks every route the admin router registers (it needs the `.env.test` file but does not query the database), so a new route fails it until it is classified as staff or master in `tests/fixtures/adminRouteClassification.ts`. `requireAdmin` is kept but is no longer mounted.
 
 The route files (`src/routes/*.ts`) are the index — each route has a one-line
 comment, and ordering notes where a literal path must come before a `:param`
@@ -466,7 +473,7 @@ An admin can try a book without paying: `/api/admin/samples` (list, create, `DEL
 
 ## Quality checks
 
-Tests cover the coupon and sample-book features (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host, or if `R2_ENDPOINT` is not a local MinIO address (the sample tests delete stored files). Everything else has no automated tests yet. Before opening a PR:
+Tests cover the coupon and sample-book features and the sub-admin role guard (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host, or if `R2_ENDPOINT` is not a local MinIO address (the sample tests delete stored files). Everything else has no automated tests yet. Before opening a PR:
 
 - `npx tsc --noEmit` passes, and `npm test` passes.
 - You have exercised the changed flow end to end against your dev database.
