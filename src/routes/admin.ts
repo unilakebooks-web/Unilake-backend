@@ -23,6 +23,16 @@ import {
 } from "../controllers/country.controller.js";
 import { validateBody } from "../middlewares/validateBody.js";
 import {
+  createSampleHandler,
+  discardSampleHandler,
+  downloadSamplePdfHandler,
+  listSamplesHandler,
+} from "../controllers/sample.controller.js";
+import {
+  createSampleBodySchema,
+  sampleSelectionsBodySchema,
+} from "../validators/sample.schema.js";
+import {
   createComicSchema,
   reorderComicsSchema,
   getComicVideoUploadUrlSchema,
@@ -662,5 +672,16 @@ router.patch(
 router.patch("/coupons/:id/status", toggleCouponStatusHandler);
 router.delete("/coupons/:id", deleteCouponHandler);
 
+
+// sample books — an admin's try-out of a book, never paid for.
+// Admin only: requireAdmin at the router mount in app.ts.
+router.get("/samples", listSamplesHandler);
+router.post("/samples", validateBody(createSampleBodySchema), createSampleHandler);
+router.delete("/samples/:sessionId", discardSampleHandler);
+router.post(
+  "/samples/:sessionId/pdf",
+  validateBody(sampleSelectionsBodySchema),
+  downloadSamplePdfHandler
+);
 
 export default router;

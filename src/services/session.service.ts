@@ -28,6 +28,7 @@ import { pdfCompilationQueue } from "../jobs/queues.js";
 import type { SendToPrintInput } from "../validators/sendToPrint.schema.js";
 import { notifySentToPrint } from "./notification.service.js";
 import { couponSummary } from "../utils/couponSummary.js";
+import { SAMPLE_REFUSAL_MESSAGE } from "../config/sample.js";
 import {
   buildAttachmentContentDisposition,
   buildPdfDownloadFilename,
@@ -294,6 +295,10 @@ export async function updateOrderSession(
 
   if (!session) {
     throw new NotFoundError("OrderSession not found");
+  }
+
+  if (session.isSample) {
+    throw new ConflictError(SAMPLE_REFUSAL_MESSAGE);
   }
 
   await assertNotExpired(session);
@@ -944,6 +949,10 @@ export async function attachUserToSession(sessionId: string, userId: string) {
     throw new NotFoundError("OrderSession not found");
   }
 
+  if (session.isSample) {
+    throw new ConflictError(SAMPLE_REFUSAL_MESSAGE);
+  }
+
   await assertNotExpired(session);
 
   if (session.userId === userId) {
@@ -1204,6 +1213,10 @@ export async function sendToPrint(
 
   if (!session) {
     throw new NotFoundError("Session not found");
+  }
+
+  if (session.isSample) {
+    throw new ConflictError(SAMPLE_REFUSAL_MESSAGE);
   }
 
   // Ownership check - mirrors the pattern in the getUserOrder
