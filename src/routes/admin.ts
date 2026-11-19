@@ -23,6 +23,16 @@ import {
 } from "../controllers/country.controller.js";
 import { validateBody } from "../middlewares/validateBody.js";
 import {
+  createSampleHandler,
+  discardSampleHandler,
+  downloadSamplePdfHandler,
+  listSamplesHandler,
+} from "../controllers/sample.controller.js";
+import {
+  createSampleBodySchema,
+  sampleSelectionsBodySchema,
+} from "../validators/sample.schema.js";
+import {
   createComicSchema,
   reorderComicsSchema,
   getComicVideoUploadUrlSchema,
@@ -180,6 +190,8 @@ import {
 } from "../controllers/blog.controller.js";
 import { listAdminOrdersHandler, getAdminOrderDetailHandler, confirmDimensionsHandler, retryShiprocketHandler, getOrderLabelHandler, refreshTrackingHandler, getBillOfSupplyHandler, setSentToPrinterHandler } from "../controllers/order.controller.js";
 import { confirmDimensionsBodySchema, setSentToPrinterBodySchema } from "../validators/order.schema.js";
+import { editOrderAddressHandler, retryAddressSyncHandler, markAddressSyncedHandler } from "../controllers/order.controller.js";
+import { editOrderAddressBodySchema, markAddressSyncedBodySchema } from "../validators/order.schema.js";
 import {
   getAdminSitePageHandler,
   getAdminSitePagesHandler,
@@ -580,6 +592,19 @@ router.patch(
   validateBody(setSentToPrinterBodySchema),
   setSentToPrinterHandler
 );
+router.patch(
+  "/orders/:orderId/shipping-address",
+  validateBody(editOrderAddressBodySchema),
+  editOrderAddressHandler
+);
+router.post("/orders/:orderId/shipping-address/retry-sync", retryAddressSyncHandler);
+// ⚠️ mark-synced switches off the "Generate AWB" address check, so it is for a Master admin only:
+// it must stay out of the sub-admin route list (src/config/subAdminRoutes.ts).
+router.post(
+  "/orders/:orderId/shipping-address/mark-synced",
+  validateBody(markAddressSyncedBodySchema),
+  markAddressSyncedHandler
+);
 
 // ORDER PAGES (restart stuck or failed pages of a paid book)
 // Literal 3rd segments under /orders/:orderId, same as the orders block above: no ordering hazard.
@@ -662,5 +687,16 @@ router.patch(
 router.patch("/coupons/:id/status", toggleCouponStatusHandler);
 router.delete("/coupons/:id", deleteCouponHandler);
 
+
+// sample books — an admin's try-out of a book, never paid for.
+// Master admin only: requireStaff at the router mount in app.ts (not in subAdminRoutes.ts).
+router.get("/samples", listSamplesHandler);
+router.post("/samples", validateBody(createSampleBodySchema), createSampleHandler);
+router.delete("/samples/:sessionId", discardSampleHandler);
+router.post(
+  "/samples/:sessionId/pdf",
+  validateBody(sampleSelectionsBodySchema),
+  downloadSamplePdfHandler
+);
 
 export default router;

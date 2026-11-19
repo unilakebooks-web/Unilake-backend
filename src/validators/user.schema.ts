@@ -6,7 +6,7 @@ import { z } from "zod";
 // `additionalFields.role` config in lib/auth.ts). Uppercase only — "admin"
 // is rejected rather than silently normalised.
 
-export const UserRoleEnum = z.enum(["ADMIN", "USER"]);
+export const UserRoleEnum = z.enum(["ADMIN", "SUB_ADMIN", "USER"]);
 
 // Query params for GET /api/admin/users. Always ordered newest joined first,
 // so there is deliberately no sortBy/sortOrder. Same page/pageSize bounds as

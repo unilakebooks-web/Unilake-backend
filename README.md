@@ -134,6 +134,9 @@ Sign up through the frontend, then set your user's `role` to `ADMIN` directly in
 your dev database (e.g. with `npx prisma studio`). After that, other users can
 be promoted from the admin panel's Users page.
 
+There are two staff roles: `ADMIN` (Master admin, full access) and `SUB_ADMIN`
+(order handling only). Only a Master admin gives or removes either role.
+
 ---
 
 ## Scripts and everyday commands
@@ -174,7 +177,7 @@ backend/
 │   ├── controllers/           # parse request → call service → send response
 │   ├── services/              # all business logic, one file per domain
 │   ├── validators/            # Zod schemas for bodies, params and queries
-│   ├── middlewares/           # requireAdmin, requireLoggedIn, validateBody, errorHandler
+│   ├── middlewares/           # requireStaff (mounted on /api/admin), requireAdmin, requireLoggedIn, validateBody, errorHandler
 │   ├── jobs/
 │   │   ├── queues.ts          # BullMQ queue definitions + default retry policy
 │   │   └── workers/           # generation, pdf, shiprocket workers
@@ -237,10 +240,14 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
 | `/api/auth/*` | — | Better Auth (sign-in, sign-up, OAuth callbacks, session) |
 | `/api/public/*` | none | Catalogue, CMS content, and the personalisation flow (sessions, photo upload, generation, checkout) |
 | `/api/user/*` | logged in | The customer's addresses, orders, tracking, and send-to-print |
-| `/api/admin/*` | `ADMIN` role | Comics, pages, speech bubbles, fonts, pricing, CMS, orders and shipping, users, customers, stats |
+| `/api/admin/*` | `ADMIN` role; `SUB_ADMIN` only the order routes | Comics, pages, speech bubbles, fonts, pricing, CMS, orders and shipping, users, customers, stats (see "Staff roles" below) |
 | `/api/webhooks/*` | signature / token | Razorpay and Shiprocket callbacks (raw body) |
 | `/health` | none | Liveness |
 | WebSocket `/?sessionId=…&token=…` | `wsRoomToken` | Live generation events for one session |
+
+### Staff roles
+
+`requireStaff` guards the whole `/api/admin` router. A Master admin (`ADMIN`) passes everything; a `SUB_ADMIN` passes only the routes listed in `src/config/subAdminRoutes.ts` (the order routes, including changing a delivery address and retrying its carrier sync), and everything not listed is closed to them. Marking an address as synced and the sample-book routes are Master only. A role change applies on the next request (the role is read on every request). `tests/integration/adminRouteWalk.test.ts` walks every route the admin router registers (it needs the `.env.test` file but does not query the database), so a new route fails it until it is classified as staff or master in `tests/fixtures/adminRouteClassification.ts`. `requireAdmin` is kept but is no longer mounted.
 
 The route files (`src/routes/*.ts`) are the index — each route has a one-line
 comment, and ordering notes where a literal path must come before a `:param`
@@ -344,7 +351,7 @@ call site sits behind a status change that only one caller can win.
   paying RunPod for) the same page twice.
 - Generation jobs use **page number as priority**, so books progress side by
   side instead of one customer's whole book blocking the next.
-- The **expiry sweeper** runs hourly from `jobs/workers/index.ts`.
+- The **expiry sweeper** runs hourly from `jobs/workers/index.ts`. The **sample sweeper** (every 5 minutes, also run by the scheduled-sweeps endpoint) deletes the files and rows of admin sample books once they are over.
 - Workers shut down gracefully on `SIGTERM`/`SIGINT`, finishing in-flight jobs.
 
 ---
@@ -453,11 +460,20 @@ Admin: `/api/admin/coupons` (list, create, edit, switch on or off, delete, `POST
 - Wrong guesses are limited to 10 per 10 minutes per customer (Redis; fails open if Redis is down).
 - Several rules live only in the migration SQL as CHECK constraints (percent between 0 and 100, positive amounts, one discount type); the schema file cannot express them.
 
+### Sample books
+
+An admin can try a book without paying: `/api/admin/samples` (list, create, `DELETE /:sessionId` to discard, `POST /:sessionId/pdf` to download the chosen versions). A sample is an ordinary `OrderSession` with `isSample = true`, made with only the pages the admin chose, so the photo, generate and regenerate steps use the normal session routes. Limits and the 6-hour life are in `config/sample.ts`.
+
+- A sample never gets an Order. `initiateCheckout`, `updateOrderSession`, `attachUserToSession` and `sendToPrint` refuse a sample (409), so it cannot reach payment, be edited, be claimed or be printed.
+- The PDF is built on request from the chosen versions and is not stored (`services/sampleBook.service.ts`; its page steps copy `compilePdfForSession`, so change both together). It is capped at `MAX_SAMPLE_PDF_BYTES`.
+- `jobs/workers/sampleSweeper.ts` removes a sample's files from both buckets (`deletePrefix` in `lib/r2.ts`, which only accepts a `sessions/<uuid>/` folder) and then its rows, 10 minutes after it expired, skipping any with a page still generating. With the 5-minute Scheduler job the files are gone about 15 minutes after the sample ends. The R2 token needs list and delete permission.
+- Deleting a comic is refused while it has a sample, live or waiting for the cleanup.
+
 ---
 
 ## Quality checks
 
-Tests cover the coupon feature (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host. Everything else has no automated tests yet. Before opening a PR:
+Tests cover the coupon and sample-book features and the sub-admin role guard (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host, or if `R2_ENDPOINT` is not a local MinIO address (the sample tests delete stored files). Everything else has no automated tests yet. Before opening a PR:
 
 - `npx tsc --noEmit` passes, and `npm test` passes.
 - You have exercised the changed flow end to end against your dev database.

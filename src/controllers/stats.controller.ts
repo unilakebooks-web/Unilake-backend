@@ -14,8 +14,8 @@ import { statsRangeQuerySchema } from "../validators/stats.schema.js";
 // waiting on the chart, and a failing aggregate degrades one card instead of
 // blanking the screen.
 //
-// All three are mounted under /api/admin, which already applies requireAdmin at
-// the mount point in app.ts. No guard belongs in this file.
+// All three are mounted under /api/admin, which already applies requireStaff at
+// the mount point in app.ts (Master only). No guard belongs in this file.
 
 // GET /api/admin/stats/summary?range=7d|30d|all
 //

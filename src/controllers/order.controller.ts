@@ -14,6 +14,11 @@ import { listAdminOrdersQuerySchema } from "../validators/order.schema.js";
 import { pushDimensionsAssignAwbAndSchedulePickup, retryPhaseAForFailedOrder, getLabelForOrder, refreshTrackingForOrder} from "../services/shiprocket.service.js";
 import { buildBillOfSupplyPdf } from "../services/billOfSupply.service.js";
 import { z } from "zod";
+import {
+  editOrderAddress,
+  syncOrderAddress,
+  markOrderAddressSynced,
+} from "../services/orderAddress.service.js";
 
 export const listUserOrdersHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -68,7 +73,7 @@ export const getUserOrderTrackingHandler = asyncHandler(
 );
 
 // GET /api/admin/orders
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 // Paginated, searchable, filterable list of every order in the system.
 
 export const listAdminOrdersHandler = asyncHandler(
@@ -88,7 +93,7 @@ export const listAdminOrdersHandler = asyncHandler(
 
 
 // GET /api/admin/orders/:orderId
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 // Full order detail — customer, payment, shipping, shipment, webhook history.
 
 const adminOrderDetailParamsSchema = z.object({
@@ -112,7 +117,7 @@ export const getAdminOrderDetailHandler = asyncHandler(
 
 
 // POST /api/admin/orders/:orderId/confirm-dimensions
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 // Body: { length, breadth, height, weight } — validated via validateBody
 //       middleware in the route file.
 //
@@ -160,7 +165,7 @@ export const confirmDimensionsHandler = asyncHandler(
 
 
 // POST /api/admin/orders/:orderId/retry-shiprocket
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
 // Retries Phase A for an order stuck at SHIPROCKET_FAILED. Handles both
 // clean-retry (no Shiprocket IDs) and recovery (Shiprocket IDs present but
@@ -197,7 +202,7 @@ export const retryShiprocketHandler = asyncHandler(
 
 
 // GET /api/admin/orders/:orderId/label
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
 // Returns a FRESH label PDF URL from Shiprocket every call — never cached
 // on our side per DECISIONS. Admin frontend either opens the URL in a new
@@ -227,7 +232,7 @@ export const getOrderLabelHandler = asyncHandler(
 );
 
 // GET /api/admin/orders/:orderId/bill-of-supply
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
 // Streams the order's Bill of Supply PDF as a download. Built in memory on
 // every call and never stored — not in the DB, not in R2.
@@ -254,7 +259,7 @@ export const getBillOfSupplyHandler = asyncHandler(
 );
 
 // PATCH /api/admin/orders/:orderId/sent-to-printer
-// Auth: requireAdmin (applied at router mount in app.ts). Body { sent } is
+// Auth: requireStaff (router mount in app.ts; sub-admin ok). Body { sent } is
 // validated by validateBody in the route.
 const setSentToPrinterParamsSchema = z.object({
   orderId: z.string().uuid("Invalid order ID format"),
@@ -279,8 +284,70 @@ export const setSentToPrinterHandler = asyncHandler(
   }
 );
 
+// PATCH /api/admin/orders/:orderId/shipping-address
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
+//
+// Changes the delivery address of an order (until its AWB exists), keeps the old
+// value in the history, and pushes the new one to Shiprocket. Answers 200 with
+// the sync state: a failed push does not undo the change, it is shown to the
+// admin, who can retry it.
+
+const orderAddressParamsSchema = z.object({
+  orderId: z.string().uuid("Invalid order ID format"),
+});
+
+function parseAddressOrderId(params: unknown): string {
+  const parseResult = orderAddressParamsSchema.safeParse(params);
+  if (!parseResult.success) {
+    throw new ValidationError(
+      parseResult.error.issues[0]?.message ?? "Invalid order ID"
+    );
+  }
+  return parseResult.data.orderId;
+}
+
+export const editOrderAddressHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await editOrderAddress(
+      parseAddressOrderId(req.params),
+      req.body,
+      { id: req.user!.id, email: req.user!.email }
+    );
+
+    sendSuccess(res, 200, result);
+  }
+);
+
+// POST /api/admin/orders/:orderId/shipping-address/retry-sync
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
+export const retryAddressSyncHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await syncOrderAddress(parseAddressOrderId(req.params), {
+      id: req.user!.id,
+      email: req.user!.email,
+    });
+
+    sendSuccess(res, 200, result);
+  }
+);
+
+// POST /api/admin/orders/:orderId/shipping-address/mark-synced
+// Auth: requireStaff (router mount in app.ts); Master only, see subAdminRoutes.ts
+// For a Master admin who has checked the address in Shiprocket's own panel.
+export const markAddressSyncedHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await markOrderAddressSynced(
+      parseAddressOrderId(req.params),
+      { note: req.body.note, upToSeq: req.body.upToSeq },
+      { id: req.user!.id, email: req.user!.email }
+    );
+
+    sendSuccess(res, 200, result);
+  }
+);
+
 // POST /api/admin/orders/:orderId/refresh-tracking
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
 // Manual tracking refresh — hits Shiprocket's track-by-AWB endpoint and
 // reconciles the fresh data into our DB (first-write-wins on lifecycle

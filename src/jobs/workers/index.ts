@@ -6,6 +6,7 @@ import { generationWorker } from "./generationWorker.js";
 import { sweepExpiredSessions } from "../../services/session.service.js";
 import { sweepStuckPageVersions } from "./stuckPageSweeper.js";
 import { sweepExpiredCoupons } from "../../services/coupon.service.js";
+import { sweepSampleSessions } from "./sampleSweeper.js";
 
 // Hourly expiry sweep — audit 11.1.
 const EXPIRY_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -19,6 +20,8 @@ const STUCK_PAGE_FIRST_SWEEP_MS = 60 * 1000; // 1 minute
 // check every few hours is enough: an expired coupon is switched off within 4 hours.
 const COUPON_EXPIRY_SWEEP_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const COUPON_EXPIRY_FIRST_SWEEP_MS = 60 * 1000; // 1 minute after boot
+// Deletes the files and rows of admin sample books once they are over (see sampleSweeper.ts).
+const SAMPLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Initializes all background workers and registers graceful shutdown handlers.
  */
@@ -82,6 +85,17 @@ export const initJobs = () => {
     "Coupon expiry sweeper scheduled"
   );
 
+  const sampleSweepTimer = setInterval(() => {
+    sweepSampleSessions().catch((err) => {
+      logger.error({ err }, "[Sample Sweeper] Sweep failed");
+    });
+  }, SAMPLE_SWEEP_INTERVAL_MS);
+
+  logger.info(
+    { intervalMinutes: SAMPLE_SWEEP_INTERVAL_MS / 60000 },
+    "Sample sweeper scheduled"
+  );
+
   // Setup graceful shutdown handlers so active jobs aren't brutally cut off during server restarts
   const gracefulShutdown = async (signal: string) => {
     logger.info(`Received ${signal}. Closing background workers gracefully...`);
@@ -92,6 +106,7 @@ export const initJobs = () => {
     clearInterval(stuckPageSweepTimer);
     clearTimeout(couponExpiryFirstSweepTimer);
     clearInterval(couponExpirySweepTimer);
+    clearInterval(sampleSweepTimer);
     
     // Close all workers in parallel
     await Promise.all(workers.map(worker => worker.close()));

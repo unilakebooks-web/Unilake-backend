@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -230,6 +231,68 @@ export const downloadFileToBuffer = async (
 
   return Buffer.from(bodyBytes);
 };
+
+/** Objects deleted at the same time by deletePrefix. */
+const DELETE_PREFIX_PARALLEL = 10;
+
+/** The only prefixes deletePrefix accepts: one session's folder. */
+const SESSION_PREFIX_PATTERN =
+  /^sessions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/$/;
+
+/**
+ * Deletes every object under one session's folder ("sessions/<uuid>/") in the given bucket and
+ * returns how many it deleted. Refuses any other prefix, so a wrong argument cannot empty a bucket.
+ * Pages through the listing and deletes ten keys at a time with DeleteObjectCommand (the batch
+ * delete is not verified against R2 with our checksum setting).
+ */
+export async function deletePrefix(
+  bucket: "public" | "private",
+  prefix: string
+): Promise<number> {
+  if (!SESSION_PREFIX_PATTERN.test(prefix)) {
+    throw new Error("deletePrefix only deletes a session folder");
+  }
+
+  const targetBucketName =
+    bucket === "public" ? config.r2.publicBucket : config.r2.privateBucket;
+
+  let deleted = 0;
+  let continuationToken: string | undefined;
+
+  do {
+    const page = await r2Client.send(
+      new ListObjectsV2Command({
+        Bucket: targetBucketName,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+
+    const keys = (page.Contents ?? [])
+      .map((object) => object.Key)
+      .filter((key): key is string => !!key && key.startsWith(prefix));
+    // A few at a time: one by one is too slow for a book's worth of files inside the sweep's time limit.
+    for (let i = 0; i < keys.length; i += DELETE_PREFIX_PARALLEL) {
+      await Promise.all(
+        keys.slice(i, i + DELETE_PREFIX_PARALLEL).map((key) =>
+          r2Client.send(
+            new DeleteObjectCommand({ Bucket: targetBucketName, Key: key })
+          )
+        )
+      );
+      deleted += Math.min(DELETE_PREFIX_PARALLEL, keys.length - i);
+    }
+
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  logger.info(
+    { bucket: targetBucketName, prefix, deleted },
+    "Deleted a session folder from Cloudflare R2"
+  );
+
+  return deleted;
+}
 
 export async function downloadFileToLocalPath(
   bucket: string,

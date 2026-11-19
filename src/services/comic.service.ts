@@ -394,6 +394,29 @@ export async function deleteComic(comicId: string) {
     );
   }
 
+  // A sample session of any status still has its pages and files until the cleanup sweep removes
+  // them, and its comic link cannot be deleted from under it.
+  const [liveSamples, endedSamples] = await Promise.all([
+    prisma.orderSession.count({
+      where: { comicId, isSample: true, expiresAt: { gt: new Date() } },
+    }),
+    prisma.orderSession.count({
+      where: { comicId, isSample: true, expiresAt: { lte: new Date() } },
+    }),
+  ]);
+
+  if (liveSamples > 0) {
+    throw new ConflictError(
+      `Cannot delete this comic — ${liveSamples} sample book(s) of it are still live. Discard them on the Sample Books page, or wait until they end; their files are cleaned up a few minutes later.`
+    );
+  }
+
+  if (endedSamples > 0) {
+    throw new ConflictError(
+      `Cannot delete this comic — ${endedSamples} sample book(s) of it are being cleaned up. Try again in a few minutes.`
+    );
+  }
+
   // Check for active (non-terminal) order sessions
   const activeSessionCount = await prisma.orderSession.count({
     where: {

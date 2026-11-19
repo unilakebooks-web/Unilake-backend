@@ -6,7 +6,7 @@ import { logger } from "./lib/logger.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./lib/auth.js";
-import { requireAdmin } from "./middlewares/requireAdmin.js";
+import { requireStaff } from "./middlewares/requireStaff.js";
 import adminRoutes from "./routes/admin.js";
 import publicRouter from "./routes/public.js";
 import userRouter from "./routes/user.js";
@@ -65,7 +65,7 @@ app.use(express.json());
 app.get("/health", (req, res) => {
   res.send("Server is wroking perfectly fine!");
 });
-app.use("/api/admin", requireAdmin, adminRoutes);
+app.use("/api/admin", requireStaff, adminRoutes);
 app.use("/api/user", requireLoggedIn, userRouter);
 app.use("/api/public", publicRouter);
 app.use("/api/internal", internalRouter);

@@ -1,10 +1,11 @@
 import { sweepExpiredSessions } from "./session.service.js";
 import { sweepExpiredCoupons } from "./coupon.service.js";
 import { sweepStuckPageVersions } from "../jobs/workers/stuckPageSweeper.js";
+import { sweepSampleSessions } from "../jobs/workers/sampleSweeper.js";
 import { logger } from "../lib/logger.js";
 
 /**
- * Runs the three background sweeps once, on demand, from an outside timer
+ * Runs the background sweeps once, on demand, from an outside timer
  * (Cloud Scheduler). In production the service scales to zero and its CPU is
  * limited outside requests, so the setInterval timers in jobs/workers/index.ts
  * only fire while someone happens to be using the site. These sweeps are safe to
@@ -23,6 +24,7 @@ const SWEEPS: { name: string; run: () => Promise<number> }[] = [
   { name: "expired sessions", run: sweepExpiredSessions },
   { name: "stuck pages", run: sweepStuckPageVersions },
   { name: "expired coupons", run: sweepExpiredCoupons },
+  { name: "sample books", run: sweepSampleSessions },
 ];
 
 // One run at a time per instance: a second call while one is running is a no-op.

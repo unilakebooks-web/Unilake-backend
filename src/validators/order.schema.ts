@@ -73,4 +73,58 @@ export const confirmDimensionsBodySchema = z.object({
     .max(MAX_WEIGHT_KG, `weight must be at most ${MAX_WEIGHT_KG} kg`),
 });
 
+// Body for PATCH /api/admin/orders/:orderId/shipping-address
+// ⚠️ Mirrored in unilake-frontend components/admin/order/addressEditSchema.ts (the limits and
+// the digit rules). The rules checked against the order itself (6-digit pincode for India,
+// 10-digit phone once Shiprocket holds the order) are in services/orderAddress.service.ts
+// and in the same frontend file.
+// The country is deliberately not editable (price, currency and the bill follow
+// it), so a country in the body is ignored. Zip and phone are digits only: the
+// Shiprocket calls need integers, and a value that would break AWB generation
+// is refused here instead.
+// Shiprocket's own rules for this call, found by trying each field on a real test order:
+// the name takes English letters, spaces, dots, hyphens and apostrophes only (no digits,
+// no accents); the address lines take English text only (no accents, emoji or Devanagari)
+// and at most 190 characters; the city at most 40 and the state at most 30. A value outside
+// them is refused here, with the reason, instead of at Shiprocket with a generic failure.
+const ENGLISH_TEXT = /^[\x20-\x7E\n]*$/;
+export const editOrderAddressBodySchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "At most 100 characters")
+    .regex(
+      /^[A-Za-z][A-Za-z .'-]*$/,
+      "Shiprocket takes only English letters, spaces, dots, hyphens and apostrophes in the name"
+    ),
+  line1: z
+    .string()
+    .trim()
+    .min(1, "Address line 1 is required")
+    .max(190, "At most 190 characters (Shiprocket's limit)")
+    .regex(ENGLISH_TEXT, "Shiprocket cannot take non-English letters or emoji in the address: write it in English letters"),
+  line2: z
+    .string()
+    .trim()
+    .max(190, "At most 190 characters (Shiprocket's limit)")
+    .regex(ENGLISH_TEXT, "Shiprocket cannot take non-English letters or emoji in the address: write it in English letters")
+    .optional(),
+  city: z.string().trim().min(1, "City is required").max(40, "At most 40 characters (Shiprocket's limit)"),
+  state: z.string().trim().min(1, "State is required").max(30, "At most 30 characters (Shiprocket's limit)"),
+  zip: z.string().trim().regex(/^[1-9]\d{3,9}$/, "Pincode must be 4 to 10 digits, numbers only, not starting with 0"),
+  phone: z.string().trim().regex(/^\d{7,15}$/, "Phone must be 7 to 15 digits, numbers only"),
+  // The newest change the form was filled in from (0 when there was none). A save made on
+  // top of a newer change is refused, so one admin cannot silently revert what another fixed.
+  expectedSeq: z.number().int().min(0, "expectedSeq is required"),
+});
+
+// Body for POST /api/admin/orders/:orderId/shipping-address/mark-synced
+// ⚠️ The 10-character minimum is also MIN_NOTE in the frontend MarkAddressSyncedDialog.tsx.
+export const markAddressSyncedBodySchema = z.object({
+  note: z.string().trim().min(10, "Say why, in at least 10 characters").max(500),
+  // The newest change the admin saw when they opened the dialog (see markOrderAddressSynced).
+  upToSeq: z.number().int().positive("upToSeq is required"),
+});
+
 export type ConfirmDimensionsBodyInput = z.infer<typeof confirmDimensionsBodySchema>;
