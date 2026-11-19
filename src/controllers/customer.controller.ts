@@ -12,7 +12,7 @@ import {
 } from "../validators/customer.schema.js";
 
 // GET /api/admin/customers
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; Master only)
 // Paginated, searchable list of every account with at least one paid order.
 
 export const listAdminCustomersHandler = asyncHandler(
@@ -31,7 +31,7 @@ export const listAdminCustomersHandler = asyncHandler(
 );
 
 // GET /api/admin/customers/export
-// Auth: requireAdmin (applied at router mount in app.ts)
+// Auth: requireStaff (router mount in app.ts; Master only)
 // The same list as CSV — every matching customer, not one page. A raw file
 // response, not the JSON envelope.
 
