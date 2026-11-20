@@ -28,6 +28,10 @@ import {
 import { getPublicSitePageHandler } from "../controllers/sitePage.controller.js";
 import { getActiveGoogleReviewsHandler } from "../controllers/googleReview.controller.js";
 import { getPublicSiteSettingHandler } from "../controllers/siteSetting.controller.js";
+import {
+  applyUnsubscribeHandler,
+  getUnsubscribeInfoHandler,
+} from "../controllers/emailPreferences.controller.js";
 const router = Router();
 
 // This will give the public comic
@@ -111,5 +115,10 @@ router.post(
   validateBody(createContactEnquirySchema),
   createContactEnquiryHandler
 );
+
+// email unsubscribe — the link in a bulk email. GET only describes (so a mail scanner cannot unsubscribe
+// anyone); POST does it, and is also the one-click POST named in the List-Unsubscribe header.
+router.get("/email/unsubscribe/:token", getUnsubscribeInfoHandler);
+router.post("/email/unsubscribe/:token", applyUnsubscribeHandler);
 
 export default router;

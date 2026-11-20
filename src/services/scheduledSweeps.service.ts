@@ -2,6 +2,8 @@ import { sweepExpiredSessions } from "./session.service.js";
 import { sweepExpiredCoupons } from "./coupon.service.js";
 import { sweepStuckPageVersions } from "../jobs/workers/stuckPageSweeper.js";
 import { sweepSampleSessions } from "../jobs/workers/sampleSweeper.js";
+import { sweepReminders } from "./reminder.service.js";
+import { sweepBroadcasts } from "./broadcast.service.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -25,6 +27,10 @@ const SWEEPS: { name: string; run: () => Promise<number> }[] = [
   { name: "stuck pages", run: sweepStuckPageVersions },
   { name: "expired coupons", run: sweepExpiredCoupons },
   { name: "sample books", run: sweepSampleSessions },
+  // After the quick sweeps on purpose: it and the broadcast sweep can take the longest, and the others must never wait for them.
+  { name: "reminder emails", run: sweepReminders },
+  // After the reminders on purpose: they claim the day's budget first, a broadcast takes what is left.
+  { name: "broadcast emails", run: sweepBroadcasts },
 ];
 
 // One run at a time per instance: a second call while one is running is a no-op.

@@ -352,6 +352,7 @@ call site sits behind a status change that only one caller can win.
 - Generation jobs use **page number as priority**, so books progress side by
   side instead of one customer's whole book blocking the next.
 - The **expiry sweeper** runs hourly from `jobs/workers/index.ts`. The **sample sweeper** (every 5 minutes, also run by the scheduled-sweeps endpoint) deletes the files and rows of admin sample books once they are over.
+- The **reminder sweep** and the **broadcast sweep** (`services/reminder.service.ts`, `services/broadcast.service.ts`) also run from the scheduled-sweeps endpoint: customer reminder emails and the admin broadcast, claimed under a database lock and sent with an idempotency key, inside the daily budget and sending window set on the admin Emails page. Unsubscribe links are served by `routes/public.ts` (`/api/public/email/unsubscribe/:token`).
 - Workers shut down gracefully on `SIGTERM`/`SIGINT`, finishing in-flight jobs.
 
 ---
