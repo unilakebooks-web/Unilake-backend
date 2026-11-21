@@ -231,9 +231,18 @@ beforeEach(async () => {
     .mockImplementation(async () => ({ messageId: `m-${++seq}` }));
   await cleanupRows();
   await settings({});
+  // A test of the kept-until sentence switches the PREVIEWS deletion group on: never leave it on for the next test.
+  await prisma.deletionGroupSetting.updateMany({
+    where: { group: "PREVIEWS", mode: "ACTIVE" },
+    data: { mode: "REPORT_ONLY" },
+  });
 });
 
 afterAll(async () => {
+  await prisma.deletionGroupSetting.updateMany({
+    where: { group: "PREVIEWS", mode: "ACTIVE" },
+    data: { mode: "REPORT_ONLY" },
+  });
   await settings({});
   await cleanup();
   await prisma.$disconnect();

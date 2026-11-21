@@ -832,6 +832,8 @@ async function reverifyDoneItems(
 }
 
 let lastPurgeAt = 0;
+/** Groups whose report is failing right now (in this process): the sweep throws once per start of a failure. */
+const reportFailing = new Set<DeletionGroup>();
 /** Purges our own old rows (at most once an hour; `force` is for tests). */
 export async function purgeOldRows(now: Date, force = false): Promise<void> {
   if (!force && now.getTime() - lastPurgeAt < HOUR_MS) return;
@@ -930,13 +932,19 @@ export async function sweepDataDeletion(
             deps.now().getTime() - settings.lastReportAt.getTime() >=
               REPORT_SPACING_MS;
           if (reportDue) await writeReport(ctx, group, "REPORT_ONLY");
+          reportFailing.delete(group);
         } catch (error) {
           if (!(error instanceof DeadlineStop || error instanceof RunStop)) {
             logger.error(
               { err: error, group },
               "[Data deletion] the report failed"
             );
-            summary.transitions.push(`${group} report failed`);
+            // The sweep fails (and the scheduler sees it) when a report STARTS failing, not on every tick of a
+            // fault that lasts: the error line above is logged each time, the report is retried each time.
+            if (!reportFailing.has(group)) {
+              reportFailing.add(group);
+              summary.transitions.push(`${group} report failed`);
+            }
           }
         }
         continue;
