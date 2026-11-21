@@ -358,6 +358,22 @@ describe("confirming a payment from the customer's page", () => {
     );
   });
 
+  it("does not re-run an order that was paid after its files were deleted", async () => {
+    const stuck = await makeOrder({
+      orderStatus: "PAID",
+      sessionStatus: "PAID",
+    });
+    await prisma.order.update({
+      where: { id: stuck.orderId },
+      data: { paidAfterDeletionAt: new Date() },
+    });
+    const result = await confirmPaymentWithRazorpay(stuck.sessionId);
+    expect(result.confirmed).toBe(true);
+    expect((await state(stuck.orderId, stuck.sessionId)).session.status).toBe(
+      "PAID"
+    ); // left as it is: nothing was started
+  });
+
   it("leaves the paid pages to the other caller when the page rows collide, without an error or a flip", async () => {
     const { sessionId, orderId, rzp } = await makeOrder();
     const pages = await prisma.page.findMany({

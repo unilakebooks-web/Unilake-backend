@@ -154,6 +154,8 @@ export async function confirmPaymentWithRazorpay(
   // webhook retries that case; here it is run again too.
   const needsRerun =
     order.status === "PAID" &&
+    // Paid after the files were deleted (feature 6): no book can be made, so there is nothing to run again.
+    !order.paidAfterDeletionAt &&
     (session.status === "PAID" || session.status === "AWAITING_PAYMENT") &&
     Date.now() - order.updatedAt.getTime() > RERUN_AFTER_MS;
 
