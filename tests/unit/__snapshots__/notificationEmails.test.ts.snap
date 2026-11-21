@@ -1,0 +1,583 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the six order emails > book ready: named child, then no name 1`] = `
+[
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s complete storybook has been generated, and it looks incredible.</p>
+    <p>Before we send it for PRINT, we need your final thumbs-up. We want to make sure you are 100% happy with how Aarav &lt;b&gt;&amp;&#39;&quot; looks in the story.</p>
+    <p><strong>Next step:</strong> Click the link below to read through the digital book. Once you're happy with it, just hit the "Send to Print" button on the page.</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/personalize/00000000-0000-4000-8000-0000000000aa/preview" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">Review the Full Book</a>
+    </p>
+    <p><strong>Note:</strong> We won't print anything until you click the "Send to Print" button on our website, so make sure you do it.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Aarav <b>&'"'s full story is ready to be sent to print. We are waiting for your approval.",
+    "to": "parent@example.test",
+  },
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>Your child&#39;s complete storybook has been generated, and it looks incredible.</p>
+    <p>Before we send it for PRINT, we need your final thumbs-up. We want to make sure you are 100% happy with how your child looks in the story.</p>
+    <p><strong>Next step:</strong> Click the link below to read through the digital book. Once you're happy with it, just hit the "Send to Print" button on the page.</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/personalize/00000000-0000-4000-8000-0000000000aa/preview" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">Review the Full Book</a>
+    </p>
+    <p><strong>Note:</strong> We won't print anything until you click the "Send to Print" button on our website, so make sure you do it.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Your child's full story is ready to be sent to print. We are waiting for your approval.",
+    "to": "parent@example.test",
+  },
+]
+`;
+
+exports[`the six order emails > delivered: named child, then no name 1`] = `
+[
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s book has officially been delivered!</p>
+    <p>We hope this story brings a massive smile to Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s face. Don't forget to check out the fun activities included inside the book to keep the adventure going.</p>
+    <p>A quick tip before you dive in: take a look at the back cover. There is a special QR code waiting for you. Scan it to unlock exclusive cashbacks and discounts for your next Unilake adventure!</p>
+    <p>Happy reading,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Special delivery for Aarav <b>&'"!",
+    "to": "parent@example.test",
+  },
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>Your child&#39;s book has officially been delivered!</p>
+    <p>We hope this story brings a massive smile to your child&#39;s face. Don't forget to check out the fun activities included inside the book to keep the adventure going.</p>
+    <p>A quick tip before you dive in: take a look at the back cover. There is a special QR code waiting for you. Scan it to unlock exclusive cashbacks and discounts for your next Unilake adventure!</p>
+    <p>Happy reading,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Special delivery for your child!",
+    "to": "parent@example.test",
+  },
+]
+`;
+
+exports[`the six order emails > payment received: named child, then no name 1`] = `
+[
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>We got your payment! Thank you for trusting us to create something special for Aarav &lt;b&gt;&amp;&#39;&quot;. Our systems are currently spinning up the rest of the pages and piecing the full story together. You can always check the progress and view the full book once it's ready right from your dashboard.</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/personalize/00000000-0000-4000-8000-0000000000aa/preview" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">Go to My Dashboard</a>
+    </p>
+    <p>We'll email you the second the full book is ready for your review.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Woohoo! Aarav <b>&'"'s book is officially happening 🚀",
+    "to": "parent@example.test",
+  },
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>We got your payment! Thank you for trusting us to create something special for your child. Our systems are currently spinning up the rest of the pages and piecing the full story together. You can always check the progress and view the full book once it's ready right from your dashboard.</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/personalize/00000000-0000-4000-8000-0000000000aa/preview" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">Go to My Dashboard</a>
+    </p>
+    <p>We'll email you the second the full book is ready for your review.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Woohoo! Your child's book is officially happening 🚀",
+    "to": "parent@example.test",
+  },
+]
+`;
+
+exports[`the six order emails > preview ready: named child, then no name 1`] = `
+[
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>We at Unilake have just finished putting together the first few pages of Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s personalized story, as per your request, and we wanted to share a quick sneak peek with you.</p>
+    <p>You can view the early cinematic illustrations here:</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/personalize/00000000-0000-4000-8000-0000000000aa/preview" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">View Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s Preview</a>
+    </p>
+    <p>Take a look and let us know what you think so far. If you love the direction this concept is heading, you can approve it on that page to get the full adventure finalized.</p>
+    <p>Regards,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Aarav <b>&'"'s story preview is ready",
+    "to": "parent@example.test",
+  },
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>We at Unilake have just finished putting together the first few pages of your child&#39;s personalized story, as per your request, and we wanted to share a quick sneak peek with you.</p>
+    <p>You can view the early cinematic illustrations here:</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/personalize/00000000-0000-4000-8000-0000000000aa/preview" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">View Your Child&#39;s Preview</a>
+    </p>
+    <p>Take a look and let us know what you think so far. If you love the direction this concept is heading, you can approve it on that page to get the full adventure finalized.</p>
+    <p>Regards,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Your child's story preview is ready",
+    "to": "parent@example.test",
+  },
+]
+`;
+
+exports[`the six order emails > sent to print: named child, then no name 1`] = `
+[
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>You hit print, and we went straight to work!</p>
+    <p>Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s book is officially in the printing queue. It takes our team about 2 to 3 days to print, bind, and quality-check the physical book to make sure the colors pop and the cover looks perfect.</p>
+    <p>We'll send you one more update with a tracking link the moment it leaves our facility.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Aarav <b>&'"'s book has been sent for print.",
+    "to": "parent@example.test",
+  },
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>You hit print, and we went straight to work!</p>
+    <p>Your child&#39;s book is officially in the printing queue. It takes our team about 2 to 3 days to print, bind, and quality-check the physical book to make sure the colors pop and the cover looks perfect.</p>
+    <p>We'll send you one more update with a tracking link the moment it leaves our facility.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "Your child's book has been sent for print.",
+    "to": "parent@example.test",
+  },
+]
+`;
+
+exports[`the six order emails > shipped: with a tracking link, then without one 1`] = `
+[
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>Great news — Aarav &lt;b&gt;&amp;&#39;&quot;&#39;s personalized book has left the Unilake facility and is in the hands of our delivery partners!</p>
+    <p>You can watch its journey right to your doorstep using the Shiprocket tracking link below:</p>
+    <p style="margin:24px 0;">
+      <a href="https://track.example.test/awb/123" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">Track My Order</a>
+    </p>
+    <p>We can't wait for you to see it in person.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "It's on the way! Track Aarav <b>&'"'s book",
+    "to": "parent@example.test",
+  },
+  {
+    "html": "<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unilake Kids</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#222;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f4;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 40px 16px 40px;border-bottom:1px solid #eee;">
+                <div style="font-size:22px;font-weight:600;color:#1a1a1a;">Unilake Kids</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 40px;font-size:16px;line-height:1.6;color:#333;">
+                <p>Hi,</p>
+    <p>Great news — your child&#39;s personalized book has left the Unilake facility and is in the hands of our delivery partners!</p>
+    <p>You can watch its journey right to your doorstep using the Shiprocket tracking link below:</p>
+    <p style="margin:24px 0;">
+      <a href="https://shop.example.test/dashboard/orders/00000000-0000-4000-8000-0000000000bb" style="display:inline-block;padding:12px 24px;background:#15803D;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">Track My Order</a>
+    </p>
+    <p>We can't wait for you to see it in person.</p>
+    <p>Cheers,<br />The Unilake Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 40px;border-top:1px solid #eee;font-size:13px;line-height:1.6;color:#888;">
+                <div>This is an automated mail. Please do not reply to it. For further queries:</div>
+                <div style="margin-top:8px;">Mail at: <a href="mailto:support@unilakekids.com" style="color:#555;">support@unilakekids.com</a></div>
+                <div>WhatsApp: <a href="https://wa.me/919277163463" style="color:#555;">9277163463</a></div>
+                <div style="margin-top:12px;">© Unilake Kids</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>",
+    "subject": "It's on the way! Track your child's book",
+    "to": "parent@example.test",
+  },
+]
+`;
