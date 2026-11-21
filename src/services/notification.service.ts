@@ -638,7 +638,7 @@ export function renderReminderEmail(args: ReminderEmailArgs): {
       : "";
     // The deletion date and the coupon belong to the last send in the list, whatever its wording.
     const lastExtras = isLastInList
-      ? `${args.deletionDate ? `<p>This preview will be deleted on <strong>${escapeHtml(args.deletionDate)}</strong>.</p>` : ""}
+      ? `${args.deletionDate ? `<p>This preview is kept until <strong>${escapeHtml(args.deletionDate)}</strong>, then it is deleted.</p>` : ""}
     ${args.couponCode ? `<p>If it helps, use code <strong>${escapeHtml(args.couponCode)}</strong> at checkout.</p>` : ""}`
       : "";
     const intro =
@@ -804,4 +804,42 @@ export function renderBroadcastEmail(args: BroadcastEmailArgs): {
     subject: cleanSubject(args.subject),
     html: withPreheader(html, preheader),
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic data deletion (feature 6): the customer paid after the files of their preview were deleted.
+// ---------------------------------------------------------------------------------------------
+
+/** "We received your payment, but the book could not be made": no link to a book, only what happens next. */
+function renderPaidAfterDeletionBody(args: BodyArgs): string {
+  return `
+    <p>Hi,</p>
+    <p>We received your payment for ${escapeHtml(kids(args.childName))} personalized book. Thank you.</p>
+    <p>Unfortunately we could not start making the book: the preview and the photo had already been deleted for your privacy before your payment arrived.</p>
+    <p>Nothing more is needed from you right now. Our team will contact you shortly to put this right, either with a new photo for the book or a full refund. You can also write to us at any time using the details below.</p>
+    ${renderSignOff("Regards,")}
+  `.trim();
+}
+
+/**
+ * Payment captured on a session whose files were already deleted. Caller: webhook.service handlePaymentCaptured,
+ * once per order (after the guarded paidAfterDeletionAt write), fire-and-forget. No link to a book.
+ */
+export async function notifyPaidAfterDeletion(
+  orderSessionId: string
+): Promise<NotifyResult> {
+  const session = await loadSessionContext(orderSessionId);
+  if (!session) {
+    logger.warn({ orderSessionId }, "[Notification] notifyPaidAfterDeletion — session not found, skipping");
+    return { sent: false, reason: "session_not_found" };
+  }
+
+  const to = resolveRecipient(session.notificationEmail, session.order?.notificationEmail);
+  if (!to) return { sent: false, reason: "no_recipient_email" };
+
+  return safeSend(
+    to,
+    "We received your payment: we will contact you about your book",
+    renderEmailShell(renderPaidAfterDeletionBody({ childName: session.childName }))
+  );
 }

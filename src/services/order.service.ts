@@ -113,9 +113,14 @@ export async function listUserOrders(userId: string) {
       coverType: true,
       createdAt: true,
       trackingStatus: true,
+      // Automatic data deletion (feature 6): which files are gone.
+      pdfDeletedAt: true,
+      paidAfterDeletionAt: true,
       orderSession: {
         select: {
           id: true,
+          photoDeletedAt: true,
+          filesDeletedAt: true,
           comic: {
             select: { id: true, title: true, coverThumbnailUrls: true },
           },
@@ -123,8 +128,11 @@ export async function listUserOrders(userId: string) {
       },
     },
   });
+  // A session whose files were deleted has no cover to show: the screen falls back to the placeholder.
   const covers = await getUserGeneratedCovers(
-    orders.map((order) => order.orderSession.id)
+    orders
+      .filter((order) => !order.orderSession.filesDeletedAt)
+      .map((order) => order.orderSession.id)
   );
 
   return orders.map((order) => ({
@@ -140,6 +148,10 @@ export async function listUserOrders(userId: string) {
     publicStatus: toPublicStatus(order.status),
     trackingStatus: order.trackingStatus,
     createdAt: order.createdAt,
+    photoDeleted: !!order.orderSession.photoDeletedAt,
+    filesDeleted: !!order.orderSession.filesDeletedAt,
+    pdfDeleted: !!order.pdfDeletedAt,
+    paidAfterDeletion: !!order.paidAfterDeletionAt,
   }));
 }
 
@@ -157,6 +169,8 @@ export async function getUserOrder(orderId: string, userId: string) {
         select: {
           id: true,
           userId: true,
+          photoDeletedAt: true,
+          filesDeletedAt: true,
           comic: {
             select: { id: true, title: true, coverThumbnailUrls: true },
           },
@@ -177,7 +191,9 @@ export async function getUserOrder(orderId: string, userId: string) {
     throw new ForbiddenError("You do not have permission to view this order");
   }
 
-  const covers = await getUserGeneratedCovers([order.orderSession.id]);
+  const covers = await getUserGeneratedCovers(
+    order.orderSession.filesDeletedAt ? [] : [order.orderSession.id]
+  );
 
   return {
     id: order.id,
@@ -202,13 +218,18 @@ export async function getUserOrder(orderId: string, userId: string) {
       country: order.shippingCountry,
       phone: order.shippingPhone,
     },
-    pdfDownloadUrl: order.pdfDownloadUrl,
+    // Automatic data deletion (feature 6): a deleted PDF has no link.
+    pdfDownloadUrl: order.pdfDeletedAt ? null : order.pdfDownloadUrl,
     pdfDownloadExpiry: order.pdfDownloadExpiry,
     trackingStatus: order.trackingStatus,
     courierName: order.courierName,
     awbNumber: order.awbNumber,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
+    photoDeleted: !!order.orderSession.photoDeletedAt,
+    filesDeleted: !!order.orderSession.filesDeletedAt,
+    pdfDeleted: !!order.pdfDeletedAt,
+    paidAfterDeletion: !!order.paidAfterDeletionAt,
   };
 }
 
@@ -420,10 +441,14 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
         shippedAt: true,
         deliveredAt: true,
         sentToPrinterAt: true,
+        pdfDeletedAt: true,
+        paidAfterDeletionAt: true,
         orderSession: {
           select: {
             // Needed to key the batched cover lookup below — not rendered.
             id: true,
+            photoDeletedAt: true,
+            filesDeletedAt: true,
             childName: true,
             comic: { select: { title: true } },
           },
@@ -442,7 +467,10 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
   //
   // Runs after the transaction because the session ids only exist once it has
   // resolved.
-  const sessionIds = orders.map((o) => o.orderSession.id);
+  // Sessions whose files were deleted (feature 6) have no cover: the screen shows its placeholder.
+  const sessionIds = orders
+    .filter((o) => !o.orderSession.filesDeletedAt)
+    .map((o) => o.orderSession.id);
 
   const coverRows = sessionIds.length
     ? await prisma.pageVersion.findMany({
@@ -509,6 +537,10 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     shippedAt: o.shippedAt,
     deliveredAt: o.deliveredAt,
     sentToPrinterAt: o.sentToPrinterAt,
+    photoDeleted: !!o.orderSession.photoDeletedAt,
+    filesDeleted: !!o.orderSession.filesDeletedAt,
+    pdfDeleted: !!o.pdfDeletedAt,
+    paidAfterDeletion: !!o.paidAfterDeletionAt,
     childName: o.orderSession.childName,
     comicTitle: o.orderSession.comic.title,
     // Null when nothing is generated yet — the client renders a placeholder.
@@ -553,6 +585,8 @@ export async function getAdminOrderDetail(orderId: string) {
       orderSession: {
         select: {
           id: true,
+          photoDeletedAt: true,
+          filesDeletedAt: true,
           childName: true,
           pronounKey: true,
           age: true,
@@ -647,8 +681,18 @@ export async function getAdminOrderDetail(orderId: string) {
 
     pdf: {
       pdfUrl: order.pdfUrl,
-      pdfDownloadUrl: order.pdfDownloadUrl,
+      // Automatic data deletion (feature 6): a deleted PDF has no link, and the screen hides its button.
+      pdfDownloadUrl: order.pdfDeletedAt ? null : order.pdfDownloadUrl,
       pdfDownloadExpiry: order.pdfDownloadExpiry,
+      pdfDeleted: !!order.pdfDeletedAt,
+    },
+
+    // Automatic data deletion (feature 6): which files are gone, and whether a payment arrived after that.
+    deletion: {
+      photoDeleted: !!order.orderSession.photoDeletedAt,
+      filesDeleted: !!order.orderSession.filesDeletedAt,
+      pdfDeleted: !!order.pdfDeletedAt,
+      paidAfterDeletion: !!order.paidAfterDeletionAt,
     },
 
     shipment: {
@@ -693,7 +737,9 @@ export async function getAdminOrderDetail(orderId: string) {
     // The personalised page this child's book opens on. Null until page 1 has
     // generated. `isSelected` tells the admin whether they are looking at the
     // cover that was actually printed or the customer's current best guess.
-    generatedCover: pickGeneratedCover(order.orderSession.pageVersions),
+    generatedCover: order.orderSession.filesDeletedAt
+      ? null
+      : pickGeneratedCover(order.orderSession.pageVersions),
 
     webhookEvents: order.webhookEvents,
 

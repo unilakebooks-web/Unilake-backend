@@ -314,3 +314,36 @@ describe("orderRule", () => {
     );
   });
 });
+
+describe("orderRule: files deleted (automatic data deletion)", () => {
+  const order = (status: string) =>
+    ({ status, pdfUrl: null, updatedAt: ago(60) }) as never;
+
+  it("filesDeleted refuses a restart for PAID, GENERATED and CREATED, with a reason that says deleted", () => {
+    for (const [status, session] of [
+      ["PAID", "GENERATING_PAID"],
+      ["GENERATED", "PAID_PAGES_READY"],
+      ["CREATED", "AWAITING_PAYMENT"],
+    ] as const) {
+      const rule = orderRule(order(status), session, NOW, true);
+      expect(rule.canRegenerate).toBe(false);
+      expect(rule.mode).toBeNull();
+      expect(rule.blockedReason).toMatch(/deleted/);
+    }
+  });
+
+  it("filesDeleted false (or omitted) leaves the results unchanged", () => {
+    for (const filesDeleted of [false, undefined]) {
+      expect(orderRule(order("PAID"), "GENERATING_PAID", NOW, filesDeleted)).toEqual(
+        orderRule(order("PAID"), "GENERATING_PAID", NOW)
+      );
+      expect(orderRule(order("PAID"), "GENERATING_PAID", NOW, filesDeleted)).toMatchObject({
+        canRegenerate: true,
+        mode: "plain",
+      });
+      expect(orderRule(order("CREATED"), "AWAITING_PAYMENT", NOW, filesDeleted).blockedReason).toMatch(
+        /not been paid/
+      );
+    }
+  });
+});

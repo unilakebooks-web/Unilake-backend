@@ -48,6 +48,16 @@ export class NotFoundError extends AppError {
 }
 
 /**
+ * 409 Conflict with its own code: the files of this unpaid preview were deleted (automatic data deletion,
+ * feature 6). Checkout and the coupon routes pass it through to the customer as it is.
+ */
+export class PreviewDeletedError extends AppError {
+  constructor(message = "This preview has expired. Please start again.") {
+    super(message, 409, "PREVIEW_DELETED");
+  }
+}
+
+/**
  * 409 Conflict - Used for things like duplicate emails during signup
  */
 export class ConflictError extends AppError {

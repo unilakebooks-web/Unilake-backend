@@ -29,6 +29,12 @@ import type {
 } from "../validators/comic.schema.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { UpdateComicInput } from "../validators/comic.schema.js";
+import { RETIRED_COMIC_MESSAGE, assertComicNotRetired } from "./retiredComicGuard.js";
+import {
+  deleteEligibilityForComics,
+  monthRuleReason,
+  retireComic,
+} from "./comicRetire.service.js";
 
 // The order customers see on the home page, Our Books and Explore more books: the
 // admin's arrangement first. createdAt and id only break ties (two comics created
@@ -248,6 +254,8 @@ export const createComic = async (data: CreateComicInput) => {
 };
 
 export const updateComic = async (comicId: string, data: UpdateComicInput) => {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   // Optimised files written for this request; removed again if the update is not saved.
   let optimisedKeys: string[] = [];
   try {
@@ -424,6 +432,11 @@ export async function deleteComic(comicId: string) {
       status: {
         notIn: ["COMPLETED", "FAILED"],
       },
+      // An abandoned checkout whose files were deleted (feature 6) is no longer active: nothing can use it.
+      NOT: {
+        filesDeletedAt: { not: null },
+        OR: [{ order: { is: null } }, { order: { is: { status: "CREATED" } } }],
+      },
     },
   });
 
@@ -431,6 +444,37 @@ export async function deleteComic(comicId: string) {
     throw new ConflictError(
       `Cannot delete this comic — it has ${activeSessionCount} active order session(s). Wait for them to complete or fail first.`
     );
+  }
+
+  // Automatic data deletion (feature 6): the 30-day rule, and retire for a comic that has sessions or orders.
+  if (comic.retiredAt) {
+    throw new ConflictError("This comic is already retired; its files are being deleted.");
+  }
+  const monthReason = monthRuleReason(comic, new Date());
+  if (monthReason) {
+    throw new ConflictError(`Cannot delete this comic — ${monthReason}.`);
+  }
+  if (comic._count.orderSessions > 0) {
+    const eligibility = (
+      await deleteEligibilityForComics(
+        [
+          {
+            id: comic.id,
+            status: comic.status,
+            unpublishedAt: comic.unpublishedAt,
+            retiredAt: comic.retiredAt,
+            filesDeletedAt: comic.filesDeletedAt,
+          },
+        ],
+        new Date()
+      )
+    ).get(comicId);
+    if (!eligibility?.canDelete) {
+      throw new ConflictError(`Cannot delete this comic — ${eligibility?.reason ?? "it is not eligible"}.`);
+    }
+    await retireComic(comicId, new Date());
+    logger.info({ comicId }, "Comic retired; its files are deleted by the books deletion sweep");
+    return;
   }
 
   // Collect ALL R2 keys we'll clean up BEFORE the DB delete — thumbnails plus
@@ -510,6 +554,8 @@ export const updateComicPricing = async (
   comicId: string,
   data: UpdateComicPricingInput
 ) => {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   try {
     logger.info(
       { comicId },
@@ -615,6 +661,11 @@ export const updateComicStatus = async (
       throw new NotFoundError("Comic not found.");
     }
 
+    // Retired comics (feature 6) can no longer be changed; checked first so the reason is the real one.
+    if (comic.retiredAt) {
+      throw new ConflictError(RETIRED_COMIC_MESSAGE);
+    }
+
     if (data.status === "PUBLISHED") {
       if (comic.coverThumbnailUrls.length === 0) {
         throw new ValidationError(
@@ -629,10 +680,27 @@ export const updateComicStatus = async (
       }
     }
 
-    const updatedComic = await prisma.comic.update({
-      where: { id: comicId },
-      data: { status: data.status },
+    // Automatic data deletion (feature 6): `unpublishedAt` starts the 30 days after which an unpublished comic can be
+    // deleted. Set when a published comic stops being published, or when a comic moves into UNPUBLISHED without a
+    // date; cleared on publish; a same-status patch and any other edit never reset it. The write is guarded on
+    // `retiredAt` in the same statement, so a publish racing a retire cannot win.
+    const leavingPublished = comic.status === "PUBLISHED" && data.status !== "PUBLISHED";
+    const intoUnpublished =
+      data.status === "UNPUBLISHED" && comic.status !== "UNPUBLISHED" && comic.unpublishedAt === null;
+    let unpublishedAt: Date | null | undefined; // undefined = leave as it is
+    if (data.status === "PUBLISHED") unpublishedAt = null;
+    else if (leavingPublished || intoUnpublished) unpublishedAt = new Date();
+    const { count } = await prisma.comic.updateMany({
+      where: { id: comicId, retiredAt: null },
+      data: {
+        status: data.status,
+        ...(unpublishedAt !== undefined ? { unpublishedAt } : {}),
+      },
     });
+    if (count === 0) {
+      throw new ConflictError(RETIRED_COMIC_MESSAGE);
+    }
+    const updatedComic = await prisma.comic.findUniqueOrThrow({ where: { id: comicId } });
 
     logger.info(
       { comicId, newStatus: updatedComic.status },
@@ -835,7 +903,8 @@ export const getLoraUploadUrl = async (input: GetLoraUploadUrlInput) => {
 };
 
 export async function getAdminComicsList(filters: AdminComicFilterQueryInput) {
-  const where: Prisma.ComicWhereInput = buildTagFilters(filters);
+  // A retired comic stays in the list until its files are verified gone (feature 6), then leaves it.
+  const where: Prisma.ComicWhereInput = { filesDeletedAt: null, ...buildTagFilters(filters) };
 
   if (filters.search !== undefined && filters.search.trim() !== "") {
     where.title = {
@@ -859,7 +928,9 @@ export async function getAdminComicsList(filters: AdminComicFilterQueryInput) {
     orderBy: { createdAt: "desc" },
   });
 
-  return comics;
+  // What the delete button may do, for every row, in a handful of queries (never one per row).
+  const eligibility = await deleteEligibilityForComics(comics, new Date());
+  return comics.map((comic) => ({ ...comic, deleteEligibility: eligibility.get(comic.id) }));
 }
 
 export const getAdminComicDetail = async (comicId: string) => {
@@ -961,6 +1032,7 @@ export const reorderComics = async (orderedIds: string[], actorId?: string) => {
       SELECT "id" FROM "comics"
       WHERE "id" IN (${Prisma.join(assignments.map((a) => a.id))})
         AND "status" = 'PUBLISHED'
+        AND "retiredAt" IS NULL
       ORDER BY "id"
       FOR UPDATE
     )
