@@ -92,7 +92,7 @@ describe("runScheduledSweeps", () => {
     sweeps.reminders.mockRejectedValue(new Error("resend is down"));
     const out = await runScheduledSweeps();
     expect(sweeps.broadcasts).toHaveBeenCalledTimes(1);
-    expect(out.results[5]).toMatchObject({ name: "broadcast emails", count: 5, error: null });
+    expect(out.results.find((r) => r.name === "broadcast emails")).toMatchObject({ count: 5, error: null });
   });
 
   it("a failing sweep is reported and does not stop the others", async () => {
