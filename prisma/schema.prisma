@@ -1087,3 +1087,219 @@ model OrderAddressChange {
   @@index([orderId, seq])
   @@map("order_address_changes")
 }
+
+// ============================================================
+// REMINDER EMAILS AND ADMIN BROADCAST (feature 5)
+// ============================================================
+//
+// None of these tables is read by the order, checkout or payment code. Session
+// and user ids are plain strings with no foreign key on purpose (same idea as
+// Coupon.createdById and OrderAddressChange): automatic deletion (feature 6)
+// must never be blocked or undone by a row here, and these rows are purged on
+// their own schedule (see config/reminders.ts).
+//
+// ⚠️ Reminder kinds and limits are mirrored in unilake-frontend (emailConfig.ts).
+
+enum ReminderKind {
+  PREVIEW_UNFINISHED // A: free preview made, nothing bought
+  BOOK_NOT_SENT // B: paid, book ready, Send to Print not pressed
+  REVIEW_REQUEST // C: feedback request after delivery
+}
+
+enum ReminderSendStatus {
+  CLAIMED // row inserted under the budget lock, mail not yet confirmed
+  SENT
+  FAILED // Resend refused it for good; never retried
+  LOST // CLAIMED for over an hour: it may or may not have been sent; never retried, still counted
+}
+
+enum BroadcastStatus {
+  DRAFT
+  SENDING
+  SENT
+  CANCELLED
+}
+
+enum BroadcastAudience {
+  OPTED_IN_ONLY // ticked the marketing box at checkout and has not withdrawn
+  OPTED_IN_AND_CUSTOMERS // those, plus users with a paid order
+}
+
+enum BroadcastRecipientStatus {
+  PENDING
+  CLAIMED
+  SENT
+  FAILED
+}
+
+enum UnsubscribeScope {
+  GLOBAL // promotions and reminders to buy or review
+  ORDER_REMINDER // reminders about one paid book only
+}
+
+// Admin settings for the three reminders. A singleton like SiteSetting. Every
+// reminder ships switched off. offsetsHours are the send times (hours after the
+// session was created for A, after the book became ready for B, after delivery
+// for C), strictly increasing, at most three. effectiveFrom is set whenever a
+// reminder is switched on or its times or window change: an offset only counts
+// if it became due after it, so enabling or editing never mails the history.
+model ReminderSetting {
+  id String @id @default("singleton")
+
+  previewEnabled       Boolean   @default(false)
+  previewOffsetsHours  Int[]     @default([3, 24, 96])
+  previewEffectiveFrom DateTime?
+
+  bookEnabled       Boolean   @default(false)
+  bookOffsetsHours  Int[]     @default([24, 72, 168])
+  bookEffectiveFrom DateTime?
+
+  reviewEnabled       Boolean   @default(false)
+  reviewOffsetsHours  Int[]     @default([168, 336])
+  reviewEffectiveFrom DateTime?
+
+  googleReviewUrl     String? // required before the review reminder can be switched on
+  reminderCouponCode  String? // optional, shown only in the last unfinished-preview reminder
+  previewDeletionDays Int? // set only once previews really are deleted (feature 6); never promise a deletion that does not happen
+
+  // Sending limits per Indian day (IST). dailyBudget covers reminders and broadcast together;
+  // a broadcast may use only dailyBudget minus reminderReserve, so it can never starve a reminder.
+  dailyBudget     Int @default(30)
+  reminderReserve Int @default(10)
+  perRunLimit     Int @default(10)
+
+  // Hours of the day in IST in which reminders go out (start inclusive, end exclusive).
+  windowStartHour Int @default(9)
+  windowEndHour   Int @default(20)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("reminder_settings")
+}
+
+// One row per reminder claimed. The unique key is what makes a reminder go out
+// once: the sweep inserts the row first (under a lock that also checks the
+// budget), then sends with the row id as Resend's idempotency key.
+model ReminderSend {
+  id             String             @id @default(uuid())
+  kind           ReminderKind
+  orderSessionId String
+  offsetHours    Int
+  email          String // lowercase
+  status         ReminderSendStatus @default(CLAIMED)
+
+  providerMessageId String?
+  errorName         String? // Resend's error name only, at most 200 characters, never the address
+
+  claimedAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@unique([kind, orderSessionId, offsetHours])
+  @@index([claimedAt])
+  @@index([email, claimedAt])
+  @@map("reminder_sends")
+}
+
+// "Stop reminders about this book": the customer's own stop for one order's
+// reminder B. It does not touch any other email.
+model ReminderStop {
+  kind           ReminderKind
+  orderSessionId String
+  stoppedAt      DateTime     @default(now())
+
+  @@id([kind, orderSessionId])
+  @@map("reminder_stops")
+}
+
+// Admin broadcast to users. The audience is fixed into BroadcastRecipient rows
+// when the admin presses Send, then sent a batch at a time by the sweep.
+model Broadcast {
+  id         String @id @default(uuid())
+  subject    String
+  heading    String
+  message    String @db.Text
+  buttonText String?
+  buttonUrl  String?
+
+  audience BroadcastAudience @default(OPTED_IN_ONLY)
+  status   BroadcastStatus   @default(DRAFT)
+
+  recipientCount Int @default(0)
+  sentCount      Int @default(0)
+  failedCount    Int @default(0)
+
+  // Who sent it. Plain strings, no foreign key (same as Coupon.createdById).
+  createdById    String
+  createdByEmail String
+
+  sendStartedAt DateTime?
+  finishedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients BroadcastRecipient[]
+
+  @@index([status, createdAt])
+  @@map("broadcasts")
+}
+
+model BroadcastRecipient {
+  id          String    @id @default(uuid())
+  broadcastId String
+  broadcast   Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  email  String // lowercase
+  status BroadcastRecipientStatus @default(PENDING)
+
+  providerMessageId String?
+  errorName         String? // Resend's error name only, at most 200 characters, never the address
+
+  claimedAt DateTime?
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([broadcastId, email])
+  @@index([broadcastId, status])
+  @@index([claimedAt]) // the daily budget counts what was claimed today
+  @@index([createdAt])
+  @@map("broadcast_recipients")
+}
+
+// Addresses that asked to stop promotions and reminders to buy or review. Kept for good: it is a promise to people.
+model EmailOptOut {
+  email     String   @id // lowercase
+  createdAt DateTime @default(now())
+
+  @@map("email_opt_outs")
+}
+
+// The random token in each bulk email's unsubscribe link. No address ever appears in a URL.
+// Kept longer than the send rows so an old email's link still works (see config/reminders.ts).
+model EmailUnsubscribeToken {
+  token          String           @id // 24 random bytes, base64url
+  email          String // lowercase
+  scope          UnsubscribeScope @default(GLOBAL)
+  orderSessionId String? // set for ORDER_REMINDER
+  createdAt      DateTime         @default(now())
+
+  @@index([createdAt])
+  @@index([email])
+  @@map("email_unsubscribe_tokens")
+}
+
+// "Send me offers and news" ticked at checkout: the evidence of notice and consent.
+// userId is a plain id (no foreign key). No IP address or other tracking data is stored.
+model MarketingConsent {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  email          String // lowercase, as it was when ticked
+  optedInAt      DateTime
+  withdrawnAt    DateTime?
+  wordingVersion String // which text the customer saw next to the box
+  source         String // "checkout"
+  updatedAt      DateTime  @updatedAt
+
+  @@map("marketing_consents")
+}

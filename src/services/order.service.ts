@@ -8,6 +8,7 @@ import {
 import type { ListAdminOrdersQueryInput } from "../validators/order.schema.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { ADDRESS_HISTORY_SELECT, getAddressEditState } from "./orderAddress.service.js";
+import { AWAITING_CUSTOMER_PRINT } from "../config/reminders.js";
 
 /**
  * List all orders belonging to a user, most recent first.
@@ -366,6 +367,14 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
 
   if (filters.sentToPrinter !== undefined) {
     where.sentToPrinterAt = filters.sentToPrinter === "sent" ? { not: null } : null;
+  }
+
+  if (filters.awaitingCustomerPrint !== undefined) {
+    // The same rule reminder B uses (services/reminder.service.ts): the book is ready and the customer has not committed.
+    where.AND = [
+      { status: AWAITING_CUSTOMER_PRINT.orderStatus },
+      { orderSession: { status: AWAITING_CUSTOMER_PRINT.sessionStatus } },
+    ];
   }
 
   if (filters.search !== undefined) {

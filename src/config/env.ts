@@ -95,4 +95,10 @@ export const config = {
     fromAddress: process.env.EMAIL_FROM_ADDRESS!,
     fromName: process.env.EMAIL_FROM_NAME!,
   },
+  // Development only (optional, comma separated): the only addresses that may receive mail when NODE_ENV is not "production".
+  // Empty means no real mail leaves a development or test run. Ignored in production (lib/email.ts).
+  devEmailAllowlist: (process.env.DEV_EMAIL_ALLOWLIST ?? "")
+    .split(",")
+    .map((address) => address.trim().toLowerCase())
+    .filter(Boolean),
 };
