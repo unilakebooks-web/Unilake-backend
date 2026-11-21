@@ -1008,3 +1008,74 @@ describe("the report lists what the owner reads before the first ACTIVE switch",
     expect(lists["paidNotDelivered"]).toContain(paid.orderId);
   });
 });
+
+describe("a report that keeps failing fails the sweep once, not on every tick", () => {
+  // Makes the creation of a report fail (the delegate is swapped and put back by hand: restoring a spy on a Prisma
+  // delegate removes the method).
+  function failReports() {
+    const holder = prisma as unknown as {
+      deletionRun: Record<string, unknown>;
+    };
+    const original = holder.deletionRun;
+    Object.defineProperty(holder, "deletionRun", {
+      value: new Proxy(original, {
+        get: (target, prop) =>
+          prop === "create"
+            ? () => Promise.reject(new Error("boom"))
+            : target[prop as string],
+      }),
+      configurable: true,
+      writable: true,
+    });
+    return () =>
+      Object.defineProperty(holder, "deletionRun", {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+  }
+  const at = (days: number): DeletionDeps => ({
+    ...deps(),
+    now: () => new Date(NOW.getTime() + days * DAY),
+  });
+
+  it("throws when a report starts failing, stays quiet while it keeps failing, and throws again after a success", async () => {
+    await setMode("PREVIEWS", "REPORT_ONLY");
+    const errorLog = vi.spyOn(logger, "error");
+    let restore = failReports();
+    try {
+      await expect(sweepDataDeletion(at(0))).rejects.toThrow(
+        /PREVIEWS report failed/
+      );
+      // The fault lasts: the next ticks complete without failing the sweep, and the error is logged every time.
+      await expect(sweepDataDeletion(at(0.01))).resolves.toBeTypeOf("number");
+      await expect(sweepDataDeletion(at(0.02))).resolves.toBeTypeOf("number");
+      expect(
+        errorLog.mock.calls.filter((c) =>
+          String(c[1]).includes("the report failed")
+        ).length
+      ).toBe(3);
+    } finally {
+      restore();
+    }
+    // The fault ends: a report is written and the sweep is quiet.
+    await expect(sweepDataDeletion(at(0.03))).resolves.toBeTypeOf("number");
+    expect(
+      await prisma.deletionRun.count({ where: { group: "PREVIEWS" } })
+    ).toBeGreaterThan(0);
+    // A new fault, after a success, fails the sweep again (once the report is due again).
+    restore = failReports();
+    try {
+      await prisma.deletionGroupSetting.update({
+        where: { group: "PREVIEWS" },
+        data: { lastReportAt: null },
+      });
+      await expect(sweepDataDeletion(at(0.04))).rejects.toThrow(
+        /PREVIEWS report failed/
+      );
+      await expect(sweepDataDeletion(at(0.05))).resolves.toBeTypeOf("number");
+    } finally {
+      restore();
+    }
+  });
+});

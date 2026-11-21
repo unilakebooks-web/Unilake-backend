@@ -31,6 +31,7 @@ import {
   notifySentToPrint,
   notifyAwbGenerated,
   notifyOrderDelivered,
+  notifyPaidAfterDeletion,
 } from "../../src/services/notification.service.js";
 
 // A name with markup and quotes proves the escaping is part of what is guarded.
@@ -137,5 +138,44 @@ describe("the six order emails", () => {
       reason: "session_not_found",
     });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+// Automatic data deletion (feature 6): a customer who paid after the files of their preview were deleted.
+describe("the paid-after-deletion email", () => {
+  it("names the child with every value escaped, promises contact, and links to no book", async () => {
+    mocks.sessionFindUnique.mockResolvedValue(session(NAMED));
+    expect(await notifyPaidAfterDeletion("s-1")).toEqual({ sent: true, messageId: "m-1" });
+    const mail = mocks.sendEmail.mock.calls[0]![0] as { to?: string; subject: string; html: string };
+    expect(Object.keys(mail).sort()).toEqual(["html", "subject", "to"]);
+    expect(mail.subject).toBe("We received your payment: we will contact you about your book");
+    expect(mail.html).toContain("We received your payment for");
+    expect(mail.html).toContain("Aarav &lt;b&gt;&amp;");
+    expect(mail.html).not.toContain("<b>");
+    expect(mail.html).toContain("Our team will contact you");
+    // "Nothing more is needed": no link to a book or to a preview (the footer's contact details are not links to a book).
+    expect(mail.html).not.toMatch(/\/personalize\/|\/preview|\/dashboard\/orders/);
+  });
+
+  it("works with no child name, and skips with no recipient or no row", async () => {
+    mocks.sessionFindUnique.mockResolvedValue(session(null));
+    expect(await notifyPaidAfterDeletion("s-1")).toEqual({ sent: true, messageId: "m-1" });
+    expect((mocks.sendEmail.mock.calls[0]![0] as { html: string }).html).toContain("We received your payment for");
+    mocks.sendEmail.mockClear();
+    mocks.sessionFindUnique.mockResolvedValue({
+      ...session("Mira"),
+      notificationEmail: " ",
+      order: { notificationEmail: null },
+    });
+    expect(await notifyPaidAfterDeletion("s-1")).toEqual({ sent: false, reason: "no_recipient_email" });
+    mocks.sessionFindUnique.mockResolvedValue(null);
+    expect(await notifyPaidAfterDeletion("s-1")).toEqual({ sent: false, reason: "session_not_found" });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("never throws when Resend fails, and reports why", async () => {
+    mocks.sessionFindUnique.mockResolvedValue(session("Mira"));
+    mocks.sendEmail.mockRejectedValue(new Error("boom"));
+    expect(await notifyPaidAfterDeletion("s-1")).toEqual({ sent: false, reason: "boom" });
   });
 });
