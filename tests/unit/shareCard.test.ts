@@ -71,4 +71,19 @@ describe("toCardJpeg", () => {
     expect(card.length).toBeGreaterThan(300 * 1024);
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it("refuses a page bigger than a page image can be, instead of decoding it", async () => {
+    const huge = await sharp({
+      create: { width: 3000, height: 3000, channels: 3, background: "#264653" },
+    })
+      .webp()
+      .toBuffer();
+    await expect(toCardJpeg(huge)).rejects.toThrow();
+  });
+
+  it("rejects bytes that are not an image", async () => {
+    await expect(
+      toCardJpeg(Buffer.from("this is not an image"))
+    ).rejects.toThrow();
+  });
 });

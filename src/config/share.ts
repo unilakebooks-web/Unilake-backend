@@ -1,4 +1,7 @@
 // Settings of the view-only share link (feature 14). See docs/phase2/features/09-sharing/PLAN.md.
+//
+// ⚠️ Two values are copied in the frontend (unilake-frontend app/share/[token]/page.tsx): the token shape and the
+// card width. Change them in both repos together.
 
 /** A share token is 24 random bytes in base64url: exactly 32 characters. Anything else cannot be one of ours. */
 export const SHARE_TOKEN_SHAPE = /^[A-Za-z0-9_-]{32}$/;
@@ -27,6 +30,8 @@ export const SHARE_IMAGE_MAX_AGE_SECONDS = 60;
 
 /** The link-preview card: a JPEG this wide, kept under this size. */
 export const SHARE_CARD_WIDTH = 1200;
+/** A page image is at most 1600 px on its long edge (lib/image.ts); a larger decode is refused, not converted. */
+export const SHARE_CARD_MAX_INPUT_PIXELS = 4_000_000;
 export const SHARE_CARD_MAX_BYTES = 300 * 1024;
 export const SHARE_CARD_QUALITIES = [80, 70, 60];
 export const SHARE_CARD_CONCURRENCY = 2;

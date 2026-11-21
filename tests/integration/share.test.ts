@@ -4,6 +4,7 @@ import "../setup/env.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { Readable } from "node:stream";
 import sharp from "sharp";
 
 vi.mock("../../src/jobs/queues.js", () => ({
@@ -21,7 +22,7 @@ vi.mock("../../src/lib/auth.js", () => ({
 import app from "../../src/app.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { config } from "../../src/config/env.js";
-import { deletePrefix, uploadFile } from "../../src/lib/r2.js";
+import { deletePrefix, r2Client, uploadFile } from "../../src/lib/r2.js";
 
 const MARK = "__vitest_share__";
 const RUN = Math.random().toString(36).slice(2, 8);
@@ -80,7 +81,13 @@ function call(
 
 interface MkOptions {
   status?: string;
-  order?: "CREATED" | "PAID" | "DELIVERED" | null;
+  order?:
+    | "CREATED"
+    | "PAID"
+    | "DELIVERED"
+    | "CANCELLED"
+    | "SHIPROCKET_FAILED"
+    | null;
   expiresInH?: number;
   sample?: boolean;
   marker?: "files" | "photo" | null;
@@ -710,5 +717,291 @@ describe("existing public routes still answer as before", () => {
     expect(
       (await call("GET", `/api/public/sessions/${"A".repeat(32)}`)).status
     ).not.toBe(200);
+  });
+});
+
+// ── which variant and which pages (the database filters themselves) ──
+
+async function colored(color: string) {
+  return sharp({
+    create: { width: 64, height: 64, channels: 3, background: color },
+  })
+    .webp()
+    .toBuffer();
+}
+
+async function addVariant(
+  sessionId: string,
+  pageIndex: number,
+  o: {
+    variantIndex: number;
+    status?: "SD_READY" | "FAILED" | "QUEUED";
+    color: string;
+    withDisplay?: boolean;
+    selected?: boolean;
+  }
+) {
+  const bytes = await colored(o.color);
+  const id = crypto.randomUUID();
+  const key = `sessions/${sessionId}/final/${id}.webp`;
+  if (o.withDisplay !== false)
+    await uploadFile("public", key, bytes, "image/webp");
+  await prisma.pageVersion.create({
+    data: {
+      id,
+      orderSessionId: sessionId,
+      pageId: pageIds[pageIndex]!,
+      variantIndex: o.variantIndex,
+      status: o.status ?? "SD_READY",
+      displayImageUrl:
+        o.withDisplay === false
+          ? null
+          : `${config.r2.publicUrlBase.replace(/\/$/, "")}/${key}`,
+      finalImageUrl: `${config.r2.publicUrlBase.replace(/\/$/, "")}/sessions/${sessionId}/final/${id}.png`,
+      isSelected: !!o.selected,
+    },
+  });
+  return bytes;
+}
+
+describe("which variant of a page is shown", () => {
+  it("ignores a failed variant and a ready variant with no web image, even when they are the highest", async () => {
+    const s = await mk({ ready: [] });
+    const good = await addVariant(s.id, 0, {
+      variantIndex: 0,
+      color: "#2a9d8f",
+    });
+    await addVariant(s.id, 0, {
+      variantIndex: 1,
+      status: "FAILED",
+      color: "#e63946",
+    });
+    await addVariant(s.id, 0, {
+      variantIndex: 2,
+      color: "#f1c40f",
+      withDisplay: false,
+    });
+    await addVariant(s.id, 0, {
+      variantIndex: 3,
+      status: "QUEUED",
+      color: "#8e44ad",
+    });
+    const t = tokenOf(await share(s.id));
+    const r = await call("GET", `/api/public/shares/${t}/pages/1/image`);
+    expect(r.status).toBe(200);
+    expect(r.raw.equals(good)).toBe(true);
+  });
+
+  it("shows the printed (selected) variant even when a higher one exists, else the highest", async () => {
+    const s = await mk({ ready: [] });
+    const printed = await addVariant(s.id, 0, {
+      variantIndex: 0,
+      color: "#1d3557",
+      selected: true,
+    });
+    await addVariant(s.id, 0, { variantIndex: 1, color: "#e63946" });
+    await addVariant(s.id, 1, { variantIndex: 0, color: "#457b9d" });
+    const highest = await addVariant(s.id, 1, {
+      variantIndex: 2,
+      color: "#a8dadc",
+    });
+    const t = tokenOf(await share(s.id));
+    expect(
+      (await call("GET", `/api/public/shares/${t}/pages/1/image`)).raw.equals(
+        printed
+      )
+    ).toBe(true);
+    expect(
+      (await call("GET", `/api/public/shares/${t}/pages/2/image`)).raw.equals(
+        highest
+      )
+    ).toBe(true);
+  });
+
+  it("splits free and locked pages by the flag frozen on the session, not by the live page", async () => {
+    const s = await mk({ ready: [] });
+    for (const i of [0, 1, 2])
+      await addVariant(s.id, i, { variantIndex: 0, color: "#264653" });
+    // The admin flips the live pages after this book was made: page 1 paid, page 3 free.
+    await prisma.page.update({
+      where: { id: pageIds[0]! },
+      data: { isPreviewPage: false },
+    });
+    await prisma.page.update({
+      where: { id: pageIds[2]! },
+      data: { isPreviewPage: true },
+    });
+    try {
+      const t = tokenOf(await share(s.id));
+      const book = await call("GET", `/api/public/shares/${t}`);
+      expect(book.json.data.pages).toEqual([
+        { pageNumber: 1 },
+        { pageNumber: 2 },
+      ]);
+      expect(book.json.data.lockedCount).toBe(1);
+      expect(
+        (await call("GET", `/api/public/shares/${t}/pages/3/image`)).status
+      ).toBe(404);
+    } finally {
+      await prisma.page.update({
+        where: { id: pageIds[0]! },
+        data: { isPreviewPage: true },
+      });
+      await prisma.page.update({
+        where: { id: pageIds[2]! },
+        data: { isPreviewPage: false },
+      });
+    }
+  });
+
+  it("lists the whole book for any order that is not still only created", async () => {
+    for (const order of [
+      "CANCELLED",
+      "SHIPROCKET_FAILED",
+      "DELIVERED",
+    ] as const) {
+      const s = await mk({ order, status: "COMPLETED", ready: [1, 2, 3] });
+      const t = tokenOf(await share(s.id));
+      const book = await call("GET", `/api/public/shares/${t}`);
+      expect(book.json.data.pages, order).toEqual([
+        { pageNumber: 1 },
+        { pageNumber: 2 },
+        { pageNumber: 3 },
+      ]);
+      expect(book.json.data.lockedCount, order).toBe(0);
+    }
+  });
+
+  it("a paid book whose pages have no web image shows nothing: not ready, and every image is the one 404", async () => {
+    const s = await mk({
+      order: "PAID",
+      status: "PAID_PAGES_READY",
+      ready: [],
+    });
+    for (const i of [0, 1, 2])
+      await addVariant(s.id, i, {
+        variantIndex: 0,
+        color: "#264653",
+        withDisplay: false,
+      });
+    const t = tokenOf(await share(s.id));
+    const book = await call("GET", `/api/public/shares/${t}`);
+    expect(book.json.data).toMatchObject({
+      pages: [],
+      ready: false,
+      complete: false,
+      lockedCount: 0,
+    });
+    for (const n of [1, 2, 3])
+      expect(
+        (await call("GET", `/api/public/shares/${t}/pages/${n}/image`)).status
+      ).toBe(404);
+  });
+});
+
+describe("when storage does not behave", () => {
+  it("answers 503 with Retry-After, uncached and without detail, when storage is too slow", async () => {
+    const s = await mk();
+    const t = tokenOf(await share(s.id));
+    const real = r2Client.send.bind(r2Client);
+    const spy = vi.spyOn(r2Client, "send").mockImplementation(((
+      command: { constructor: { name: string } },
+      ...rest: unknown[]
+    ) => {
+      if (command.constructor.name === "GetObjectCommand") {
+        return Promise.reject(
+          Object.assign(new Error("aborted at sessions/secret"), {
+            name: "AbortError",
+          })
+        );
+      }
+      return (real as (...a: unknown[]) => unknown)(command, ...rest);
+    }) as never);
+    try {
+      for (const path of ["image", "card.jpg"]) {
+        const r = await call("GET", `/api/public/shares/${t}/pages/1/${path}`);
+        expect(r.status, path).toBe(503);
+        expect(r.headers["retry-after"]).toBeTruthy();
+        expect(r.headers["cache-control"]).toBe("no-store");
+        expect(r.headers.etag).toBeUndefined();
+        expect(r.headers["content-type"] ?? "").not.toMatch(/image/);
+        expect(r.raw.toString("utf8")).not.toContain("sessions/");
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      (await call("GET", `/api/public/shares/${t}/pages/1/image`)).status
+    ).toBe(200);
+  });
+
+  it("stops reading the object as soon as the client leaves, instead of buffering on until the deadline", async () => {
+    const s = await mk();
+    const t = tokenOf(await share(s.id));
+    const stalled = new Readable({ read() {} });
+    stalled.push(Buffer.from("partial"));
+    let opened!: () => void;
+    const storageCalled = new Promise<void>((r) => (opened = r));
+    const real = r2Client.send.bind(r2Client);
+    const spy = vi.spyOn(r2Client, "send").mockImplementation(((
+      command: { constructor: { name: string } },
+      ...rest: unknown[]
+    ) => {
+      if (command.constructor.name === "GetObjectCommand") {
+        opened();
+        return Promise.resolve({
+          Body: stalled,
+          ContentLength: 1000,
+          ETag: '"stalled"',
+        });
+      }
+      return (real as (...a: unknown[]) => unknown)(command, ...rest);
+    }) as never);
+    try {
+      const req = http.get({
+        host: "127.0.0.1",
+        port,
+        path: `/api/public/shares/${t}/pages/1/image`,
+      });
+      req.on("error", () => undefined);
+      await storageCalled; // the object is open and its body is being read (it never finishes)
+      await new Promise((r) => setTimeout(r, 300));
+      expect(stalled.destroyed).toBe(false);
+      req.destroy(); // the client leaves
+      for (let i = 0; i < 20 && !stalled.destroyed; i++)
+        await new Promise((r) => setTimeout(r, 100));
+      expect(stalled.destroyed).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("answers the card of a stored file that is not an image with 500 and no detail, and caches nothing", async () => {
+    const s = await mk({ ready: [] });
+    const id = crypto.randomUUID();
+    const key = `sessions/${s.id}/final/${id}.webp`;
+    await uploadFile(
+      "public",
+      key,
+      Buffer.from("this is not an image"),
+      "image/webp"
+    );
+    await prisma.pageVersion.create({
+      data: {
+        id,
+        orderSessionId: s.id,
+        pageId: pageIds[0]!,
+        variantIndex: 0,
+        status: "SD_READY",
+        displayImageUrl: `${config.r2.publicUrlBase.replace(/\/$/, "")}/${key}`,
+      },
+    });
+    const t = tokenOf(await share(s.id));
+    for (let i = 0; i < 2; i++) {
+      const r = await call("GET", `/api/public/shares/${t}/pages/1/card.jpg`);
+      expect(r.status).toBe(500);
+      expect(r.headers["cache-control"]).toBe("no-store");
+      expect(r.raw.toString("utf8")).not.toContain("sessions/");
+    }
   });
 });

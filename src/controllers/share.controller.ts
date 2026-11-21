@@ -25,6 +25,7 @@ import {
   SHARE_CARD_CACHE_ENTRIES,
   SHARE_CARD_CONCURRENCY,
   SHARE_CARD_MAX_BYTES,
+  SHARE_CARD_MAX_INPUT_PIXELS,
   SHARE_CARD_QUALITIES,
   SHARE_CARD_WIDTH,
   SHARE_FIRST_BYTE_TIMEOUT_MS,
@@ -143,6 +144,9 @@ function setImageHeaders(
 
 function answerImageError(res: Response, status: number) {
   setBaseImageHeaders(res);
+  // An answer that follows setImageHeaders must not keep the image's validators or type.
+  res.removeHeader("ETag");
+  res.removeHeader("Content-Type");
   res.setHeader("Cache-Control", "no-store");
   res.status(status).end();
 }
@@ -154,7 +158,9 @@ const cardEtag = (etag: string | undefined) =>
 export async function toCardJpeg(source: Buffer): Promise<Buffer> {
   let output = Buffer.alloc(0);
   for (const quality of SHARE_CARD_QUALITIES) {
-    output = await sharp(source)
+    output = await sharp(source, {
+      limitInputPixels: SHARE_CARD_MAX_INPUT_PIXELS,
+    })
       .resize({ width: SHARE_CARD_WIDTH, withoutEnlargement: true })
       .flatten({ background: "#ffffff" })
       .jpeg({ quality })
@@ -194,7 +200,7 @@ async function reserveOrAnswer(
 /** The card JPEG of a page: from the converted opened webp. `retryLater` is true (and `body` is the unconverted source) when no conversion slot came free. */
 async function cardBody(
   opened: OpenedObject,
-  cacheKey: string,
+  cacheKey: string | null,
   gone: AbortSignal
 ): Promise<{ body: Buffer; retryLater: boolean }> {
   const source = await opened.read();
@@ -202,7 +208,7 @@ async function cardBody(
   if (!slot) return { body: source, retryLater: true };
   try {
     const body = await toCardJpeg(source);
-    cardCache.set(cacheKey, body);
+    if (cacheKey) cardCache.set(cacheKey, body);
     // Oldest entry out (insertion order, not least-recently-used).
     if (cardCache.size > SHARE_CARD_CACHE_ENTRIES)
       cardCache.delete(cardCache.keys().next().value as string);
@@ -212,12 +218,28 @@ async function cardBody(
   }
 }
 
+/** A storage call that timed out or was cut short: try again later, the object is not gone. */
+function isStorageSlow(error: unknown): boolean {
+  const e = error as { name?: string; code?: string };
+  return (
+    e?.name === "AbortError" ||
+    e?.name === "TimeoutError" ||
+    e?.code === "ERR_STREAM_PREMATURE_CLOSE"
+  );
+}
+
 function serveImage(kind: "image" | "card") {
   return async (req: Request, res: Response) => {
     let opened: OpenedObject | null = null;
+    // The client leaving ends the wait for memory and the read of the object, so nothing outlives its reservation.
+    const gone = new AbortController();
+    res.once("close", () => gone.abort());
+    gone.signal.addEventListener("abort", () => opened?.discard(), {
+      once: true,
+    });
     try {
       const token = req.params.token as string;
-      if (!isShareToken(token)) return answerNotFound(res);
+      if (!isShareToken(token)) return answerImageError(res, 404);
       const pageNumberText = req.params.pageNumber as string;
       if (!PAGE_NUMBER_SHAPE.test(pageNumberText))
         return answerImageError(res, 400);
@@ -256,12 +278,13 @@ function serveImage(kind: "image" | "card") {
         return;
       }
 
-      // The client leaving ends the wait for memory. The object's ETag came with its headers, so a card that is
-      // already converted is answered without reading the object and reserves only the size of the card.
-      const gone = new AbortController();
-      res.once("close", () => gone.abort());
-      const cacheKey = `${token}:${opened.etag}`;
-      const cached = kind === "card" ? cardCache.get(cacheKey) : undefined;
+      // The object's ETag came with its headers, so a card that is already converted is answered without reading
+      // the object and reserves only the size of the card. Without an ETag nothing is cached.
+      const cacheKey = opened.etag
+        ? `${token}:${pageNumberText}:${opened.etag}`
+        : null;
+      const cached =
+        kind === "card" && cacheKey ? cardCache.get(cacheKey) : undefined;
 
       let body: Buffer;
       if (cached) {
@@ -288,6 +311,12 @@ function serveImage(kind: "image" | "card") {
       res.once("close", () => clearTimeout(deadline));
       res.status(200).end(body);
     } catch (error) {
+      // The client left (its close aborted the read): there is nobody to answer.
+      if (gone.signal.aborted) return;
+      if (isStorageSlow(error)) {
+        res.setHeader("Retry-After", String(SHARE_RETRY_AFTER_SECONDS));
+        return answerImageError(res, 503);
+      }
       if (error instanceof StorageObjectRefusedError) {
         logger.warn("Share image refused");
         return answerImageError(res, 404);

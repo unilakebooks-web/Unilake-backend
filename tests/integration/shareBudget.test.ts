@@ -152,12 +152,15 @@ describe("no room in the memory budget", () => {
       expect(r.status, path).toBe(503);
       expect(r.headers["retry-after"]).toBeTruthy();
       expect(r.headers["cache-control"]).toBe("no-store");
+      // An answer that follows the image headers keeps neither the image's validator nor its type.
+      expect(r.headers.etag).toBeUndefined();
+      expect(r.headers["content-type"] ?? "").not.toMatch(/image/);
       expect(r.text).not.toContain("sessions/");
       expect(r.text).not.toContain(sessionId);
     }
   });
 
-  it("still answers a conditional request and HEAD, which hold no memory", async () => {
+  it("still answers HEAD, which holds no memory", async () => {
     const head = await get(`/api/public/shares/${token}/pages/1/image`, "HEAD");
     expect(head.status).toBe(200);
     expect(head.text).toBe("");

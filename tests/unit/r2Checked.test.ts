@@ -122,6 +122,22 @@ describe("openObjectChecked", () => {
     );
   });
 
+  it("refuses a body shorter than the size the object reported", async () => {
+    send(async () => ({ Body: body([Buffer.alloc(500)]), ContentLength: 600 }));
+    const opened = await openObjectChecked("k", OPTIONS);
+    await expect(opened!.read()).rejects.toBeInstanceOf(
+      StorageObjectRefusedError
+    );
+  });
+
+  it("refuses a body that is not the size the header says, even when both are under the limit", async () => {
+    send(async () => ({ Body: body([Buffer.alloc(500)]), ContentLength: 10 }));
+    const opened = await openObjectChecked("k", OPTIONS);
+    await expect(opened!.read()).rejects.toBeInstanceOf(
+      StorageObjectRefusedError
+    );
+  });
+
   it("aborts when no first byte arrives in time", async () => {
     send(
       (_command, options) =>

@@ -329,6 +329,8 @@ export const openObjectChecked = async (
         }
         chunks.push(buffer);
       }
+      // A body that is not the size the object reported was cut short or is not this object.
+      if (total !== contentLength) throw new StorageObjectRefusedError("The object is not the size it reported");
       return Buffer.concat(chunks, total);
     } finally {
       clearTimeout(deadline);
