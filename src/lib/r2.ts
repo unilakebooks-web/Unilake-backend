@@ -233,6 +233,111 @@ export const downloadFileToBuffer = async (
   return Buffer.from(bodyBytes);
 };
 
+// ── Share routes (feature 14) ────────────────────────────────────────────────────────────
+
+/** Thrown when an object is bigger than the caller allows, or does not say how big it is. */
+export class StorageObjectRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StorageObjectRefusedError";
+  }
+}
+
+const isMissingObject = (error: unknown): boolean => {
+  const e = error as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.Code === "NoSuchKey" || e?.$metadata?.httpStatusCode === 404;
+};
+
+/** Size and ETag of a public-bucket object, or null when it does not exist. Any other failure is thrown. */
+export const headObjectChecked = async (
+  key: string,
+  timeoutMs: number
+): Promise<{ contentLength: number; etag: string | undefined } | null> => {
+  try {
+    const response = await r2Client.send(
+      new HeadObjectCommand({ Bucket: config.r2.publicBucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(timeoutMs) }
+    );
+    return { contentLength: response.ContentLength ?? 0, etag: response.ETag };
+  } catch (error) {
+    if (isMissingObject(error)) return null;
+    throw error;
+  }
+};
+
+export interface OpenedObject {
+  contentLength: number;
+  etag: string | undefined;
+  /** Reads the body into memory: at most `maxBytes`, within `readDeadlineMs`. Call it or `discard`, once. */
+  read: () => Promise<Buffer>;
+  discard: () => void;
+}
+
+/**
+ * Opens a public-bucket object for a bounded read. The caller learns the size first (so it can reserve memory)
+ * and then reads. Returns null when the object does not exist. An object without a size, or bigger than
+ * `maxBytes`, is refused. The first-byte timeout stops once the headers arrive; the body has its own deadline.
+ */
+export const openObjectChecked = async (
+  key: string,
+  options: { maxBytes: number; firstByteTimeoutMs: number; readDeadlineMs: number }
+): Promise<OpenedObject | null> => {
+  const controller = new AbortController();
+  const firstByteTimer = setTimeout(() => controller.abort(), options.firstByteTimeoutMs);
+  let response;
+  try {
+    response = await r2Client.send(
+      new GetObjectCommand({ Bucket: config.r2.publicBucket, Key: key }),
+      { abortSignal: controller.signal }
+    );
+  } catch (error) {
+    if (isMissingObject(error)) return null;
+    throw error;
+  } finally {
+    clearTimeout(firstByteTimer);
+  }
+
+  const body = response.Body as
+    | (NodeJS.ReadableStream & { destroy?: () => void; transformToByteArray?: () => Promise<Uint8Array> })
+    | undefined;
+  const discard = () => {
+    controller.abort();
+    body?.destroy?.();
+  };
+  const contentLength = response.ContentLength;
+  if (!body || contentLength === undefined || contentLength === null) {
+    discard();
+    throw new StorageObjectRefusedError("The object does not report its size");
+  }
+  if (contentLength > options.maxBytes) {
+    discard();
+    throw new StorageObjectRefusedError("The object is larger than allowed");
+  }
+
+  const read = async (): Promise<Buffer> => {
+    const deadline = setTimeout(discard, options.readDeadlineMs);
+    try {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of body as AsyncIterable<Buffer | Uint8Array | string>) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        total += buffer.length;
+        // Counted as it arrives: the size header is not trusted on its own.
+        if (total > options.maxBytes) {
+          discard();
+          throw new StorageObjectRefusedError("The object is larger than allowed");
+        }
+        chunks.push(buffer);
+      }
+      return Buffer.concat(chunks, total);
+    } finally {
+      clearTimeout(deadline);
+    }
+  };
+
+  return { contentLength, etag: response.ETag, read, discard };
+};
+
 /** Objects deleted at the same time by deletePrefix. */
 const DELETE_PREFIX_PARALLEL = 10;
 
