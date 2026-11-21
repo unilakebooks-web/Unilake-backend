@@ -12,6 +12,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { PDFDocument } from "pdf-lib";
 
@@ -255,7 +256,7 @@ describe("createSample", () => {
     expect(s.isSample).toBe(false);
   });
 
-  it("refuses a page of another comic, a repeated page and more than 12 pages", async () => {
+  it("refuses a page of another comic, a repeated page and more than 100 pages", async () => {
     await expect(
       createSample(input([otherComicPageId]), admin)
     ).rejects.toThrow(/belong to this comic/);
@@ -263,12 +264,16 @@ describe("createSample", () => {
       createSample(input([draftPageIds[0]!, draftPageIds[0]!]), admin)
     ).rejects.toThrow(/only once/);
     await expect(
-      createSample(input(draftPageIds.slice(0, 13)), admin)
-    ).rejects.toThrow(/at most 12/);
-    const twelve = await createSample(input(draftPageIds.slice(0, 12)), admin);
+      createSample(
+        input(Array.from({ length: 101 }, () => randomUUID())),
+        admin
+      )
+    ).rejects.toThrow(/at most 100/);
+    // More than the old limit of 12 is allowed: the admin may choose the whole book.
+    const whole = await createSample(input(draftPageIds), admin);
     expect(
-      await prisma.sessionPage.count({ where: { orderSessionId: twelve.id } })
-    ).toBe(12);
+      await prisma.sessionPage.count({ where: { orderSessionId: whole.id } })
+    ).toBe(draftPageIds.length);
   });
 
   it("refuses a page that has no artwork yet", async () => {

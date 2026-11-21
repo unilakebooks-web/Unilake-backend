@@ -53,6 +53,13 @@ describe("createSampleBodySchema", () => {
       expect(pass({ pronounKey: p })).toBe(false);
   });
 
+  it("pins the ceiling at 100 (the frontend's sampleConfig.ts must say the same)", () => {
+    expect(MAX_SAMPLE_PAGES).toBe(100);
+    const ids = (count: number) => Array.from({ length: count }, (_, i) => uuid(i + 1));
+    expect(pass({ pageIds: ids(100) })).toBe(true);
+    expect(pass({ pageIds: ids(101) })).toBe(false);
+  });
+
   it("limits the pages: at least one, at most the cap, valid ids", () => {
     expect(pass({ pageIds: [] })).toBe(false);
     const many = Array.from({ length: MAX_SAMPLE_PAGES }, (_, i) =>
