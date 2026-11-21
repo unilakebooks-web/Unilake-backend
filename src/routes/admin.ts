@@ -203,6 +203,43 @@ import {
   getAdminSiteSettingHandler,
   updateSiteSettingHandler,
 } from "../controllers/siteSetting.controller.js";
+import {
+  getReminderSettingsHandler,
+  getReminderStatusHandler,
+  updateReminderSettingsHandler,
+} from "../controllers/reminder.controller.js";
+import { updateReminderSettingsSchema } from "../validators/reminder.schema.js";
+import {
+  getDeletionOverviewHandler,
+  releaseDeletionItemHandler,
+  retryDeletionItemsHandler,
+  runDeletionCanaryHandler,
+  setDeletionModeHandler,
+  undoGhostHandler,
+} from "../controllers/dataDeletion.controller.js";
+import {
+  deletionItemActionSchema,
+  retryDeletionSchema,
+  setDeletionModeSchema,
+  undoGhostSchema,
+} from "../validators/dataDeletion.schema.js";
+import {
+  cancelBroadcastHandler,
+  createBroadcastHandler,
+  deleteBroadcastHandler,
+  getAudienceCountsHandler,
+  getBroadcastHandler,
+  listBroadcastsHandler,
+  previewBroadcastHandler,
+  sendTestBroadcastHandler,
+  startBroadcastHandler,
+  updateBroadcastHandler,
+} from "../controllers/broadcast.controller.js";
+import {
+  createBroadcastSchema,
+  startBroadcastSchema,
+  updateBroadcastSchema,
+} from "../validators/broadcast.schema.js";
 import { updateSiteSettingSchema } from "../validators/siteSetting.schema.js";
 import {
   createGoogleReviewHandler,
@@ -649,6 +686,37 @@ router.patch(
   validateBody(updateSiteSettingSchema),
   updateSiteSettingHandler
 );
+
+// REMINDER EMAILS (settings are a singleton; status is read-only)
+router.get("/reminders/settings", getReminderSettingsHandler);
+router.patch(
+  "/reminders/settings",
+  validateBody(updateReminderSettingsSchema),
+  updateReminderSettingsHandler
+);
+router.get("/reminders/status", getReminderStatusHandler);
+
+// DATA DELETION (feature 6): Master only (not in the sub-admin list). /data-deletion/canary and the
+// action routes are registered before /data-deletion/:group so they are not read as a group.
+router.get("/data-deletion", getDeletionOverviewHandler);
+router.post("/data-deletion/canary", runDeletionCanaryHandler);
+router.post("/data-deletion/retry", validateBody(retryDeletionSchema), retryDeletionItemsHandler);
+router.post("/data-deletion/release", validateBody(deletionItemActionSchema), releaseDeletionItemHandler);
+router.post("/data-deletion/undo-ghost", validateBody(undoGhostSchema), undoGhostHandler);
+router.patch("/data-deletion/:group", validateBody(setDeletionModeSchema), setDeletionModeHandler);
+
+// BROADCAST EMAILS (admin writes one email and sends it to an audience)
+// /broadcasts/audience is registered before /broadcasts/:id so it is not read as an id.
+router.get("/broadcasts", listBroadcastsHandler);
+router.get("/broadcasts/audience", getAudienceCountsHandler);
+router.post("/broadcasts", validateBody(createBroadcastSchema), createBroadcastHandler);
+router.get("/broadcasts/:id", getBroadcastHandler);
+router.patch("/broadcasts/:id", validateBody(updateBroadcastSchema), updateBroadcastHandler);
+router.delete("/broadcasts/:id", deleteBroadcastHandler);
+router.get("/broadcasts/:id/preview", previewBroadcastHandler);
+router.post("/broadcasts/:id/test", sendTestBroadcastHandler);
+router.post("/broadcasts/:id/send", validateBody(startBroadcastSchema), startBroadcastHandler);
+router.post("/broadcasts/:id/cancel", cancelBroadcastHandler);
 
 // feedback — anonymous book suggestions. Contact enquiries are a separate
 // domain with its own table and routes; see below.

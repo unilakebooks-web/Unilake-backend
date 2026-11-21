@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { NotFoundError } from "../utils/errors.js";
 import type { ComicFactPlacement } from "../generated/prisma/enums.js";
+import { assertComicNotRetired, assertFactComicNotRetired } from "./retiredComicGuard.js";
 
 /**
  * Rotating facts shown on the generation screens, scoped to one comic.
@@ -47,6 +48,8 @@ export async function createComicFact(
   comicId: string,
   data: { placement: ComicFactPlacement; text: string }
 ) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   // Checked explicitly rather than relying on the foreign key: a bad comicId in
   // the URL should be a clean 404, not a raw P2003 constraint error.
   const comic = await prisma.comic.findUnique({
@@ -78,6 +81,8 @@ export async function updateComicFact(
   factId: string,
   data: { placement?: ComicFactPlacement; text?: string }
 ) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertFactComicNotRetired(factId);
   const existing = await prisma.comicFact.findUnique({ where: { id: factId } });
 
   if (!existing) {
@@ -98,6 +103,8 @@ export async function updateComicFact(
 }
 
 export async function toggleComicFactStatus(factId: string) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertFactComicNotRetired(factId);
   const existing = await prisma.comicFact.findUnique({ where: { id: factId } });
 
   if (!existing) {
@@ -118,6 +125,8 @@ export async function toggleComicFactStatus(factId: string) {
 }
 
 export async function deleteComicFact(factId: string) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertFactComicNotRetired(factId);
   const existing = await prisma.comicFact.findUnique({ where: { id: factId } });
 
   if (!existing) {

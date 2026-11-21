@@ -144,7 +144,7 @@ type Context = {
     pdfUrl: string | null;
     updatedAt: Date;
   };
-  session: { id: string; status: OrderSessionStatus };
+  session: { id: string; status: OrderSessionStatus; filesDeleted: boolean };
   pages: { pageId: string; pageNumber: number; isPreviewPage: boolean }[];
 };
 
@@ -160,6 +160,9 @@ async function loadContext(orderId: string): Promise<Context> {
         select: {
           id: true,
           status: true,
+          // Automatic data deletion (feature 6): a session whose files were deleted cannot be regenerated.
+          photoDeletedAt: true,
+          filesDeletedAt: true,
           sessionPages: {
             select: {
               pageId: true,
@@ -181,7 +184,11 @@ async function loadContext(orderId: string): Promise<Context> {
       pdfUrl: order.pdfUrl,
       updatedAt: order.updatedAt,
     },
-    session: { id: orderSession.id, status: orderSession.status },
+    session: {
+      id: orderSession.id,
+      status: orderSession.status,
+      filesDeleted: !!orderSession.photoDeletedAt || !!orderSession.filesDeletedAt,
+    },
     pages: orderSession.sessionPages
       .map((sp) => ({
         pageId: sp.pageId,
@@ -349,7 +356,7 @@ export async function getOrderPageStatus(
   }
 
   const now = new Date();
-  const rule = orderRule(ctx.order, ctx.session.status, now);
+  const rule = orderRule(ctx.order, ctx.session.status, now, ctx.session.filesDeleted);
   const { pages, queueAvailable } = await buildPages(ctx, rows, now);
 
   const hasFace = new Map(
@@ -552,7 +559,7 @@ export async function regenerateOrderPages(
 ): Promise<RegenerateResult> {
   const ctx = await loadContext(orderId);
   const now = new Date();
-  const rule: OrderRule = orderRule(ctx.order, ctx.session.status, now);
+  const rule: OrderRule = orderRule(ctx.order, ctx.session.status, now, ctx.session.filesDeleted);
   if (!rule.canRegenerate)
     throw new ConflictError(rule.blockedReason ?? "Not allowed");
 

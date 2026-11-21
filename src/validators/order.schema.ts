@@ -35,6 +35,8 @@ export const listAdminOrdersQuerySchema = z.object({
   status: OrderStatusEnum.optional(),
   search: z.string().trim().min(1).optional(),
   sentToPrinter: z.enum(["sent", "not_sent"]).optional(),
+  // "true" = paid and ready, waiting for the customer to press Send to Print (the books reminder B is about).
+  awaitingCustomerPrint: z.enum(["true"]).optional(),
   sortBy: OrderSortByEnum.default("createdAt"),
   sortOrder: SortOrderEnum.default("desc"),
 });

@@ -359,6 +359,8 @@ call site sits behind a status change that only one caller can win.
 - Generation jobs use **page number as priority**, so books progress side by
   side instead of one customer's whole book blocking the next.
 - The **expiry sweeper** runs hourly from `jobs/workers/index.ts`. The **sample sweeper** (every 5 minutes, also run by the scheduled-sweeps endpoint) deletes the files and rows of admin sample books once they are over.
+- The **reminder sweep** and the **broadcast sweep** (`services/reminder.service.ts`, `services/broadcast.service.ts`) also run from the scheduled-sweeps endpoint: customer reminder emails and the admin broadcast, claimed under a database lock and sent with an idempotency key, inside the daily budget and sending window set on the admin Emails page. Unsubscribe links are served by `routes/public.ts` (`/api/public/email/unsubscribe/:token`).
+- The **data deletion sweep** (`services/dataDeletion.service.ts`, also run by the scheduled-sweeps endpoint, before the email sweeps) deletes the files of unpaid previews (7 days), the photo of a delivered book (3 days after delivery), its pages and PDF (45 days) and the address-change history, and the files of a retired comic. It is judged by the order, claims each item under a row lock, deletes and verifies, and ships **report-only per group**: a Master reads the report on the admin Data deletion page and switches a group on (with a passed storage canary). Deleted files cannot be restored, so a backend **rollback is not allowed once a group has been switched on**: roll forward. The tables (`deletion_*`) are plain ids with no foreign keys.
 - Workers shut down gracefully on `SIGTERM`/`SIGINT`, finishing in-flight jobs.
 
 ---
@@ -479,6 +481,10 @@ An admin can try a book without paying: `/api/admin/samples` (list, create, `DEL
 - Deleting a comic is refused while it has a sample, live or waiting for the cleanup.
 
 ---
+
+## Sharing a book
+
+A customer can share a view-only link to their book. `GET/POST/DELETE /api/public/sessions/:id/share` (state, create or return the link, stop sharing) are keyed by the session id like every other session route. The link itself is `GET /api/public/shares/:token` (the pages that can be shown, no personal data) with `.../pages/:n/image` (webp) and `.../pages/:n/card.jpg` (a 1200 px preview card); the token is random and is never the session id. Stored image urls contain the session id, so the images are always served through these routes (bounded memory, `config/share.ts`). A share dies with the session: `isSessionGone` in `services/share.service.ts` is checked on every read.
 
 ## Quality checks
 

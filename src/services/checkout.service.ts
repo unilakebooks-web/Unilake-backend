@@ -5,11 +5,12 @@ import { config } from "../config/env.js";
 import {
   AppError,
   ConflictError,
+  PreviewDeletedError,
   NotFoundError,
   ValidationError,
 } from "../utils/errors.js";
 import type { OrderSession } from "../generated/prisma/client.js";
-import { assertNotExpired } from "./session.service.js";
+import { assertFilesNotDeleted, assertNotExpired } from "./session.service.js";
 import { COUPON_TRANSACTION_OPTIONS } from "../config/coupon.js";
 import { SAMPLE_REFUSAL_MESSAGE } from "../config/sample.js";
 import { acquireSlot } from "../utils/keyedQueue.js";
@@ -114,6 +115,8 @@ export async function initiateCheckout(
   }
 
   await assertNotExpired(session);
+  // Automatic data deletion (feature 6): a preview whose files were deleted never reaches a payment window.
+  assertFilesNotDeleted(session, session.order);
 
   // 2. Idempotency: existing order?
   //
@@ -385,6 +388,17 @@ export async function initiateCheckout(
         data: { status: "AWAITING_PAYMENT" },
       });
 
+      // Automatic data deletion (feature 6): the deletion claim locks the session row, and this insert holds a key
+      // share lock on it, so whichever commits first is seen by the other. Read the marker again after the write:
+      // a claim that committed while the Razorpay order was being created rolls this order back.
+      const deleted = await tx.orderSession.findUnique({
+        where: { id: sessionId },
+        select: { filesDeletedAt: true, photoDeletedAt: true },
+      });
+      if (deleted?.filesDeletedAt || deleted?.photoDeletedAt) {
+        throw new PreviewDeletedError();
+      }
+
       return createdOrder;
     }, priced ? COUPON_TRANSACTION_OPTIONS : undefined);
 
@@ -422,6 +436,7 @@ export async function initiateCheckout(
     );
     // A coupon refusal is for the customer, not a failed save: keep its own message.
     if (error instanceof AppError && error.code.startsWith("COUPON_")) throw error;
+    if (error instanceof PreviewDeletedError) throw error;
     throw new Error("Failed to save order. Please try again.");
   } finally {
     releaseCouponSlot?.();

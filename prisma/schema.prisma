@@ -154,6 +154,14 @@ model Comic {
   // admin's reorder; a new comic takes the top (smallest number minus one).
   sortOrder Int @default(0)
 
+  // Automatic data deletion (feature 6). unpublishedAt: when a published comic stopped being
+  // published (the delete button waits 30 days from it); null is never eligible.
+  // retiredAt: an admin retired the comic (its sessions and orders keep it, nothing new can use it).
+  // filesDeletedAt: the retire's file deletion finished (set only by the deletion engine).
+  unpublishedAt  DateTime?
+  retiredAt      DateTime?
+  filesDeletedAt DateTime?
+
   description String?    @db.Text
   themes      Theme[]
   ageGroups   AgeGroup[] @default([])
@@ -365,16 +373,39 @@ model OrderSession {
   // routes that lead to payment refuse it. Set once when the sample is created, never changed.
   isSample Boolean @default(false)
 
+  // Automatic data deletion (feature 6): set when the deletion of the private photo / of the
+  // preview and page files STARTS (the claim), never cleared except by an admin release.
+  photoDeletedAt DateTime?
+  filesDeletedAt DateTime?
+
   pageVersions PageVersion[]
   sessionPages SessionPage[]
   order        Order?
+  share        SessionShare?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   expiresAt DateTime // 24hr TTL equivalent, enforced at query time / cleanup job
 
   @@index([isSample, expiresAt])
+  @@index([filesDeletedAt, expiresAt])
   @@map("order_sessions")
+}
+
+// The view-only link to a session's book (feature 14). One row per session: the random token in the link is
+// NOT the session id, so sharing it never gives anyone the customer's private link. Revoking keeps the row;
+// sharing again gives the row a new token. The share dies with the session: it is checked on every read.
+model SessionShare {
+  id             String       @id @default(uuid())
+  orderSessionId String       @unique
+  orderSession   OrderSession @relation(fields: [orderSessionId], references: [id], onDelete: Cascade)
+
+  token     String    @unique // 24 random bytes, base64url (32 characters)
+  showName  Boolean   @default(false) // the child's first name in the page title and link preview
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@map("session_shares")
 }
 
 // The pages a session's book is made of, frozen when the session is created.
@@ -548,6 +579,12 @@ model Order {
   // the print-ready PDF was handed to the printer. Null means not sent.
   sentToPrinterAt DateTime?
 
+  // Automatic data deletion (feature 6). pdfDeletedAt: the final PDF was deleted. paidAfterDeletionAt:
+  // a payment arrived after this order's files were deleted, so no book can be made (admin follow-up).
+  // Both are written by raw UPDATEs that leave updatedAt alone.
+  pdfDeletedAt        DateTime?
+  paidAfterDeletionAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -557,6 +594,7 @@ model Order {
 
   addressChanges OrderAddressChange[]
 
+  @@index([status, deliveredAt])
   @@map("orders")
 }
 
@@ -727,6 +765,8 @@ model WebhookEvent {
   payloadJson Json
   processedAt DateTime @default(now())
 
+  // Automatic data deletion (feature 6) looks for payment events by kind and time when it checks an order.
+  @@index([source, eventType, processedAt])
   @@map("webhook_events")
 }
 
@@ -1086,4 +1126,349 @@ model OrderAddressChange {
 
   @@index([orderId, seq])
   @@map("order_address_changes")
+}
+
+// ============================================================
+// REMINDER EMAILS AND ADMIN BROADCAST (feature 5)
+// ============================================================
+//
+// None of these tables is read by the order, checkout or payment code. Session
+// and user ids are plain strings with no foreign key on purpose (same idea as
+// Coupon.createdById and OrderAddressChange): automatic deletion (feature 6)
+// must never be blocked or undone by a row here, and these rows are purged on
+// their own schedule (see config/reminders.ts).
+//
+// ⚠️ Reminder kinds and limits are mirrored in unilake-frontend (emailConfig.ts).
+
+enum ReminderKind {
+  PREVIEW_UNFINISHED // A: free preview made, nothing bought
+  BOOK_NOT_SENT // B: paid, book ready, Send to Print not pressed
+  REVIEW_REQUEST // C: feedback request after delivery
+}
+
+enum ReminderSendStatus {
+  CLAIMED // row inserted under the budget lock, mail not yet confirmed
+  SENT
+  FAILED // Resend refused it for good; never retried
+  LOST // CLAIMED for over an hour: it may or may not have been sent; never retried, still counted
+}
+
+enum BroadcastStatus {
+  DRAFT
+  SENDING
+  SENT
+  CANCELLED
+}
+
+enum BroadcastAudience {
+  OPTED_IN_ONLY // ticked the marketing box at checkout and has not withdrawn
+  OPTED_IN_AND_CUSTOMERS // those, plus users with a paid order
+}
+
+enum BroadcastRecipientStatus {
+  PENDING
+  CLAIMED
+  SENT
+  FAILED
+}
+
+enum UnsubscribeScope {
+  GLOBAL // promotions and reminders to buy or review
+  ORDER_REMINDER // reminders about one paid book only
+}
+
+// Admin settings for the three reminders. A singleton like SiteSetting. Every
+// reminder ships switched off. offsetsHours are the send times (hours after the
+// session was created for A, after the book became ready for B, after delivery
+// for C), strictly increasing, at most three. effectiveFrom is set whenever a
+// reminder is switched on or its times or window change: an offset only counts
+// if it became due after it, so enabling or editing never mails the history.
+model ReminderSetting {
+  id String @id @default("singleton")
+
+  previewEnabled       Boolean   @default(false)
+  previewOffsetsHours  Int[]     @default([3, 24, 96])
+  previewEffectiveFrom DateTime?
+
+  bookEnabled       Boolean   @default(false)
+  bookOffsetsHours  Int[]     @default([24, 72, 168])
+  bookEffectiveFrom DateTime?
+
+  reviewEnabled       Boolean   @default(false)
+  reviewOffsetsHours  Int[]     @default([168, 336])
+  reviewEffectiveFrom DateTime?
+
+  googleReviewUrl     String? // required before the review reminder can be switched on
+  reminderCouponCode  String? // optional, shown only in the last unfinished-preview reminder
+  previewDeletionDays Int? // set only once previews really are deleted (feature 6); never promise a deletion that does not happen
+
+  // Sending limits per Indian day (IST). dailyBudget covers reminders and broadcast together;
+  // a broadcast may use only dailyBudget minus reminderReserve, so it can never starve a reminder.
+  dailyBudget     Int @default(30)
+  reminderReserve Int @default(10)
+  perRunLimit     Int @default(10)
+
+  // Hours of the day in IST in which reminders go out (start inclusive, end exclusive).
+  windowStartHour Int @default(9)
+  windowEndHour   Int @default(20)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("reminder_settings")
+}
+
+// One row per reminder claimed. The unique key is what makes a reminder go out
+// once: the sweep inserts the row first (under a lock that also checks the
+// budget), then sends with the row id as Resend's idempotency key.
+model ReminderSend {
+  id             String             @id @default(uuid())
+  kind           ReminderKind
+  orderSessionId String
+  offsetHours    Int
+  email          String // lowercase
+  status         ReminderSendStatus @default(CLAIMED)
+
+  providerMessageId String?
+  errorName         String? // Resend's error name only, at most 200 characters, never the address
+
+  claimedAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@unique([kind, orderSessionId, offsetHours])
+  @@index([claimedAt])
+  @@index([email, claimedAt])
+  @@map("reminder_sends")
+}
+
+// "Stop reminders about this book": the customer's own stop for one order's
+// reminder B. It does not touch any other email.
+model ReminderStop {
+  kind           ReminderKind
+  orderSessionId String
+  stoppedAt      DateTime     @default(now())
+
+  @@id([kind, orderSessionId])
+  @@map("reminder_stops")
+}
+
+// Admin broadcast to users. The audience is fixed into BroadcastRecipient rows
+// when the admin presses Send, then sent a batch at a time by the sweep.
+model Broadcast {
+  id         String @id @default(uuid())
+  subject    String
+  heading    String
+  message    String @db.Text
+  buttonText String?
+  buttonUrl  String?
+
+  audience BroadcastAudience @default(OPTED_IN_ONLY)
+  status   BroadcastStatus   @default(DRAFT)
+
+  recipientCount Int @default(0)
+  sentCount      Int @default(0)
+  failedCount    Int @default(0)
+
+  // Who sent it. Plain strings, no foreign key (same as Coupon.createdById).
+  createdById    String
+  createdByEmail String
+
+  sendStartedAt DateTime?
+  finishedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients BroadcastRecipient[]
+
+  @@index([status, createdAt])
+  @@map("broadcasts")
+}
+
+model BroadcastRecipient {
+  id          String    @id @default(uuid())
+  broadcastId String
+  broadcast   Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  email  String // lowercase
+  status BroadcastRecipientStatus @default(PENDING)
+
+  providerMessageId String?
+  errorName         String? // Resend's error name only, at most 200 characters, never the address
+
+  claimedAt DateTime?
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([broadcastId, email])
+  @@index([broadcastId, status])
+  @@index([claimedAt]) // the daily budget counts what was claimed today
+  @@index([createdAt])
+  @@map("broadcast_recipients")
+}
+
+// Addresses that asked to stop promotions and reminders to buy or review. Kept for good: it is a promise to people.
+model EmailOptOut {
+  email     String   @id // lowercase
+  createdAt DateTime @default(now())
+
+  @@map("email_opt_outs")
+}
+
+// The random token in each bulk email's unsubscribe link. No address ever appears in a URL.
+// Kept longer than the send rows so an old email's link still works (see config/reminders.ts).
+model EmailUnsubscribeToken {
+  token          String           @id // 24 random bytes, base64url
+  email          String // lowercase
+  scope          UnsubscribeScope @default(GLOBAL)
+  orderSessionId String? // set for ORDER_REMINDER
+  createdAt      DateTime         @default(now())
+
+  @@index([createdAt])
+  @@index([email])
+  @@map("email_unsubscribe_tokens")
+}
+
+// "Send me offers and news" ticked at checkout: the evidence of notice and consent.
+// userId is a plain id (no foreign key). No IP address or other tracking data is stored.
+model MarketingConsent {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  email          String // lowercase, as it was when ticked
+  optedInAt      DateTime
+  withdrawnAt    DateTime?
+  wordingVersion String // which text the customer saw next to the box
+  source         String // "checkout"
+  updatedAt      DateTime  @updatedAt
+
+  @@map("marketing_consents")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic data deletion (feature 6). Plain ids, no foreign keys on purpose (as the feature 5
+// tables): a row of ours must never block deleting an order, session or comic.
+// ---------------------------------------------------------------------------------------------
+
+enum DeletionGroup {
+  PREVIEWS // R1: unpaid previews
+  PHOTOS // R2: photos of paid books
+  BOOKS // R3 pages, R4 PDF, R5 address history, R6 retired comics' files
+}
+
+enum DeletionMode {
+  OFF
+  REPORT_ONLY
+  ACTIVE
+}
+
+enum DeletionScope {
+  SESSION // both session folders of an unpaid preview
+  PHOTO // the photo objects of a delivered book
+  PAGES // the public folder of a delivered book
+  PDF // the final PDF
+  ADDRESS // the address-change history of a delivered order
+  COMIC // the files of a retired comic
+}
+
+enum DeletionSubjectType {
+  SESSION
+  ORDER
+  COMIC
+}
+
+enum DeletionItemState {
+  CLAIMED
+  DONE
+  FAILED
+}
+
+// One row per group (seeded by the migration, every group REPORT_ONLY).
+model DeletionGroupSetting {
+  group                    DeletionGroup @id
+  mode                     DeletionMode  @default(REPORT_ONLY)
+  dailyMax                 Int           @default(100)
+  lastRunAt                DateTime?
+  lastReportAt             DateTime?
+  approvedRunId            String?
+  approvedSelectionVersion Int?
+  approvedAt               DateTime?
+  approvalExhaustedAt      DateTime?
+  modeChangedAt            DateTime      @default(now())
+  modeChangedByEmail       String?
+  pausedReason             String?
+  pausedAt                 DateTime?
+  updatedAt                DateTime      @updatedAt
+
+  @@map("deletion_group_settings")
+}
+
+// The singleton: canary state and the run lease (id is always 1, enforced by a check).
+model DeletionSetting {
+  id                Int       @id @default(1)
+  canaryPassedAt    DateTime?
+  canaryAttemptedAt DateTime?
+  canaryAttemptsDay String? // YYYY-MM-DD of the attempts counted below
+  canaryAttempts    Int       @default(0)
+  canaryAutoEnabled Boolean   @default(false)
+  leaseUntil        DateTime?
+  leaseOwner        String?
+  updatedAt         DateTime  @updatedAt
+
+  @@map("deletion_settings")
+}
+
+// A report (REPORT_ONLY, every 6 hours) or an ACTIVE run that attempted something or stopped.
+// Ids and counts only. The big id lists are emptied on all but the latest run per group and the
+// approved run.
+model DeletionRun {
+  id               String        @id @default(uuid())
+  group            DeletionGroup
+  mode             DeletionMode
+  selectionVersion Int
+  startedAt        DateTime      @default(now())
+  finishedAt       DateTime?
+  dueCount         Int           @default(0)
+  claimedCount     Int           @default(0)
+  deletedCount     Int           @default(0)
+  ghostCount       Int           @default(0)
+  errorCount       Int           @default(0)
+  objectCounts     Json?
+  proof            Json?
+  lists            Json?
+  note             String?
+
+  @@index([group, startedAt])
+  @@map("deletion_runs")
+}
+
+model DeletionItem {
+  id            String              @id @default(uuid())
+  subjectType   DeletionSubjectType
+  subjectId     String
+  scope         DeletionScope
+  state         DeletionItemState   @default(CLAIMED)
+  preCount      Json?
+  ghost         Boolean             @default(false)
+  attempts      Int                 @default(0)
+  lastAttemptAt DateTime?
+  lastErrorAt   DateTime?
+  lastError     String?
+  claimedAt     DateTime            @default(now())
+  doneAt        DateTime?
+  reverifiedAt  DateTime?
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([subjectId, scope])
+  @@index([state, updatedAt])
+  @@map("deletion_items")
+}
+
+// A verdict that an order is not to be deleted now (payment in progress, Razorpay unknown, out of
+// prefix...). One row per order, upserted; not asked again until checkedAt + 24 h.
+model DeletionBlock {
+  subjectId String   @id // an order id or a session id
+  reason    String
+  checkedAt DateTime @default(now())
+
+  @@map("deletion_blocks")
 }

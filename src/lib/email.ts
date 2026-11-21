@@ -37,6 +37,62 @@ const REPLY_TO_ADDRESS = "unilake.books@gmail.com";
 // Single Resend client instance, reused across all sends. SDK is thread-safe.
 const resendClient = new Resend(config.email.resendApiKey);
 
+// A NODE_ENV other than exactly "production" turns the development recipient guard on and every email,
+// including the six order emails, is refused unless allow-listed: say which it is, once, at start-up.
+logger.info(
+  `[Email] NODE_ENV="${config.nodeEnv}": development recipient guard is ${
+    config.nodeEnv === "production"
+      ? "OFF (every recipient is mailed)"
+      : "ACTIVE (only DEV_EMAIL_ALLOWLIST addresses are mailed)"
+  }`
+);
+
+/** True when sendEmail would accept this recipient: always in production, otherwise only if allow-listed. */
+export function isRecipientAllowed(to: string): boolean {
+  return (
+    config.nodeEnv === "production" ||
+    config.devEmailAllowlist.includes(to.trim().toLowerCase())
+  );
+}
+
+/** The only addresses that can be mailed here, or null when there is no such limit (production). */
+export function devAllowedRecipients(): string[] | null {
+  return config.nodeEnv === "production" ? null : config.devEmailAllowlist;
+}
+
+/**
+ * A refusal from Resend, with what Resend said. The message text is exactly what
+ * it always was ("... (HTTP 429)"), and this is still an AppError, so existing
+ * callers behave as before; bulk senders read providerName and providerStatus to
+ * tell a rate limit (nothing was sent) from a bad request (never retry).
+ */
+export class EmailSendError extends AppError {
+  public readonly providerName: string;
+  public readonly providerStatus: number;
+
+  constructor(message: string, providerName: string, providerStatus: number) {
+    super(message, 502, "EMAIL_SEND_FAILED");
+    this.providerName = providerName;
+    this.providerStatus = providerStatus;
+  }
+}
+
+/**
+ * Thrown instead of sending when the development guard stops a mail. It is not a
+ * Resend failure: nothing was sent and nothing is wrong with the address, so bulk
+ * senders must neither mark a row failed nor suppress the address because of it.
+ * The message and the log deliberately leave the address out.
+ */
+export class EmailGuardRefusal extends AppError {
+  constructor() {
+    super(
+      "Email not sent: development guard (recipient is not in DEV_EMAIL_ALLOWLIST)",
+      503,
+      "EMAIL_GUARD_REFUSED"
+    );
+  }
+}
+
 // ============================================================
 // PRIVATE HELPERS
 // ============================================================
@@ -90,6 +146,8 @@ function htmlToPlainText(html: string): string {
     .replace(/<head[\s\S]*?<\/head>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
+    // The hidden preheader line (notification.service.ts withPreheader) is for inboxes, not for the text version.
+    .replace(/<div style="display:none[^>]*>[\s\S]*?<\/div>/gi, "")
     // Keep link targets: a button is just "See the preview" once its tags are
     // stripped, and the HTML no longer prints the raw URL beside it.
     //
@@ -141,6 +199,14 @@ export type SendEmailParams = {
    * Provide your own for anything customer-facing where formatting matters.
    */
   text?: string;
+  /** Extra mail headers, for example List-Unsubscribe. Sent only when given. */
+  headers?: Record<string, string>;
+  /**
+   * Resend's idempotency key: a retry or a second call with the same key cannot
+   * produce a second mail (Resend remembers a key for about a day, not verified).
+   * Bulk senders pass the id of the row they claimed.
+   */
+  idempotencyKey?: string;
 };
 
 export type SendEmailResult = {
@@ -171,6 +237,17 @@ export async function sendEmail(
     throw new ValidationError("sendEmail: `html` must be a non-empty string");
   }
 
+  // Outside production a development or test run must never mail a real person: refuse every recipient that
+  // is not in DEV_EMAIL_ALLOWLIST (empty list = refuse all). Production ignores the list. "Production" is
+  // NODE_ENV=production, which the Dockerfile sets and lib/auth.ts already relies on for its secure cookies,
+  // so a wrong value there would break login loudly.
+  if (!isRecipientAllowed(params.to)) {
+    logger.error(
+      "[Email] Refused by the development guard: the recipient is not in DEV_EMAIL_ALLOWLIST"
+    );
+    throw new EmailGuardRefusal();
+  }
+
   const from = `${config.email.fromName} <${config.email.fromAddress}>`;
   const text = params.text ?? htmlToPlainText(params.html);
 
@@ -187,14 +264,21 @@ export async function sendEmail(
         "[Email] Sending"
       );
 
-      const { data, error } = await resendClient.emails.send({
-        from,
-        to: params.to,
-        replyTo: REPLY_TO_ADDRESS,
-        subject: params.subject,
-        html: params.html,
-        text,
-      });
+      const sendOptions = params.idempotencyKey
+        ? { idempotencyKey: params.idempotencyKey }
+        : undefined;
+      const { data, error } = await resendClient.emails.send(
+        {
+          from,
+          to: params.to,
+          replyTo: REPLY_TO_ADDRESS,
+          subject: params.subject,
+          html: params.html,
+          text,
+          ...(params.headers ? { headers: params.headers } : {}),
+        },
+        sendOptions
+      );
 
       // Resend returns errors in the response body, not as thrown exceptions.
       if (error) {
@@ -205,10 +289,10 @@ export async function sendEmail(
           "statusCode" in error && typeof error.statusCode === "number"
             ? error.statusCode
             : 502;
-        throw new AppError(
+        throw new EmailSendError(
           `Resend send failed: ${error.name ?? "unknown"} — ${error.message ?? ""} (HTTP ${status})`,
-          502,
-          "EMAIL_SEND_FAILED"
+          error.name ?? "unknown",
+          status
         );
       }
 

@@ -3,6 +3,7 @@ import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
+  PreviewDeletedError,
   ValidationError,
 } from "../utils/errors.js";
 import { logger } from "../lib/logger.js";
@@ -210,6 +211,20 @@ export async function assertNotExpired(session: {
   );
 
   throw new ConflictError("This session has expired.");
+}
+
+/**
+ * Automatic data deletion (feature 6): throws when the files of an UNPAID session were deleted (no order, or an order
+ * that is still CREATED). A paid or delivered order keeps its own messages. Checkout and the coupon routes call it,
+ * so a deleted preview can never reach a payment window.
+ */
+export function assertFilesNotDeleted(
+  session: { filesDeletedAt: Date | null; photoDeletedAt: Date | null },
+  order: { status: string } | null
+): void {
+  if (!session.filesDeletedAt && !session.photoDeletedAt) return;
+  if (order && order.status !== "CREATED") return;
+  throw new PreviewDeletedError();
 }
 
 /** Hourly sweeper — flips every non-terminal expired session to FAILED. R2 cleanup is not done here (out of scope). */
@@ -490,6 +505,10 @@ export const getOrderSessionId = async (sessionId: string) => {
           amount: true,
           currency: true,
           couponRedemption: { select: { coupon: { select: { name: true } } } },
+          // Automatic data deletion (feature 6): what the snapshot's flags and isExpired are worked out from.
+          status: true,
+          pdfDeletedAt: true,
+          paidAfterDeletionAt: true,
         },
       },
     },
@@ -578,9 +597,15 @@ export const getOrderSessionId = async (sessionId: string) => {
 
   // Exempt statuses (AWAITING_PAYMENT + post-payment) are never treated
   // as expired, matching assertNotExpired and sweepExpiredSessions.
+  // An unpaid session whose files were deleted (feature 6) counts as expired too, so every existing expiry
+  // branch of the preview page, the preloader, the resume check and the websocket applies to it.
+  const unpaidAndDeleted =
+    (!!session.filesDeletedAt || !!session.photoDeletedAt) &&
+    (!session.order || session.order.status === "CREATED");
   const isExpired =
-    session.expiresAt < new Date() &&
-    !EXPIRY_EXEMPT_STATUSES.includes(session.status);
+    unpaidAndDeleted ||
+    (session.expiresAt < new Date() &&
+      !EXPIRY_EXEMPT_STATUSES.includes(session.status));
 
   return {
     id: session.id,
@@ -606,6 +631,10 @@ export const getOrderSessionId = async (sessionId: string) => {
     updatedAt: session.updatedAt,
     expiresAt: session.expiresAt,
     isExpired,
+    photoDeleted: !!session.photoDeletedAt,
+    filesDeleted: !!session.filesDeletedAt,
+    pdfDeleted: !!session.order?.pdfDeletedAt,
+    paidAfterDeletion: !!session.order?.paidAfterDeletionAt,
     comic: session.comic,
     pages,
     coupon: couponSummary(session.order),
@@ -936,6 +965,13 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
 
   if (!session) {
     throw new NotFoundError("OrderSession not found");
+  }
+
+  // Automatic data deletion (feature 6): the photo is gone, so no page can be made, paid or not.
+  if (session.filesDeletedAt || session.photoDeletedAt) {
+    throw new ConflictError(
+      "The photo of this book was deleted for your privacy, so its pages cannot be remade. Please contact us."
+    );
   }
 
   const failedAfterPayment = await isFailedAfterPayment(session);

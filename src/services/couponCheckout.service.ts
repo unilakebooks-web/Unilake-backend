@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { config } from "../config/env.js";
 import { currencyExponent, razorpay, toSmallestUnit } from "../lib/razorpay.js";
 import {
+  PreviewDeletedError,
   AppError,
   ConflictError,
   ForbiddenError,
@@ -33,7 +34,7 @@ import {
   recordFailedCouponAttempt,
 } from "../utils/attemptLimiter.js";
 import { acquireSlot } from "../utils/keyedQueue.js";
-import { assertNotExpired } from "./session.service.js";
+import { assertFilesNotDeleted, assertNotExpired } from "./session.service.js";
 import { REVENUE_STATUSES } from "../config/stats.js";
 
 // ============================================================
@@ -380,6 +381,8 @@ export async function previewCoupon(
 
   assertSessionOwner(session, callerUserId);
   await assertNotExpired(session);
+  // Automatic data deletion (feature 6): no offers or prices for a preview whose files were deleted.
+  assertFilesNotDeleted(session, session.order);
 
   if (!isPriceableStatus(session.status)) {
     throw new ConflictError(
@@ -450,6 +453,9 @@ export async function listCouponOffers(
   // never write.
   const now = new Date();
   if (
+    // Automatic data deletion (feature 6): a priceable session with deleted files is unpaid and gone.
+    session.filesDeletedAt ||
+    session.photoDeletedAt ||
     !isPriceableStatus(session.status) ||
     (session.status === "PREVIEW_READY" && session.expiresAt < now) ||
     !session.coverType ||
@@ -742,6 +748,19 @@ function checkoutPayload(
 }
 
 /**
+ * Automatic data deletion (feature 6): read the deletion marker again inside a transaction that already holds the
+ * order row, so a deletion claim that committed meanwhile makes this write roll back instead of creating a payment
+ * for a preview whose files are gone.
+ */
+async function assertSessionFilesKept(tx: Prisma.TransactionClient, sessionId: string): Promise<void> {
+  const marker = await tx.orderSession.findUnique({
+    where: { id: sessionId },
+    select: { filesDeletedAt: true, photoDeletedAt: true },
+  });
+  if (marker?.filesDeletedAt || marker?.photoDeletedAt) throw new PreviewDeletedError();
+}
+
+/**
  * Applies, replaces or removes the coupon on an order that is still unpaid.
  *
  * `couponCode`: a code applies or replaces it; null removes it. Returns null
@@ -837,6 +856,7 @@ export async function repriceUnpaidOrder(args: {
             "This order changed while you were applying the code. Please refresh and try again."
           );
         }
+        await assertSessionFilesKept(tx, session.id);
         await reserveCouponInTx(tx, {
           priced: pricedNow,
           orderId: order.id,
@@ -899,6 +919,7 @@ export async function repriceUnpaidOrder(args: {
           "This order changed while you were applying the code. Please refresh and try again."
         );
       }
+      await assertSessionFilesKept(tx, session.id);
 
       if (priced) {
         await reserveCouponInTx(tx, {

@@ -21,6 +21,7 @@ import type {
   CreateSampleInput,
   SampleSelectionsInput,
 } from "../validators/sample.schema.js";
+import { assertComicNotRetired } from "./retiredComicGuard.js";
 
 // Same pattern as ROLE_CHANGE_LOCK_KEY in user.service.ts: one lock so two admins creating a sample at
 // the same moment cannot both read the same count and both insert.
@@ -35,6 +36,8 @@ const SAMPLE_CREATE_LOCK_KEY = "sample-create";
  * drafts included: an admin tries a book before publishing it.
  */
 export async function createSample(input: CreateSampleInput, adminId: string) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(input.comicId);
   const comic = await prisma.comic.findUnique({
     where: { id: input.comicId },
     select: { id: true },

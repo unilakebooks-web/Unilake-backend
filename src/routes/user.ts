@@ -18,8 +18,17 @@ import {
 } from "../controllers/order.controller.js";
 
 import { sendToPrintHandler } from "../controllers/session.controller.js";
+import {
+  getMarketingConsentHandler,
+  setMarketingConsentHandler,
+} from "../controllers/emailPreferences.controller.js";
+import { marketingConsentSchema } from "../validators/marketingConsent.schema.js";
 
 const router = Router();
+
+// Marketing consent — the unticked "send me offers and news" box at checkout.
+router.get("/marketing-consent", getMarketingConsentHandler);
+router.put("/marketing-consent", validateBody(marketingConsentSchema), setMarketingConsentHandler);
 
 // Saved addresses
 router.get("/addresses", listAddressesHandler);
