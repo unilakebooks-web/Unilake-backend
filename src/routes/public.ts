@@ -8,6 +8,7 @@ import { requireLoggedIn } from "../middlewares/requireLoggedIn.js";
 import { createSessionSchema, photoUploadUrlSchema, photoConfirmSchema, updateSessionSchema   } from "../validators/session.schema.js";
 import { createPhotoUploadUrlHandler, createSessionHandler,getSessionHandler, updateSessionHandler, confirmSessionPhotoHandler, generateSessionHandler, regeneratePageHandler, attachUserHandler } from "../controllers/session.controller.js";
 import { initiateCheckoutHandler } from "../controllers/checkout.controller.js";
+import { confirmPaymentHandler } from "../controllers/paymentConfirmation.controller.js";
 import { previewCouponHandler, listCouponOffersHandler } from "../controllers/couponCheckout.controller.js";
 import { getAllThemesHandler } from "../controllers/theme.controller.js";
 import { getActiveHeroImagesHandler } from "../controllers/heroImage.controller.js";
@@ -44,6 +45,7 @@ router.post("/sessions/:sessionId/generate", generateSessionHandler);// This wil
 router.patch("/sessions/:sessionId/attach-user", requireLoggedIn, attachUserHandler);// Attach logged-in user to anonymous session
 router.post("/sessions/:sessionId/pages/:pageNumber/regenerate", regeneratePageHandler);// This endpoint will let the user generate a single photo
 router.post("/sessions/:sessionId/checkout", initiateCheckoutHandler); // creates Razorpay order + Order row
+router.post("/sessions/:sessionId/confirm-payment", confirmPaymentHandler); // asks Razorpay whether the payment was received, marks the order paid
 router.post("/sessions/:sessionId/coupon-preview", requireLoggedIn, previewCouponHandler); // read-only: what would this coupon code take off
 router.get("/sessions/:sessionId/coupon-offers", requireLoggedIn, listCouponOffersHandler); // read-only: the coupons that fit this order right now
 
