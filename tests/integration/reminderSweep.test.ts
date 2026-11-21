@@ -818,7 +818,7 @@ describe("send window, limits and the one-per-address rule", () => {
     expect(await sweepReminders(NOW)).toBe(0);
   });
 
-  it("one address gets one reminder a day: a second session or kind waits; the same session's next offset is not held back", async () => {
+  it("one address gets one reminder a day: a second session or kind is held back; the same session's next offset is not held back", async () => {
     await enableA({ previewOffsetsHours: [3, 6] });
     const addr = "twice" + DOMAIN;
     const one = await makeSession({ email: addr, createdAt: ago(4) });
@@ -826,7 +826,7 @@ describe("send window, limits and the one-per-address rule", () => {
     expect(await sweepReminders(NOW)).toBe(1); // only one of the two sessions
     const sentSession = (await rows())[0]!.orderSessionId;
     expect([one.id, two.id]).toContain(sentSession);
-    // later the same session's next offset (6 h) is the admin's cadence and goes out; the other session still waits
+    // later the same session's next offset (6 h) is the admin's cadence and goes out; the other session is still held back
     const later = new Date(NOW.getTime() + 3 * H);
     await prisma.orderSession.updateMany({
       where: { id: { in: [one.id, two.id] } },
@@ -1030,6 +1030,46 @@ describe("review round: setup errors, outages, development limits", () => {
       expect(await sweepReminders(NOW)).toBe(3);
     });
   }
+
+  for (const [status, name, text] of [
+    [400, "invalid_api_key", "API key is invalid"],
+    [401, "restricted_api_key", "This API key is restricted"],
+    [422, "invalid_from_address", "Invalid `from` field"],
+    [422, "missing_required_field", "Missing `from` field"],
+    [422, "validation_error", "Invalid `from` field. The email address needs"],
+    [400, "validation_error", "The API key is not allowed to send"],
+    [403, "invalid_access", "no access"],
+  ] as const) {
+    it(`a setup error by name (HTTP ${status} ${name}, ${text}) stops the run and gives every claim back`, async () => {
+      await due(3);
+      fakes.send.mockRejectedValue(
+        new EmailSendError(
+          `Resend send failed: ${name} — ${text} (HTTP ${status})`,
+          name,
+          status
+        )
+      );
+      expect(await sweepReminders(NOW)).toBe(0);
+      expect(fakes.send).toHaveBeenCalledTimes(1);
+      expect(await rows()).toHaveLength(0);
+    });
+  }
+
+  it("a validation error about the recipient is still a refusal of that one message (FAILED), not a setup error", async () => {
+    await due(2);
+    fakes.send.mockRejectedValueOnce(
+      new EmailSendError(
+        "Resend send failed: validation_error — Invalid `to` field (HTTP 422)",
+        "validation_error",
+        422
+      )
+    );
+    expect(await sweepReminders(NOW)).toBe(1); // the run went on to the second customer
+    expect((await rows()).map((r) => r.status).sort()).toEqual([
+      "FAILED",
+      "SENT",
+    ]);
+  });
 
   it("an idempotency conflict (HTTP 409) is not a failure: the first attempt may have gone through", async () => {
     await due();
@@ -1382,5 +1422,327 @@ describe("housekeeping", () => {
     expect(
       await prisma.emailOptOut.count({ where: { email: { endsWith: DOMAIN } } })
     ).toBe(1);
+  });
+});
+
+describe("review round 4: a long list of handled customers never hides the newest", () => {
+  const BULK = 501; // one more than a page of candidates
+  const bulkEmail = (i: number) => `bulk-${i}${DOMAIN}`;
+  const bulkId = (i: number) => `vtr-bulk-${i}`;
+
+  it("A: 501 old sessions already reminded, and a fresh one that is due now: the fresh one is mailed", async () => {
+    await enableA({ previewOffsetsHours: [3], dailyBudget: 1000 });
+    const idx = Array.from({ length: BULK }, (_, i) => i);
+    await prisma.orderSession.createMany({
+      data: idx.map((i) => ({
+        id: bulkId(i),
+        comicId,
+        status: "PREVIEW_READY" as const,
+        createdAt: ago(26),
+        updatedAt: ago(5),
+        expiresAt: ahead(100),
+        notificationEmail: bulkEmail(i),
+      })),
+    });
+    await prisma.reminderSend.createMany({
+      data: idx.map((i) => ({
+        kind: "PREVIEW_UNFINISHED" as const,
+        orderSessionId: bulkId(i),
+        offsetHours: 3,
+        email: bulkEmail(i),
+        status: "SENT" as const,
+        claimedAt: ago(22),
+      })),
+    });
+    const fresh = await makeSession({ createdAt: ago(4) });
+    expect(await sweepReminders(NOW)).toBe(1);
+    expect(sentTo()).toEqual([fresh.notificationEmail]);
+  }, 120_000);
+
+  it("B: 501 old waiting books already reminded, and a fresh one that is due now: the fresh one is mailed", async () => {
+    await enableB({ bookOffsetsHours: [24], dailyBudget: 1000 });
+    const idx = Array.from({ length: BULK }, (_, i) => i);
+    await prisma.orderSession.createMany({
+      data: idx.map((i) => ({
+        id: bulkId(i),
+        comicId,
+        status: "PAID_PAGES_READY" as const,
+        createdAt: ago(60),
+        updatedAt: ago(30),
+        expiresAt: ahead(100),
+        notificationEmail: bulkEmail(i),
+      })),
+    });
+    await prisma.order.createMany({
+      data: idx.map((i) => ({
+        orderSessionId: bulkId(i),
+        amount: "599.00",
+        currency: "INR",
+        countryCode: "IN",
+        coverType: "SOFTCOVER" as const,
+        status: "GENERATED" as const,
+        updatedAt: ago(30),
+      })),
+    });
+    await prisma.reminderSend.createMany({
+      data: idx.map((i) => ({
+        kind: "BOOK_NOT_SENT" as const,
+        orderSessionId: bulkId(i),
+        offsetHours: 24,
+        email: bulkEmail(i),
+        status: "SENT" as const,
+        claimedAt: ago(22),
+      })),
+    });
+    const fresh = await makeSession({
+      status: "PAID_PAGES_READY",
+      createdAt: ago(60),
+    });
+    await makeOrder(fresh.id, { status: "GENERATED", updatedAt: ago(25) });
+    expect(await sweepReminders(NOW)).toBe(1);
+    expect(sentTo()).toEqual([fresh.notificationEmail]);
+  }, 120_000);
+
+  it("C: 501 old deliveries already asked for a review, and a fresh one that is due now: the fresh one is mailed", async () => {
+    await enableC({ reviewOffsetsHours: [168], dailyBudget: 1000 });
+    const idx = Array.from({ length: BULK }, (_, i) => i);
+    await prisma.orderSession.createMany({
+      data: idx.map((i) => ({
+        id: bulkId(i),
+        comicId,
+        status: "COMPLETED" as const,
+        createdAt: ago(400),
+        updatedAt: ago(10),
+        expiresAt: ahead(100),
+        notificationEmail: bulkEmail(i),
+      })),
+    });
+    await prisma.order.createMany({
+      data: idx.map((i) => ({
+        orderSessionId: bulkId(i),
+        amount: "599.00",
+        currency: "INR",
+        countryCode: "IN",
+        coverType: "SOFTCOVER" as const,
+        status: "DELIVERED" as const,
+        deliveredAt: ago(180),
+        updatedAt: ago(10),
+      })),
+    });
+    await prisma.reminderSend.createMany({
+      data: idx.map((i) => ({
+        kind: "REVIEW_REQUEST" as const,
+        orderSessionId: bulkId(i),
+        offsetHours: 168,
+        email: bulkEmail(i),
+        status: "SENT" as const,
+        claimedAt: ago(22),
+      })),
+    });
+    const fresh = await makeSession({
+      status: "COMPLETED",
+      createdAt: ago(400),
+    });
+    await makeOrder(fresh.id, { status: "DELIVERED", deliveredAt: ago(170) });
+    expect(await sweepReminders(NOW)).toBe(1);
+    expect(sentTo()).toEqual([fresh.notificationEmail]);
+  }, 120_000);
+
+  it("A: more than 2,000 paid orders do not hide the one that shows this customer already bought", async () => {
+    await enableA({ previewOffsetsHours: [3] });
+    const FILLER = 2000;
+    const idx = Array.from({ length: FILLER }, (_, i) => i);
+    await prisma.orderSession.createMany({
+      data: idx.map((i) => ({
+        id: bulkId(i),
+        comicId,
+        status: "PAID_PAGES_READY" as const,
+        expiresAt: ahead(100),
+        notificationEmail: bulkEmail(i),
+      })),
+    });
+    await prisma.order.createMany({
+      data: idx.map((i) => ({
+        orderSessionId: bulkId(i),
+        amount: "599.00",
+        currency: "INR",
+        countryCode: "IN",
+        coverType: "SOFTCOVER" as const,
+        status: "PAID" as const,
+      })),
+    });
+    // the buyer's paid order is the last one written, so a lookup cut at 2,000 would miss it
+    const buyer = "buyer-last" + DOMAIN;
+    const paid = await makeSession({
+      status: "PAID_PAGES_READY",
+      email: buyer,
+    });
+    await makeOrder(paid.id, { status: "PAID" });
+    await makeSession({ email: buyer, createdAt: ago(4) }); // their unfinished preview
+    const other = await makeSession({ createdAt: ago(4) });
+    expect(await sweepReminders(NOW)).toBe(1);
+    expect(sentTo()).toEqual([other.notificationEmail]);
+  }, 120_000);
+});
+
+describe("review round 4: one address, several reminders", () => {
+  it("A and B for the same address: B goes first, and A is skipped for good when its catch-up ends before the 24 h hold does", async () => {
+    await enableA({ previewOffsetsHours: [3] });
+    await enableB({
+      previewEnabled: true,
+      previewEffectiveFrom: ago(1000),
+      previewOffsetsHours: [3],
+      bookOffsetsHours: [24],
+    });
+    const addr = "both" + DOMAIN;
+    const book = await makeSession({
+      status: "PAID_PAGES_READY",
+      createdAt: ago(60),
+      email: addr,
+    });
+    const order = await makeOrder(book.id, {
+      status: "GENERATED",
+      updatedAt: ago(25),
+    });
+    // an order made long before the preview, so it does not count as "bought since"
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { createdAt: ago(1000), updatedAt: ago(25) },
+    });
+    const preview = await makeSession({ email: addr, createdAt: ago(4) }); // due 1 h ago, like B
+    expect(await sweepReminders(NOW)).toBe(1);
+    expect((await rows()).map((r) => r.kind)).toEqual(["BOOK_NOT_SENT"]);
+    // the hold ends 24 h after the first claim, but the preview's offset was due 1 h before it: its 24 h
+    // catch-up ended an hour earlier, so it is skipped for good
+    expect(await sweepReminders(new Date(NOW.getTime() + 24.5 * H))).toBe(0);
+    expect(await rows({ orderSessionId: preview.id })).toHaveLength(0);
+  });
+
+  it("two sessions of one address both due at the first claim: the second is skipped for good", async () => {
+    await enableA({ previewOffsetsHours: [3] });
+    const addr = "pair" + DOMAIN;
+    const first = await makeSession({ email: addr, createdAt: ago(4.5) });
+    const second = await makeSession({ email: addr, createdAt: ago(4) });
+    expect(await sweepReminders(NOW)).toBe(1);
+    expect((await rows())[0]!.orderSessionId).toBe(first.id);
+    // 24 h later the hold is over, but the second one's catch-up ended 1 h before that
+    expect(await sweepReminders(new Date(NOW.getTime() + 24.5 * H))).toBe(0);
+    expect(await rows({ orderSessionId: second.id })).toHaveLength(0);
+    expect(fakes.send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("review round 4: more of the status walks", () => {
+  it("A: a PREVIEW_READY session whose order is not CREATED is not selected, and an expired AWAITING_PAYMENT one is (it never expires)", async () => {
+    await enableA({ previewOffsetsHours: [3] });
+    const statuses: OrderStatus[] = [
+      "PAID",
+      "GENERATED",
+      "CONFIRMED",
+      "SHIPROCKET_FAILED",
+      "READY_TO_SHIP",
+      "SHIPPED",
+      "DELIVERED",
+      "CANCELLED",
+    ];
+    for (const status of statuses) {
+      const s = await makeSession({ email: email("ord") });
+      await makeOrder(s.id, { status, updatedAt: ago(5) });
+    }
+    const expired = await makeSession({
+      status: "AWAITING_PAYMENT",
+      expiresAt: ago(1),
+      email: email("expired"),
+    });
+    await makeOrder(expired.id, { status: "CREATED", updatedAt: ago(5) });
+    await sweepReminders(NOW);
+    expect(sentTo()).toEqual([expired.notificationEmail]);
+  });
+
+  it("C: only DELIVERED with a delivery date in the past, on a real (not sample) session, is selected (all 9 order statuses)", async () => {
+    await enableC({ reviewOffsetsHours: [168] });
+    const STATUSES: OrderStatus[] = [
+      "CREATED",
+      "PAID",
+      "GENERATED",
+      "CONFIRMED",
+      "SHIPROCKET_FAILED",
+      "READY_TO_SHIP",
+      "SHIPPED",
+      "DELIVERED",
+      "CANCELLED",
+    ];
+    const want = new Map<string, boolean>();
+    for (const status of STATUSES) {
+      const s = await makeSession({
+        status: "COMPLETED",
+        email: email(status.toLowerCase()),
+        createdAt: ago(400),
+      });
+      await makeOrder(s.id, { status, deliveredAt: ago(180) });
+      want.set(s.notificationEmail!, status === "DELIVERED");
+    }
+    const sample = await makeSession({
+      status: "COMPLETED",
+      isSample: true,
+      email: email("sample"),
+      createdAt: ago(400),
+    });
+    await makeOrder(sample.id, { status: "DELIVERED", deliveredAt: ago(180) });
+    want.set(sample.notificationEmail!, false);
+    const future = await makeSession({
+      status: "COMPLETED",
+      email: email("future"),
+      createdAt: ago(400),
+    });
+    await makeOrder(future.id, { status: "DELIVERED", deliveredAt: ahead(5) });
+    want.set(future.notificationEmail!, false);
+    await sweepReminders(NOW);
+    const mailed = new Set(sentTo());
+    for (const [addr, wanted] of want)
+      expect([addr, mailed.has(addr)]).toEqual([addr, wanted]);
+  });
+});
+
+describe("review round 4: the purge keeps what still blocks a reminder", () => {
+  const OLD = new Date(NOW.getTime() - 91 * 24 * H);
+  const oldRow = (kind: "BOOK_NOT_SENT" | "PREVIEW_UNFINISHED", sid: string) =>
+    prisma.reminderSend.create({
+      data: {
+        kind,
+        orderSessionId: sid,
+        offsetHours: 24,
+        email: email("purge"),
+        status: "SENT",
+        claimedAt: OLD,
+      },
+    });
+
+  it("an old B row is kept while its order is still GENERATED, and purged once the order has moved on or is gone", async () => {
+    const waiting = await makeSession({ status: "PAID_PAGES_READY" });
+    await makeOrder(waiting.id, { status: "GENERATED" });
+    const printed = await makeSession({ status: "PAID_PAGES_READY" });
+    await makeOrder(printed.id, { status: "CONFIRMED" });
+    const noOrder = await makeSession({ status: "PAID_PAGES_READY" });
+    const asPreview = await makeSession({ status: "PAID_PAGES_READY" });
+    await makeOrder(asPreview.id, { status: "GENERATED" });
+    await oldRow("BOOK_NOT_SENT", waiting.id);
+    await oldRow("BOOK_NOT_SENT", printed.id);
+    await oldRow("BOOK_NOT_SENT", noOrder.id);
+    await oldRow("PREVIEW_UNFINISHED", asPreview.id); // another kind: purged whatever its order says
+    await purgeOldEmailRows(NOW);
+    expect((await rows()).map((r) => r.orderSessionId)).toEqual([waiting.id]);
+  });
+
+  it("an order stuck in GENERATED for over 90 days and then touched does not get its handled offsets again", async () => {
+    await enableB({ bookOffsetsHours: [24] });
+    const s = await makeSession({
+      status: "PAID_PAGES_READY",
+      createdAt: ago(24 * 100),
+    });
+    await makeOrder(s.id, { status: "GENERATED", updatedAt: ago(25) }); // touched now: 24 h is due again
+    await oldRow("BOOK_NOT_SENT", s.id); // the record that 24 h went out 91 days ago
+    expect(await sweepReminders(NOW)).toBe(0); // housekeeping ran first, and the row survived it
+    expect(fakes.send).not.toHaveBeenCalled();
   });
 });

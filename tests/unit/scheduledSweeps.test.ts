@@ -80,6 +80,13 @@ describe("runScheduledSweeps", () => {
     expect(JSON.stringify(out)).not.toContain("resend is down");
   });
 
+  it("a failing reminder sweep does not stop the broadcast sweep that follows it", async () => {
+    sweeps.reminders.mockRejectedValue(new Error("resend is down"));
+    const out = await runScheduledSweeps();
+    expect(sweeps.broadcasts).toHaveBeenCalledTimes(1);
+    expect(out.results[5]).toMatchObject({ name: "broadcast emails", count: 5, error: null });
+  });
+
   it("a failing sweep is reported and does not stop the others", async () => {
     sweeps.pages.mockRejectedValue(
       new Error('database is down: relation "pages" detail')

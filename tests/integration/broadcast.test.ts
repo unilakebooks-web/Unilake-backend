@@ -58,6 +58,7 @@ import {
   sweepBroadcasts,
   updateBroadcast,
 } from "../../src/services/broadcast.service.js";
+import { purgeOldEmailRows } from "../../src/services/reminder.service.js";
 import { getReminderSettings } from "../../src/services/reminderSettings.service.js";
 import type {
   BroadcastAudience,
@@ -310,6 +311,145 @@ describe("audience", () => {
   });
 });
 
+describe("a customer who unticked the offers box", () => {
+  it("is left out of both audiences, although they bought; a customer who never ticked stays in the wider one", async () => {
+    const unticked = await makeUser({
+      consent: "withdrawn",
+      order: "DELIVERED",
+    });
+    const never = await makeUser({ order: "DELIVERED" });
+    const ticked = await makeUser({ consent: "yes", order: "DELIVERED" });
+    expect(mineOf(await resolveAudience("OPTED_IN_ONLY"))).toEqual([
+      ticked.email,
+    ]);
+    const wider = mineOf(await resolveAudience("OPTED_IN_AND_CUSTOMERS"));
+    expect(wider.sort()).toEqual([never.email, ticked.email].sort());
+    expect(wider).not.toContain(unticked.email);
+  });
+
+  it("ticking again brings them back, and the counts and the snapshot agree", async () => {
+    const back = await makeUser({ consent: "withdrawn", order: "PAID" });
+    const before = mineOf(await resolveAudience("OPTED_IN_AND_CUSTOMERS"));
+    expect(before).not.toContain(back.email);
+    await prisma.marketingConsent.updateMany({
+      where: { email: back.email },
+      data: { withdrawnAt: null },
+    });
+    const after = await resolveAudience("OPTED_IN_AND_CUSTOMERS");
+    expect(after).toContain(back.email);
+    const b = await draft("OPTED_IN_AND_CUSTOMERS");
+    const started = await startBroadcast(b.id, after.length);
+    expect(started.recipientCount).toBe(after.length);
+    expect((await getAudienceCounts()).optedInAndCustomers).toBe(after.length);
+  });
+});
+
+describe("an unsubscribe covers every address of that customer (D-122)", () => {
+  /** Points the customer's session at another notification address (and, if asked, their order). */
+  async function useAddresses(
+    userId: string,
+    sessionAddress: string,
+    orderAddress?: string
+  ) {
+    await prisma.orderSession.updateMany({
+      where: { userId },
+      data: { notificationEmail: sessionAddress },
+    });
+    if (orderAddress !== undefined) {
+      await prisma.order.updateMany({
+        where: { orderSession: { userId } },
+        data: { notificationEmail: orderAddress },
+      });
+    }
+  }
+  const optOut = (email: string) =>
+    prisma.emailOptOut.create({ data: { email } });
+
+  it("a customer who unsubscribed at their session's address is left out of both audiences, the counts, the snapshot and the claim", async () => {
+    const other = addr("session");
+    const gone = await makeUser({ consent: "yes", order: "DELIVERED" });
+    await useAddresses(gone.id, other);
+    const keep = await makeUser({ consent: "yes", order: "DELIVERED" });
+    const before = await getAudienceCounts();
+    await optOut(other);
+    for (const audience of [
+      "OPTED_IN_ONLY",
+      "OPTED_IN_AND_CUSTOMERS",
+    ] as const) {
+      const got = mineOf(await resolveAudience(audience));
+      expect(got).toEqual([keep.email]);
+    }
+    const after = await getAudienceCounts();
+    expect(after.optedInOnly).toBe(before.optedInOnly - 1);
+    expect(after.optedInAndCustomers).toBe(before.optedInAndCustomers - 1);
+    const b = await draft("OPTED_IN_AND_CUSTOMERS");
+    const started = await startBroadcast(b.id, after.optedInAndCustomers);
+    expect(started.recipientCount).toBe(after.optedInAndCustomers);
+    expect((await mineIn(b.id)).map((r) => r.email)).toEqual([keep.email]);
+  });
+
+  it("a customer whose ORDER address is opted out is left out; a customer with no opt-out anywhere stays", async () => {
+    const orderAddress = addr("order");
+    const gone = await makeUser({ order: "PAID" });
+    await useAddresses(gone.id, addr("session"), orderAddress);
+    const plain = await makeUser({ order: "PAID" });
+    await optOut(orderAddress);
+    expect(mineOf(await resolveAudience("OPTED_IN_AND_CUSTOMERS"))).toEqual([
+      plain.email,
+    ]);
+  });
+
+  it("a per-order stop (reminder B) removes nobody from a broadcast", async () => {
+    const u = await makeUser({ consent: "yes", order: "DELIVERED" });
+    const session = await prisma.orderSession.findFirstOrThrow({
+      where: { userId: u.id },
+    });
+    await prisma.reminderStop.create({
+      data: { kind: "BOOK_NOT_SENT", orderSessionId: session.id },
+    });
+    for (const audience of [
+      "OPTED_IN_ONLY",
+      "OPTED_IN_AND_CUSTOMERS",
+    ] as const) {
+      expect(mineOf(await resolveAudience(audience))).toEqual([u.email]);
+    }
+  });
+
+  it("addresses are compared in lowercase", async () => {
+    const other = addr("mixed");
+    const gone = await makeUser({ order: "PAID" });
+    await useAddresses(gone.id, other.toUpperCase());
+    await optOut(other);
+    expect(mineOf(await resolveAudience("OPTED_IN_AND_CUSTOMERS"))).toEqual([]);
+  });
+
+  it("at send time a customer who unsubscribes after the snapshot via another address is dropped, the rest are mailed", async () => {
+    const other = addr("late");
+    const late = await makeUser({ consent: "yes", order: "DELIVERED" });
+    await useAddresses(late.id, other, addr("laterorder"));
+    const keep = await makeUser({ consent: "yes", order: "DELIVERED" });
+    const id = await startFor("OPTED_IN_AND_CUSTOMERS", [
+      late.email,
+      keep.email,
+    ]);
+    expect((await mineIn(id)).length).toBe(2);
+    await optOut(other);
+    await sweepBroadcasts(NOW);
+    expect(sentTo()).toEqual([keep.email]);
+    expect((await mineIn(id)).map((r) => r.email)).toEqual([keep.email]);
+
+    // the same through the order's own address, with the capitals a stored address may have
+    const orderOther = addr("lateorder");
+    const late2 = await makeUser({ order: "PAID" });
+    await useAddresses(late2.id, addr("s2"), orderOther.toUpperCase());
+    await startFor("OPTED_IN_AND_CUSTOMERS", [late2.email]);
+    await optOut(orderOther);
+    fakes.send.mockClear();
+    await sweepBroadcasts(new Date(NOW.getTime() + 24 * H));
+    expect(sentTo()).toEqual([]);
+  });
+});
+
 describe("draft, preview and test", () => {
   it("records who created it, merges updates, and refuses half a button", async () => {
     const b = await draft();
@@ -557,7 +697,7 @@ describe("sweep", () => {
     expect(sentTo()).toEqual([free.email, held.email]);
   });
 
-  it("anyone who opts out after the snapshot is dropped, and a withdrawn consent drops the narrow audience only", async () => {
+  it("anyone who opts out after the snapshot is dropped, and a withdrawn consent drops both audiences", async () => {
     const out = await makeUser({ consent: "yes" });
     const withdrew = await makeUser({ consent: "yes" });
     const keep = await makeUser({ consent: "yes" });
@@ -575,14 +715,24 @@ describe("sweep", () => {
     expect(sentTo()).toEqual([keep.email]);
     expect((await mineIn(id)).map((r) => r.email)).toEqual([keep.email]);
 
-    // the wider audience keeps a customer whose consent was withdrawn, but never an opted-out one
-    const cust = await makeUser({ consent: "withdrawn", order: "DELIVERED" });
+    // the wider audience also drops a customer who unticked the box after the snapshot, and never mails an
+    // opted-out one; a customer who never ticked is still mailed
+    const cust = await makeUser({ consent: "yes", order: "DELIVERED" });
+    const plain = await makeUser({ order: "DELIVERED" });
     const optedOutCust = await makeUser({ order: "PAID" });
-    await startFor("OPTED_IN_AND_CUSTOMERS", [cust.email, optedOutCust.email]);
+    await startFor("OPTED_IN_AND_CUSTOMERS", [
+      cust.email,
+      plain.email,
+      optedOutCust.email,
+    ]);
     await prisma.emailOptOut.create({ data: { email: optedOutCust.email } });
+    await prisma.marketingConsent.updateMany({
+      where: { email: cust.email },
+      data: { withdrawnAt: NOW },
+    });
     fakes.send.mockClear();
     await sweepBroadcasts(new Date(NOW.getTime() + 24 * H));
-    expect(sentTo()).toEqual([cust.email]);
+    expect(sentTo()).toEqual([plain.email]);
   });
 
   it("a cancelled broadcast sends nothing, and a cancel that lands mid-run stops the rest", async () => {
@@ -795,6 +945,118 @@ describe("review round: verified addresses, setup errors, development limits", (
     });
   }
 
+  for (const [status, name, text] of [
+    [400, "invalid_api_key", "API key is invalid"],
+    [422, "invalid_from_address", "Invalid `from` field"],
+    [422, "missing_required_field", "Missing `from` field"],
+    [422, "validation_error", "Invalid `from` field. The email address needs"],
+  ] as const) {
+    it(`a setup error by name (HTTP ${status} ${name}, ${text}) stops the run and gives the claims back`, async () => {
+      const users = [];
+      for (let i = 0; i < 3; i++)
+        users.push(await makeUser({ consent: "yes" }));
+      const id = await startFor(
+        "OPTED_IN_ONLY",
+        users.map((u) => u.email)
+      );
+      fakes.send.mockRejectedValue(
+        new EmailSendError(
+          `Resend send failed: ${name} — ${text} (HTTP ${status})`,
+          name,
+          status
+        )
+      );
+      expect(await sweepBroadcasts(NOW)).toBe(0);
+      expect(fakes.send).toHaveBeenCalledTimes(1);
+      expect(
+        (await mineIn(id)).every(
+          (r) => r.status === "PENDING" && r.claimedAt === null
+        )
+      ).toBe(true);
+    });
+  }
+
+  it("a validation error about the recipient is a refusal of that one message, not a setup error", async () => {
+    const a = await makeUser({ consent: "yes" });
+    const b = await makeUser({ consent: "yes" });
+    const id = await startFor("OPTED_IN_ONLY", [a.email, b.email]);
+    fakes.send.mockRejectedValueOnce(
+      new EmailSendError(
+        "Resend send failed: validation_error — Invalid `to` field (HTTP 422)",
+        "validation_error",
+        422
+      )
+    );
+    expect(await sweepBroadcasts(NOW)).toBe(1);
+    expect((await mineIn(id)).map((r) => r.status).sort()).toEqual([
+      "FAILED",
+      "SENT",
+    ]);
+  });
+
+  it("a claim whose rows changed under it throws and rolls back: nothing stays claimed with no send", async () => {
+    const a = await makeUser({ consent: "yes" });
+    const b = await makeUser({ consent: "yes" });
+    const id = await startFor("OPTED_IN_ONLY", [a.email, b.email]);
+    const realTransaction = prisma.$transaction.bind(prisma) as (
+      fn: (tx: unknown) => Promise<unknown>,
+      options?: unknown
+    ) => Promise<unknown>;
+    // the claim's update runs for real inside the transaction, but reports one row too few
+    const client = prisma as unknown as { $transaction: unknown };
+    const original = client.$transaction;
+    client.$transaction = ((
+      fn: (tx: unknown) => Promise<unknown>,
+      options?: unknown
+    ) =>
+      realTransaction(
+        (tx) =>
+          fn(
+            new Proxy(tx as object, {
+              get: (target, key) => {
+                const value = Reflect.get(target, key) as object;
+                if (key !== "broadcastRecipient") return value;
+                return new Proxy(value, {
+                  get: (model, method) =>
+                    method === "updateMany"
+                      ? async (args: unknown) => {
+                          const real = await (
+                            model as {
+                              updateMany: (a: unknown) => Promise<{
+                                count: number;
+                              }>;
+                            }
+                          ).updateMany(args);
+                          return { count: real.count - 1 };
+                        }
+                      : (...args: unknown[]) =>
+                          (
+                            Reflect.get(model, method) as (
+                              ...a: unknown[]
+                            ) => unknown
+                          ).apply(model, args),
+                });
+              },
+            })
+          ),
+        options
+      )) as never;
+    try {
+      await expect(sweepBroadcasts(NOW)).rejects.toThrow(
+        /Claim count mismatch/
+      );
+    } finally {
+      client.$transaction = original;
+    }
+    expect(fakes.send).not.toHaveBeenCalled();
+    expect(
+      (await mineIn(id)).every(
+        (r) => r.status === "PENDING" && r.claimedAt === null
+      )
+    ).toBe(true);
+    expect(await sweepBroadcasts(NOW)).toBe(2); // the next run claims and sends normally
+  });
+
   it("an idempotency conflict (HTTP 409) is not a failure", async () => {
     const a = await makeUser({ consent: "yes" });
     const id = await startFor("OPTED_IN_ONLY", [a.email]);
@@ -942,5 +1204,24 @@ describe("limits and housekeeping", () => {
     await startFor("OPTED_IN_ONLY", [a.email]);
     await settings({ dailyBudget: 11, reminderReserve: 10 }); // room for one a day
     expect(await sweepBroadcasts(NOW)).toBe(1);
+  });
+});
+
+describe("review round 4: retention", () => {
+  it("recipient rows older than 90 days are purged with the send logs, newer ones are kept", async () => {
+    const a = await makeUser({ consent: "yes" });
+    const b = await makeUser({ consent: "yes" });
+    const id = await startFor("OPTED_IN_ONLY", [a.email, b.email]);
+    const old = new Date(NOW.getTime() - 91 * 24 * H);
+    await prisma.broadcastRecipient.updateMany({
+      where: { broadcastId: id, email: a.email },
+      data: { createdAt: old },
+    });
+    await prisma.broadcastRecipient.updateMany({
+      where: { broadcastId: id, email: b.email },
+      data: { createdAt: new Date(NOW.getTime() - 89 * 24 * H) },
+    });
+    await purgeOldEmailRows(NOW);
+    expect((await mineIn(id)).map((r) => r.email)).toEqual([b.email]);
   });
 });

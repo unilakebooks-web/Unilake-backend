@@ -95,13 +95,42 @@ async function optedOutEmails(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.email));
 }
 
-/** Emails of users who ticked the box and have not withdrawn, staff left out. */
-async function consentedEmails(): Promise<Set<string>> {
+/**
+ * Every address we know for these users: the account address, and the notification address of each of their
+ * sessions and orders (a reminder goes there, so an unsubscribe is stored for it; D-122). One read, lowercase.
+ */
+async function knownAddressesByUser(
+  db: Pick<typeof prisma, "orderSession">,
+  userIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const byUser = new Map<string, Set<string>>();
+  if (userIds.length === 0) return byUser;
+  const sessions = await db.orderSession.findMany({
+    where: { userId: { in: userIds } },
+    select: {
+      userId: true,
+      notificationEmail: true,
+      order: { select: { notificationEmail: true } },
+    },
+  });
+  for (const s of sessions) {
+    if (!s.userId) continue;
+    const set = byUser.get(s.userId) ?? new Set<string>();
+    for (const e of [s.notificationEmail, s.order?.notificationEmail]) {
+      if (e && clean(e)) set.add(clean(e));
+    }
+    byUser.set(s.userId, set);
+  }
+  return byUser;
+}
+
+/** Emails (with the user's id) of users who ticked the box and have not withdrawn, staff left out. */
+async function consentedEmails(): Promise<Map<string, string>> {
   const consents = await prisma.marketingConsent.findMany({
     where: { withdrawnAt: null },
     select: { userId: true },
   });
-  if (consents.length === 0) return new Set();
+  if (consents.length === 0) return new Map();
   const users = await prisma.user.findMany({
     where: {
       id: { in: consents.map((c) => c.userId) },
@@ -109,19 +138,29 @@ async function consentedEmails(): Promise<Set<string>> {
       // A tick counts only for an address that is the person's own (see setMarketingConsent).
       AND: [TRUSTED_ADDRESS_USER],
     },
-    select: { email: true },
+    select: { id: true, email: true },
   });
-  return new Set(
+  return new Map(
     users
-      .map((u) => clean(u.email))
-      .filter((e) => e && !isPlaceholderAddress(e))
+      .map((u) => [clean(u.email), u.id] as [string, string])
+      .filter(([e]) => e && !isPlaceholderAddress(e))
   );
 }
 
-async function customerEmails(): Promise<Set<string>> {
+/** Users who ticked the box and then unticked it (or unsubscribed): an explicit withdrawal, whatever they bought. */
+async function withdrawnUserIds(): Promise<string[]> {
+  const rows = await prisma.marketingConsent.findMany({
+    where: { withdrawnAt: { not: null } },
+    select: { userId: true },
+  });
+  return rows.map((r) => r.userId);
+}
+
+async function customerEmails(): Promise<Map<string, string>> {
   const users = await prisma.user.findMany({
     where: {
       role: { notIn: STAFF_ROLES },
+      id: { notIn: await withdrawnUserIds() },
       // A customer's account address must be trusted too (see setMarketingConsent).
       AND: [TRUSTED_ADDRESS_USER],
       orderSessions: {
@@ -131,16 +170,20 @@ async function customerEmails(): Promise<Set<string>> {
         },
       },
     },
-    select: { email: true },
+    select: { id: true, email: true },
   });
-  return new Set(
+  return new Map(
     users
-      .map((u) => clean(u.email))
-      .filter((e) => e && !isPlaceholderAddress(e))
+      .map((u) => [clean(u.email), u.id] as [string, string])
+      .filter(([e]) => e && !isPlaceholderAddress(e))
   );
 }
 
-/** Who would receive a broadcast to this audience right now. Anyone who opted out is always left out. */
+/**
+ * Who would receive a broadcast to this audience right now. Anyone who opted out is always left out, and so is
+ * a customer with a global opt-out on ANY of their known addresses (D-122). The per-order stop of reminder B
+ * is not in the opt-out list and never removes anyone here.
+ */
 export async function resolveAudience(
   audience: BroadcastAudience
 ): Promise<string[]> {
@@ -148,11 +191,18 @@ export async function resolveAudience(
     optedOutEmails(),
     consentedEmails(),
   ]);
-  const all = new Set(consented);
+  const all = new Map(consented);
   if (audience === "OPTED_IN_AND_CUSTOMERS") {
-    for (const email of await customerEmails()) all.add(email);
+    for (const [email, userId] of await customerEmails())
+      all.set(email, userId);
   }
-  return [...all].filter((email) => !optedOut.has(email)).sort();
+  const known = await knownAddressesByUser(prisma, [...new Set(all.values())]);
+  const silenced = (userId: string) =>
+    [...(known.get(userId) ?? [])].some((e) => optedOut.has(e));
+  return [...all]
+    .filter(([email, userId]) => !optedOut.has(email) && !silenced(userId))
+    .map(([email]) => email)
+    .sort();
 }
 
 /** Both counts, so the admin sees how small the audience is before choosing. */
@@ -505,13 +555,48 @@ export async function claimBroadcastBatch(
       }),
     ]);
     const consents = await tx.marketingConsent.findMany({
-      where: { userId: { in: users.map((u) => u.id) }, withdrawnAt: null },
-      select: { userId: true },
+      where: { userId: { in: users.map((u) => u.id) } },
+      select: { userId: true, withdrawnAt: true },
     });
-    const consentedUserIds = new Set(consents.map((c) => c.userId));
+    const consentedUserIds = new Set(
+      consents.filter((c) => c.withdrawnAt === null).map((c) => c.userId)
+    );
+    const withdrawnUserIdSet = new Set(
+      consents.filter((c) => c.withdrawnAt !== null).map((c) => c.userId)
+    );
     const consentedEmailSet = new Set(
       users
         .filter((u) => isTrustedAddressUser(u) && consentedUserIds.has(u.id))
+        .map((u) => clean(u.email))
+    );
+    const withdrawnEmailSet = new Set(
+      users
+        .filter((u) => withdrawnUserIdSet.has(u.id))
+        .map((u) => clean(u.email))
+    );
+    // A customer with a global opt-out on any other known address (account, session or order) is dropped
+    // too (D-122): one read of those addresses, one of the opt-outs among them.
+    const known = await knownAddressesByUser(
+      tx,
+      users.map((u) => u.id)
+    );
+    const knownAddresses = new Set<string>();
+    for (const set of known.values())
+      for (const e of set) knownAddresses.add(e);
+    const optedOutKnown = new Set(
+      (knownAddresses.size === 0
+        ? []
+        : await tx.emailOptOut.findMany({
+            where: { email: { in: [...knownAddresses] } },
+            select: { email: true },
+          })
+      ).map((o) => o.email)
+    );
+    const silencedEmailSet = new Set(
+      users
+        .filter((u) =>
+          [...(known.get(u.id) ?? [])].some((e) => optedOutKnown.has(e))
+        )
         .map((u) => clean(u.email))
     );
     const optedOutSet = new Set(optedOut.map((o) => o.email));
@@ -521,9 +606,12 @@ export async function claimBroadcastBatch(
     const takenThisRun = new Set<string>();
     for (const c of candidates) {
       const consented = consentedEmailSet.has(c.email);
-      // Opted out, or (for the narrow audience) no longer consenting: dropped for good.
+      // Opted out, unticked the box since the snapshot (either audience), or (for the narrow audience) no
+      // longer consenting: dropped for good.
       if (
         optedOutSet.has(c.email) ||
+        silencedEmailSet.has(c.email) ||
+        withdrawnEmailSet.has(c.email) ||
         (c.broadcast.audience === "OPTED_IN_ONLY" && !consented)
       ) {
         dropIds.push(c.id);
@@ -559,7 +647,12 @@ export async function claimBroadcastBatch(
       },
       data: { status: "CLAIMED", claimedAt: now },
     });
-    return count === chosen.length ? chosen : [];
+    // Under the advisory lock every chosen row is PENDING, so a short count is not expected. Throwing rolls
+    // the whole claim back, instead of leaving rows CLAIMED with nothing sent.
+    if (count !== chosen.length) {
+      throw new Error("[Broadcast] Claim count mismatch: claim rolled back");
+    }
+    return chosen;
   }, CLAIM_TRANSACTION_OPTIONS);
 }
 

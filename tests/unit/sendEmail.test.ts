@@ -110,6 +110,27 @@ describe("sendEmail payload", () => {
   });
 });
 
+describe("start-up log", () => {
+  it("says the development guard is OFF in production and names the environment", async () => {
+    await load({ nodeEnv: "production", allow: ["parent@example.test"] });
+    const line = mocks.logger.info.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(line).toContain('NODE_ENV="production"');
+    expect(line).toContain("guard is OFF");
+    expect(line).not.toContain("parent@example.test");
+  });
+
+  it.each(["development", "test", "Production", ""])(
+    "says the development guard is ACTIVE for NODE_ENV %j, without naming any address",
+    async (nodeEnv) => {
+      await load({ nodeEnv, allow: ["parent@example.test"] });
+      const line = mocks.logger.info.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(line).toContain(`NODE_ENV="${nodeEnv}"`);
+      expect(line).toContain("guard is ACTIVE");
+      expect(line).not.toContain("parent@example.test");
+    }
+  );
+});
+
 describe("development guard", () => {
   it("in production ignores the allowlist and sends to anyone", async () => {
     const { sendEmail } = await load({

@@ -20,10 +20,13 @@ import {
   MAX_ERROR_NAME_LENGTH,
   PER_ADDRESS_WINDOW_MS,
   PREVIEW_QUIET_GUARD_MS,
+  MAX_SELECTION_PAGES,
   PAID_ORDER_LOOKUP_LIMIT,
   REMINDER_RUN_BUDGET_MS,
   SEND_TIMEOUT_MS,
   STATUS_LOOKBACK_DAYS,
+  RESEND_CONFIG_ERROR_NAMES,
+  RESEND_GENERIC_ERROR_NAMES,
   RESEND_LIMIT_ERROR_NAMES,
   SEND_ROWS_RETENTION_DAYS,
   UNSUBSCRIBE_TOKEN_RETENTION_DAYS,
@@ -60,8 +63,33 @@ type Db = Prisma.TransactionClient;
 export const SPENT_STATUSES = ["CLAIMED", "SENT", "LOST"] as const;
 /** The send-log statuses that stop an offset being sent again: any row at all means it was handled. */
 const SEEN_STATUSES = ["CLAIMED", "SENT", "LOST", "FAILED"] as const;
-/** Most customers one query looks at per kind: a safety bound, far above today's volume. */
+/** Customers one query page holds per kind. */
 const CANDIDATE_LIMIT = 500;
+
+/**
+ * Reads every page of a selection, oldest first, so a long list of customers already handled cannot hide
+ * the newest ones (an offset that is not looked at within its catch-up window is never sent). `fetchPage`
+ * gets the id of the last row of the previous page. Stops after MAX_SELECTION_PAGES with a warning.
+ */
+async function readAllPages<T extends { id: string }>(
+  what: string,
+  pageSize: number,
+  fetchPage: (afterId: string | undefined) => Promise<T[]>
+): Promise<T[]> {
+  const rows: T[] = [];
+  let afterId: string | undefined;
+  for (let page = 0; page < MAX_SELECTION_PAGES; page++) {
+    const batch = await fetchPage(afterId);
+    rows.push(...batch);
+    if (batch.length < pageSize) return rows;
+    afterId = batch[batch.length - 1]!.id;
+  }
+  logger.warn(
+    { what, pages: MAX_SELECTION_PAGES },
+    "[Reminders] Page limit reached: the newest customers may wait for a later run"
+  );
+  return rows;
+}
 
 type Settings = Awaited<ReturnType<typeof getReminderSettings>>;
 
@@ -148,52 +176,57 @@ async function previewBases(
   now: Date,
   maxOffset: number
 ): Promise<Base[]> {
-  const sessions = await db.orderSession.findMany({
-    where: {
-      isSample: false,
-      createdAt: {
-        gte: new Date(now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS),
-        lte: now,
-      },
-      // Skipped while the customer is still active.
-      updatedAt: { lt: new Date(now.getTime() - PREVIEW_QUIET_GUARD_MS) },
-      OR: [
-        {
-          status: "PREVIEW_READY",
-          expiresAt: { gt: now },
-          OR: [
-            { order: { is: null } },
-            { order: { is: { status: "CREATED", razorpayPaymentId: null } } },
-          ],
+  const sessions = await readAllPages("A", CANDIDATE_LIMIT, (afterId) =>
+    db.orderSession.findMany({
+      where: {
+        isSample: false,
+        createdAt: {
+          gte: new Date(
+            now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS
+          ),
+          lte: now,
         },
-        {
-          // The customer opened the payment window and left. Not closer than the settle time: a payment may
-          // be in progress or its webhook late, and "you have not bought" must never reach someone who paid.
-          status: "AWAITING_PAYMENT",
-          order: {
-            is: {
-              status: "CREATED",
-              razorpayPaymentId: null,
-              updatedAt: {
-                lt: new Date(now.getTime() - AWAITING_PAYMENT_SETTLE_MS),
+        // Skipped while the customer is still active.
+        updatedAt: { lt: new Date(now.getTime() - PREVIEW_QUIET_GUARD_MS) },
+        OR: [
+          {
+            status: "PREVIEW_READY",
+            expiresAt: { gt: now },
+            OR: [
+              { order: { is: null } },
+              { order: { is: { status: "CREATED", razorpayPaymentId: null } } },
+            ],
+          },
+          {
+            // The customer opened the payment window and left. Not closer than the settle time: a payment may
+            // be in progress or its webhook late, and "you have not bought" must never reach someone who paid.
+            status: "AWAITING_PAYMENT",
+            order: {
+              is: {
+                status: "CREATED",
+                razorpayPaymentId: null,
+                updatedAt: {
+                  lt: new Date(now.getTime() - AWAITING_PAYMENT_SETTLE_MS),
+                },
               },
             },
           },
-        },
-      ],
-    },
-    select: {
-      id: true,
-      createdAt: true,
-      status: true,
-      notificationEmail: true,
-      childName: true,
-      order: { select: { notificationEmail: true } },
-      comic: COMIC_SELECT,
-    },
-    orderBy: { createdAt: "asc" },
-    take: CANDIDATE_LIMIT,
-  });
+        ],
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        notificationEmail: true,
+        childName: true,
+        order: { select: { notificationEmail: true } },
+        comic: COMIC_SELECT,
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: CANDIDATE_LIMIT,
+      ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),
+    })
+  );
   // A customer who made a second preview and paid for it must not be told, for the first, that they have not
   // bought: leave out every address with a paid order started after the earliest candidate was created.
   const boughtElsewhere = await addressesWithPaidOrderSince(
@@ -223,18 +256,26 @@ async function addressesWithPaidOrderSince(
   db: Db,
   since: Date
 ): Promise<Set<string>> {
-  const orders = await db.order.findMany({
-    where: {
-      status: { notIn: ["CREATED", "CANCELLED"] },
-      createdAt: { gte: since },
-      orderSession: { isSample: false },
-    },
-    select: {
-      notificationEmail: true,
-      orderSession: { select: { notificationEmail: true } },
-    },
-    take: PAID_ORDER_LOOKUP_LIMIT,
-  });
+  const orders = await readAllPages(
+    "paid orders",
+    PAID_ORDER_LOOKUP_LIMIT,
+    (afterId) =>
+      db.order.findMany({
+        where: {
+          status: { notIn: ["CREATED", "CANCELLED"] },
+          createdAt: { gte: since },
+          orderSession: { isSample: false },
+        },
+        select: {
+          id: true,
+          notificationEmail: true,
+          orderSession: { select: { notificationEmail: true } },
+        },
+        orderBy: { id: "asc" },
+        take: PAID_ORDER_LOOKUP_LIMIT,
+        ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),
+      })
+  );
   const emails = new Set<string>();
   for (const o of orders) {
     for (const raw of [o.notificationEmail, o.orderSession.notificationEmail]) {
@@ -261,26 +302,32 @@ async function bookBases(
   now: Date,
   maxOffset: number
 ): Promise<Base[]> {
-  const orders = await db.order.findMany({
-    where: {
-      status: AWAITING_CUSTOMER_PRINT.orderStatus,
-      updatedAt: {
-        gte: new Date(now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS),
-        lte: now,
+  const orders = await readAllPages("B", CANDIDATE_LIMIT, (afterId) =>
+    db.order.findMany({
+      where: {
+        status: AWAITING_CUSTOMER_PRINT.orderStatus,
+        updatedAt: {
+          gte: new Date(
+            now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS
+          ),
+          lte: now,
+        },
+        orderSession: {
+          isSample: false,
+          status: AWAITING_CUSTOMER_PRINT.sessionStatus,
+        },
       },
-      orderSession: {
-        isSample: false,
-        status: AWAITING_CUSTOMER_PRINT.sessionStatus,
+      select: {
+        id: true,
+        updatedAt: true,
+        notificationEmail: true,
+        orderSession: ORDER_SESSION_SELECT,
       },
-    },
-    select: {
-      updatedAt: true,
-      notificationEmail: true,
-      orderSession: ORDER_SESSION_SELECT,
-    },
-    orderBy: { updatedAt: "asc" },
-    take: CANDIDATE_LIMIT,
-  });
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      take: CANDIDATE_LIMIT,
+      ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),
+    })
+  );
   const stops = await db.reminderStop.findMany({
     where: {
       kind: "BOOK_NOT_SENT",
@@ -309,24 +356,30 @@ async function reviewBases(
   now: Date,
   maxOffset: number
 ): Promise<Base[]> {
-  const orders = await db.order.findMany({
-    where: {
-      status: "DELIVERED",
-      deliveredAt: {
-        not: null,
-        gte: new Date(now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS),
-        lte: now,
+  const orders = await readAllPages("C", CANDIDATE_LIMIT, (afterId) =>
+    db.order.findMany({
+      where: {
+        status: "DELIVERED",
+        deliveredAt: {
+          not: null,
+          gte: new Date(
+            now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS
+          ),
+          lte: now,
+        },
+        orderSession: { isSample: false },
       },
-      orderSession: { isSample: false },
-    },
-    select: {
-      deliveredAt: true,
-      notificationEmail: true,
-      orderSession: ORDER_SESSION_SELECT,
-    },
-    orderBy: { deliveredAt: "asc" },
-    take: CANDIDATE_LIMIT,
-  });
+      select: {
+        id: true,
+        deliveredAt: true,
+        notificationEmail: true,
+        orderSession: ORDER_SESSION_SELECT,
+      },
+      orderBy: [{ deliveredAt: "asc" }, { id: "asc" }],
+      take: CANDIDATE_LIMIT,
+      ...(afterId ? { cursor: { id: afterId }, skip: 1 } : {}),
+    })
+  );
   return orders.flatMap((o) =>
     o.deliveredAt
       ? [
@@ -370,13 +423,6 @@ async function findDueReminders(
         : cfg.kind === "BOOK_NOT_SENT"
           ? await bookBases(db, now, maxOffset)
           : await reviewBases(db, now, maxOffset);
-    if (bases.length >= CANDIDATE_LIMIT) {
-      // More customers in the window than one look can hold: the newest may wait. Not an error today.
-      logger.warn(
-        { kind: cfg.kind, limit: CANDIDATE_LIMIT },
-        "[Reminders] Candidate limit reached: the newest customers may wait for a later run"
-      );
-    }
     if (bases.length === 0) continue;
 
     // What was already handled for these customers: any row at all consumes that offset.
@@ -470,7 +516,8 @@ export async function countBudgetUsed(db: Db, dayStart: Date) {
 
 /**
  * Step 1. Claims what may go out now: at most `perRunLimit`, never past the day's budget, and at most one
- * new reminder per address in 24 hours (a second session or kind for the same address waits; the same
+ * new reminder per address in 24 hours (a second session or kind for the same address is held back and,
+ * if its own 24-hour catch-up window ends before the hold does, skipped for good; the same
  * session's next offset is the admin's own cadence and is not held back). Reminders may use the whole
  * budget; a broadcast only budget minus the reserve (services/broadcast), so it cannot starve them.
  */
@@ -609,8 +656,10 @@ export const capErrorName = (text: string) =>
 /**
  * What a Resend error means for the send that got it:
  *  - "limited": the account's quota or rate limit (nothing was sent; try again later);
- *  - "config": the account is set up wrongly (bad or restricted key, unverified domain, testing mode), HTTP
- *    401 or 403: every further send fails the same way, so the run stops and nothing is marked failed;
+ *  - "config": the account is set up wrongly (bad or restricted key, unverified domain, testing mode, a bad
+ *    "from" address), HTTP 401 or 403, or a 4xx whose Resend name says so (RESEND_CONFIG_ERROR_NAMES, or a
+ *    generic validation error that names the `from` field or the API key): every further send fails the
+ *    same way, so the run stops and nothing is marked failed;
  *  - "refused": Resend rejected this one message for good (a bad address, a bad parameter);
  *  - "unknown": anything else, including a 409 idempotency conflict, where the first attempt may have gone
  *    through, so the send must not be called failed.
@@ -625,6 +674,13 @@ export function classifyResendError(err: EmailSendError): ResendFailure {
     return "limited";
   }
   if (err.providerStatus === 401 || err.providerStatus === 403) return "config";
+  if (RESEND_CONFIG_ERROR_NAMES.includes(err.providerName)) return "config";
+  if (
+    RESEND_GENERIC_ERROR_NAMES.includes(err.providerName) &&
+    /`from`|api key/i.test(err.message)
+  ) {
+    return "config";
+  }
   if (err.providerStatus === 409) return "unknown";
   if (err.providerStatus >= 400 && err.providerStatus < 500) return "refused";
   return "unknown";
@@ -825,15 +881,40 @@ export async function markLostClaims(now: Date): Promise<number> {
 }
 
 /**
- * Deletes send logs older than 90 days and unsubscribe tokens older than a year. Opt-outs are kept. Runs
+ * Deletes send logs older than 90 days (a reminder B log of an order still waiting to be sent to print is
+ * kept) and unsubscribe tokens older than a year. Opt-outs are kept. Runs
  * on every sweep: the three deletes use indexed date columns and find nothing on almost every run.
  */
 export async function purgeOldEmailRows(now: Date): Promise<void> {
   const sendCutoff = new Date(
     now.getTime() - SEND_ROWS_RETENTION_DAYS * DAY_MS
   );
+  // Reminder B is clocked from Order.updatedAt, so an order that sits in GENERATED for months and is then
+  // touched has its offsets due again: its old rows are the only record that they were handled, so they
+  // stay until the order leaves GENERATED.
+  const oldBookRows = await prisma.reminderSend.findMany({
+    where: { kind: "BOOK_NOT_SENT", claimedAt: { lt: sendCutoff } },
+    select: { orderSessionId: true },
+    distinct: ["orderSessionId"],
+  });
+  const stillWaiting =
+    oldBookRows.length === 0
+      ? []
+      : await prisma.order.findMany({
+          where: {
+            status: AWAITING_CUSTOMER_PRINT.orderStatus,
+            orderSessionId: { in: oldBookRows.map((r) => r.orderSessionId) },
+          },
+          select: { orderSessionId: true },
+        });
   await prisma.reminderSend.deleteMany({
-    where: { claimedAt: { lt: sendCutoff } },
+    where: {
+      claimedAt: { lt: sendCutoff },
+      NOT: {
+        kind: "BOOK_NOT_SENT",
+        orderSessionId: { in: stillWaiting.map((o) => o.orderSessionId) },
+      },
+    },
   });
   await prisma.broadcastRecipient.deleteMany({
     where: { createdAt: { lt: sendCutoff } },

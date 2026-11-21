@@ -37,6 +37,16 @@ const REPLY_TO_ADDRESS = "unilake.books@gmail.com";
 // Single Resend client instance, reused across all sends. SDK is thread-safe.
 const resendClient = new Resend(config.email.resendApiKey);
 
+// A NODE_ENV other than exactly "production" turns the development recipient guard on and every email,
+// including the six order emails, is refused unless allow-listed: say which it is, once, at start-up.
+logger.info(
+  `[Email] NODE_ENV="${config.nodeEnv}": development recipient guard is ${
+    config.nodeEnv === "production"
+      ? "OFF (every recipient is mailed)"
+      : "ACTIVE (only DEV_EMAIL_ALLOWLIST addresses are mailed)"
+  }`
+);
+
 /** True when sendEmail would accept this recipient: always in production, otherwise only if allow-listed. */
 export function isRecipientAllowed(to: string): boolean {
   return (

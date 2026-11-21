@@ -84,8 +84,11 @@ export const MAX_ERROR_NAME_LENGTH = 200;
  */
 export const SEND_TIMEOUT_MS = 25_000;
 
-/** The most paid orders looked at when leaving out addresses that have already bought (reminder A). */
+/** Paid orders read per page when leaving out addresses that have already bought (reminder A). */
 export const PAID_ORDER_LOOKUP_LIMIT = 2_000;
+
+/** Pages a selection reads at most (candidates 500 a page, paid orders 2,000 a page): a bound, far above today's volume. */
+export const MAX_SELECTION_PAGES = 40;
 
 /** Options of the claim transactions: the advisory lock can make a second instance wait for the first. */
 export const CLAIM_TRANSACTION_OPTIONS = { maxWait: 20_000, timeout: 20_000 };
@@ -119,6 +122,29 @@ export const RESEND_LIMIT_ERROR_NAMES = [
   "daily_quota_exceeded",
   "monthly_quota_exceeded",
   "rate_limit_exceeded",
+];
+
+/**
+ * Resend errors that mean the account or the sender is set up wrongly (nothing about this one message): a
+ * missing, bad or restricted key, a bad "from" address, no access. Every further send fails the same way.
+ * Names are the SDK's own (resend's RESEND_ERROR_CODE_KEY).
+ */
+export const RESEND_CONFIG_ERROR_NAMES = [
+  "missing_api_key",
+  "invalid_api_key",
+  "restricted_api_key",
+  "invalid_from_address",
+  "invalid_access",
+];
+
+/**
+ * Generic Resend errors that are a setup problem only when they are about the sender or the key, not about
+ * the recipient or the content: those are told apart by the field named in Resend's message.
+ */
+export const RESEND_GENERIC_ERROR_NAMES = [
+  "validation_error",
+  "missing_required_field",
+  "invalid_parameter",
 ];
 
 /**
