@@ -8,8 +8,11 @@ import { BUBBLE_BOUND_EPSILON } from "../config/generation.js";
 import { logger } from "../lib/logger.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import type { CreateBubbleInput, UpdateBubbleInput  } from "../validators/bubble.schema.js";
+import { assertBubbleComicNotRetired, assertPageComicNotRetired } from "./retiredComicGuard.js";
 
 export async function createBubble(pageId: string, input: CreateBubbleInput) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertPageComicNotRetired(pageId);
   const page = await prisma.page.findUnique({ where: { id: pageId } });
 
   if (!page) {
@@ -76,6 +79,8 @@ export async function listPageBubbles(pageId: string) {
 }
 
 export async function updateBubble(bubbleId: string, input: UpdateBubbleInput) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertBubbleComicNotRetired(bubbleId);
   const bubble = await prisma.bubble.findUnique({
     where: { id: bubbleId },
     include: {
@@ -176,6 +181,8 @@ export async function updateBubble(bubbleId: string, input: UpdateBubbleInput) {
 }
 
 export async function deleteBubble(bubbleId: string) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertBubbleComicNotRetired(bubbleId);
   const bubble = await prisma.bubble.findUnique({
     where: { id: bubbleId },
   });

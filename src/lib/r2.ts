@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -232,6 +233,129 @@ export const downloadFileToBuffer = async (
   return Buffer.from(bodyBytes);
 };
 
+// ── Share routes (feature 14) ────────────────────────────────────────────────────────────
+
+/** Thrown when a body ends before the size the object reported: a cut read, worth trying again. */
+export class StorageObjectCutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StorageObjectCutError";
+  }
+}
+
+/** Thrown when an object is bigger than the caller allows, or does not say how big it is. */
+export class StorageObjectRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StorageObjectRefusedError";
+  }
+}
+
+const isMissingObject = (error: unknown): boolean => {
+  const e = error as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+  // A missing bucket is a wrong setting, not a missing object: it must not read as "not found".
+  if (e?.name === "NoSuchBucket" || e?.Code === "NoSuchBucket") return false;
+  return e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.Code === "NoSuchKey" || e?.$metadata?.httpStatusCode === 404;
+};
+
+/** Size and ETag of a public-bucket object, or null when it does not exist. Any other failure is thrown. */
+export const headObjectChecked = async (
+  key: string,
+  timeoutMs: number
+): Promise<{ contentLength: number; etag: string | undefined } | null> => {
+  try {
+    const response = await r2Client.send(
+      new HeadObjectCommand({ Bucket: config.r2.publicBucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(timeoutMs) }
+    );
+    return { contentLength: response.ContentLength ?? 0, etag: response.ETag };
+  } catch (error) {
+    if (isMissingObject(error)) return null;
+    throw error;
+  }
+};
+
+export interface OpenedObject {
+  contentLength: number;
+  etag: string | undefined;
+  /** Reads the body into memory: at most `maxBytes`, within `readDeadlineMs`. Call it or `discard`, once. */
+  read: () => Promise<Buffer>;
+  discard: () => void;
+}
+
+/**
+ * Opens a public-bucket object for a bounded read. The caller learns the size first (so it can reserve memory)
+ * and then reads. Returns null when the object does not exist. An object without a size, or bigger than
+ * `maxBytes`, is refused. The first-byte timeout stops once the headers arrive; the body has its own deadline.
+ */
+export const openObjectChecked = async (
+  key: string,
+  options: { maxBytes: number; firstByteTimeoutMs: number; readDeadlineMs: number }
+): Promise<OpenedObject | null> => {
+  const controller = new AbortController();
+  const firstByteTimer = setTimeout(() => controller.abort(), options.firstByteTimeoutMs);
+  let response;
+  try {
+    response = await r2Client.send(
+      new GetObjectCommand({ Bucket: config.r2.publicBucket, Key: key }),
+      { abortSignal: controller.signal }
+    );
+  } catch (error) {
+    if (isMissingObject(error)) return null;
+    throw error;
+  } finally {
+    clearTimeout(firstByteTimer);
+  }
+
+  const body = response.Body as
+    | (NodeJS.ReadableStream & { destroy?: () => void; transformToByteArray?: () => Promise<Uint8Array> })
+    | undefined;
+  const discard = () => {
+    controller.abort();
+    body?.destroy?.();
+  };
+  const contentLength = response.ContentLength;
+  if (!body || contentLength === undefined || contentLength === null) {
+    discard();
+    throw new StorageObjectRefusedError("The object does not report its size");
+  }
+  if (contentLength === 0) {
+    // An empty object (an interrupted write) is not an image.
+    discard();
+    throw new StorageObjectRefusedError("The object is empty");
+  }
+  if (contentLength > options.maxBytes) {
+    discard();
+    throw new StorageObjectRefusedError("The object is larger than allowed");
+  }
+
+  const read = async (): Promise<Buffer> => {
+    const deadline = setTimeout(discard, options.readDeadlineMs);
+    try {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of body as AsyncIterable<Buffer | Uint8Array | string>) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        total += buffer.length;
+        // Counted as it arrives: the size header is not trusted on its own.
+        if (total > options.maxBytes) {
+          discard();
+          throw new StorageObjectRefusedError("The object is larger than allowed");
+        }
+        chunks.push(buffer);
+      }
+      // A body that is not the size the object reported was cut short or is not this object.
+      if (total < contentLength) throw new StorageObjectCutError("The body ended before the reported size");
+      if (total !== contentLength) throw new StorageObjectRefusedError("The object is not the size it reported");
+      return Buffer.concat(chunks, total);
+    } finally {
+      clearTimeout(deadline);
+    }
+  };
+
+  return { contentLength, etag: response.ETag, read, discard };
+};
+
 /** Objects deleted at the same time by deletePrefix. */
 const DELETE_PREFIX_PARALLEL = 10;
 
@@ -292,6 +416,156 @@ export async function deletePrefix(
   );
 
   return deleted;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic data deletion (feature 6). Used only by services/dataDeletion.service.ts. Every
+// helper takes an abort signal (the engine passes one with its own deadline) and every delete is
+// checked against an allow-list, so a wrong argument cannot reach anything else.
+// ---------------------------------------------------------------------------------------------
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/** The only listing prefixes the engine uses: a session folder, a session's photo objects, a canary folder. */
+const DELETION_LIST_PREFIX_PATTERNS = [
+  new RegExp(`^sessions/${UUID}/$`),
+  new RegExp(`^sessions/${UUID}/photo-$`),
+  new RegExp(`^pdfs/${UUID}\\.pdf$`),
+  new RegExp(`^comics/[^/]+/(pages|fonts)/$`),
+];
+
+/** The only keys the engine deletes. A comic's video and LoRA keys are exact keys in shared folders. */
+const DELETION_KEY_PATTERNS = [
+  new RegExp(`^sessions/${UUID}/.+$`),
+  new RegExp(`^pdfs/${UUID}\\.pdf$`),
+  new RegExp(`^comics/[^/]+/(pages|fonts)/.+$`),
+  /^comics\/videos\/[^/]+$/,
+  /^comics\/lora\/[^/]+$/,
+];
+
+export const isDeletionListPrefix = (prefix: string): boolean =>
+  !prefix.includes("..") && DELETION_LIST_PREFIX_PATTERNS.some((pattern) => pattern.test(prefix));
+
+export const isDeletionKey = (key: string): boolean =>
+  !key.includes("..") && DELETION_KEY_PATTERNS.some((pattern) => pattern.test(key));
+
+const bucketName = (bucket: "public" | "private"): string =>
+  bucket === "public" ? config.r2.publicBucket : config.r2.privateBucket;
+
+/** The key of an order's final PDF (the same shape compilePdfForSession writes). */
+export const pdfKeyFor = (sessionId: string): string => {
+  if (!new RegExp(`^${UUID}$`).test(sessionId)) {
+    throw new Error("pdfKeyFor needs a session id");
+  }
+  return `pdfs/${sessionId}.pdf`;
+};
+
+export interface ObjectsPage {
+  keys: string[];
+  /** Set while the listing is truncated: pass it back to read the next page. */
+  next: string | undefined;
+}
+
+/** One page (up to 1,000 keys) of the objects under an allowed prefix. */
+export async function listObjectsPage(
+  bucket: "public" | "private",
+  prefix: string,
+  continuationToken: string | undefined,
+  signal?: AbortSignal
+): Promise<ObjectsPage> {
+  if (!isDeletionListPrefix(prefix)) {
+    throw new Error("listObjectsPage: prefix is not allowed");
+  }
+  const page = await r2Client.send(
+    new ListObjectsV2Command({
+      Bucket: bucketName(bucket),
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }),
+    { abortSignal: signal }
+  );
+  const keys = (page.Contents ?? [])
+    .map((object) => object.Key)
+    .filter((key): key is string => !!key && key.startsWith(prefix));
+  // Continue on IsTruncated alone: a page can be short or even empty and still truncated.
+  return { keys, next: page.IsTruncated ? page.NextContinuationToken : undefined };
+}
+
+/** How many objects sit under an allowed prefix. */
+export async function countPrefix(
+  bucket: "public" | "private",
+  prefix: string,
+  signal?: AbortSignal
+): Promise<number> {
+  let total = 0;
+  let token: string | undefined;
+  do {
+    const page = await listObjectsPage(bucket, prefix, token, signal);
+    total += page.keys.length;
+    token = page.next;
+  } while (token);
+  return total;
+}
+
+/** Whether an object exists (a missing object is false; any other failure throws). */
+export async function objectExists(
+  bucket: "public" | "private",
+  key: string,
+  signal?: AbortSignal
+): Promise<boolean> {
+  try {
+    await r2Client.send(
+      new HeadObjectCommand({ Bucket: bucketName(bucket), Key: key }),
+      { abortSignal: signal }
+    );
+    return true;
+  } catch (error) {
+    const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (
+      err.name === "NotFound" ||
+      err.name === "NoSuchKey" ||
+      err.$metadata?.httpStatusCode === 404
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** Deletes one object. Refuses any key that is not on the allow-list. */
+export async function deleteKeyChecked(
+  bucket: "public" | "private",
+  key: string,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!isDeletionKey(key)) {
+    throw new Error("deleteKeyChecked: key is not allowed");
+  }
+  await r2Client.send(
+    new DeleteObjectCommand({ Bucket: bucketName(bucket), Key: key }),
+    { abortSignal: signal }
+  );
+}
+
+/** Uploads a tiny object (the canary's). */
+export async function putObjectChecked(
+  bucket: "public" | "private",
+  key: string,
+  body: Buffer,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!isDeletionKey(key)) {
+    throw new Error("putObjectChecked: key is not allowed");
+  }
+  await r2Client.send(
+    new PutObjectCommand({
+      Bucket: bucketName(bucket),
+      Key: key,
+      Body: body,
+      ContentType: "text/plain",
+    }),
+    { abortSignal: signal }
+  );
 }
 
 export async function downloadFileToLocalPath(

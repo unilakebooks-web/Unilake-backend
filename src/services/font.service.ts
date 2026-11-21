@@ -7,6 +7,7 @@ import type {
   CreateFontInput,
   UpdateFontInput,
 } from "../validators/font.schema.js";
+import { assertComicNotRetired, assertFontComicNotRetired } from "./retiredComicGuard.js";
 
 
 const FONT_UPLOAD_EXPIRY_SECONDS = 10 * 60;
@@ -22,6 +23,8 @@ export async function getFontUploadUrl(
   comicId: string,
   input: GetFontUploadUrlInput
 ) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   const comic = await prisma.comic.findUnique({ where: { id: comicId } });
 
   if (!comic) {
@@ -43,6 +46,8 @@ export async function getFontUploadUrl(
 }
 
 export async function createFont(comicId: string, input: CreateFontInput) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   const comic = await prisma.comic.findUnique({ where: { id: comicId } });
 
   if (!comic) {
@@ -141,6 +146,8 @@ export async function getFontFileBytes(fontId: string, fileKey: string) {
 }
 
 export async function updateFont(fontId: string, input: UpdateFontInput) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertFontComicNotRetired(fontId);
   const font = await prisma.font.findUnique({
     where: { id: fontId },
   });
@@ -167,6 +174,8 @@ export async function updateFont(fontId: string, input: UpdateFontInput) {
 }
 
 export async function deleteFont(fontId: string) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertFontComicNotRetired(fontId);
   const font = await prisma.font.findUnique({
     where: { id: fontId },
   });

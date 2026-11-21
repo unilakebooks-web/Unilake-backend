@@ -89,7 +89,7 @@ function Kids(childName: string | null): string {
 }
 
 /** The customer's preview page for a session — where the buttons in 1–3 land. */
-function previewUrl(sessionId: string): string {
+export function previewUrl(sessionId: string): string {
   return `${config.frontendUrl}/personalize/${encodeURIComponent(sessionId)}/preview`;
 }
 
@@ -520,5 +520,326 @@ export async function notifyOrderDelivered(
         childName: order.orderSession.childName,
       })
     )
+  );
+}
+
+// ============================================================
+// REMINDER EMAILS (feature 5): A, B and C
+// ============================================================
+//
+// Unlike the six emails above these are built here but SENT by services/reminder.service.ts, which
+// claims each reminder first and sends it with an idempotency key (exactly once). Rules built into every template:
+//   - the subject never contains the child's name (sendEmail logs subjects), it names the book instead;
+//   - B is strictly about the order: no promotion, coupon, cover image or review request;
+//   - the deletion date and the coupon appear only when the caller passes them (the admin set them);
+//   - every interpolated value is escaped here, at the point of use.
+
+export type ReminderEmailKind =
+  | "PREVIEW_UNFINISHED"
+  | "BOOK_NOT_SENT"
+  | "REVIEW_REQUEST";
+
+export type ReminderEmailArgs = {
+  kind: ReminderEmailKind;
+  /** Position of this send in the admin's list (0 is the first) and how many there are in all. */
+  step: number;
+  total: number;
+  childName: string | null;
+  bookTitle: string;
+  /** Public cover image of the book, used by A only. */
+  coverUrl: string | null;
+  /** Where the button goes: the preview page (A, B) or the Google review link (C). */
+  link: string;
+  /** A, last send only: the day the preview is deleted, already formatted. */
+  deletionDate: string | null;
+  /** A, last send only: an active public coupon code. */
+  couponCode: string | null;
+  /** A and C: the link of the "stop these emails" page. B: the "stop reminders about this book" page. */
+  stopUrl: string;
+  /**
+   * False when no earlier reminder of this kind went to this customer (earlier send times were missed or
+   * not yet due): a send that is last in the list then reads as an ordinary reminder, never as a "final
+   * reminder" to someone who has not been reminded before. Omitted = as the list position says.
+   */
+  alreadyReminded?: boolean;
+};
+
+const SUBJECT_TITLE_MAX = 40;
+/** The hidden line an inbox shows beside the subject. */
+const PREHEADER_MAX = 110;
+
+/** Cuts to `max` characters with an ellipsis. By characters, not UTF-16 units: a cut must never land inside an emoji or a Devanagari letter. */
+function truncateByChars(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max - 1).join("").trimEnd()}…` : text;
+}
+
+function subjectTitle(title: string): string {
+  return truncateByChars(title.replace(/\s+/g, " ").trim(), SUBJECT_TITLE_MAX);
+}
+
+/** Which of the first, middle or last wording a send uses (a single send uses the first). */
+function reminderVariant(
+  step: number,
+  total: number
+): "first" | "middle" | "last" {
+  if (total <= 1 || step === 0) return "first";
+  return step >= total - 1 ? "last" : "middle";
+}
+
+/**
+ * A hidden line that inboxes show beside the subject. Placed right after <body> so it comes before the
+ * visible "Unilake Kids" header, which would otherwise be what the inbox previews.
+ */
+function withPreheader(html: string, preheader: string): string {
+  const hidden = `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;color:#f4f4f4;">${escapeHtml(preheader)}</div>`;
+  // A function, not a string: a "$1" or "$&" in the admin's first line must not be read as a pattern.
+  return html.replace(/(<body[^>]*>)/i, (tag) => `${tag}${hidden}`);
+}
+
+function renderReminderFooterLine(
+  text: string,
+  linkLabel: string,
+  url: string
+): string {
+  return `<p style="margin:24px 0 0 0;font-size:13px;line-height:1.6;color:#888;">${escapeHtml(text)} <a href="${escapeHtml(url)}" style="color:#555;">${escapeHtml(linkLabel)}</a></p>`;
+}
+
+export function renderReminderEmail(args: ReminderEmailArgs): {
+  subject: string;
+  html: string;
+} {
+  const listVariant = reminderVariant(args.step, args.total);
+  const isLastInList = listVariant === "last";
+  const variant =
+    isLastInList && args.alreadyReminded === false ? "middle" : listVariant;
+  const title = subjectTitle(args.bookTitle);
+  const name = nameOf(args.childName);
+  const bodyOf = (...parts: string[]) => parts.filter(Boolean).join("\n    ");
+
+  if (args.kind === "PREVIEW_UNFINISHED") {
+    const subject =
+      variant === "first"
+        ? `Your ${title} story preview is waiting`
+        : variant === "middle"
+          ? `Your ${title} preview is still saved`
+          : `Your ${title} preview: a final reminder`;
+    const preheader =
+      variant === "first"
+        ? "It only takes a minute to look it over."
+        : variant === "middle"
+          ? "Pick up right where you left off."
+          : "Your preview is saved and ready when you are.";
+    const buttonLabel = name
+      ? `View ${name}'s Preview`
+      : "View Your Child's Preview";
+    const cover = args.coverUrl
+      ? `<img src="${escapeHtml(args.coverUrl)}" alt="${escapeHtml(args.bookTitle)} cover" width="200" style="display:block;max-width:100%;height:auto;border-radius:6px;margin:0 0 16px 0;" />`
+      : "";
+    // The deletion date and the coupon belong to the last send in the list, whatever its wording.
+    const lastExtras = isLastInList
+      ? `${args.deletionDate ? `<p>This preview is kept until <strong>${escapeHtml(args.deletionDate)}</strong>, then it is deleted.</p>` : ""}
+    ${args.couponCode ? `<p>If it helps, use code <strong>${escapeHtml(args.couponCode)}</strong> at checkout.</p>` : ""}`
+      : "";
+    const intro =
+      variant === "first"
+        ? `<p>${escapeHtml(Kids(args.childName))} personalized story preview is ready and waiting for you.</p>
+    <p>Come back and take another look whenever you like:</p>`
+        : variant === "middle"
+          ? `<p>A quick note that ${escapeHtml(kids(args.childName))} story preview is still saved for you. You can pick up right where you left off:</p>
+    ${lastExtras}`
+          : `<p>This is our final reminder about ${escapeHtml(kids(args.childName))} story preview.</p>
+    ${lastExtras}`;
+    const outro =
+      variant === "first"
+        ? "<p>If you love it, approve it on that page and we will create the full adventure.</p>"
+        : "";
+    const html = renderEmailShell(
+      bodyOf(
+        cover,
+        "<p>Hi,</p>",
+        intro,
+        renderButton(args.link, buttonLabel),
+        outro,
+        renderSignOff("Cheers,"),
+        renderReminderFooterLine(
+          "You are receiving this because you made a story preview on Unilake.",
+          "Stop these emails",
+          args.stopUrl
+        )
+      )
+    );
+    return {
+      subject: cleanSubject(subject),
+      html: withPreheader(html, preheader),
+    };
+  }
+
+  if (args.kind === "BOOK_NOT_SENT") {
+    const subject =
+      variant === "first"
+        ? `Your ${title} storybook is ready for your approval`
+        : variant === "middle"
+          ? `Your ${title} storybook is still waiting for you`
+          : `Your ${title} storybook: a final reminder`;
+    const preheader =
+      variant === "first"
+        ? "We will not print anything until you say so."
+        : variant === "middle"
+          ? "It is ready whenever you are."
+          : "Need help? Our team is happy to assist.";
+    const intro =
+      variant === "first"
+        ? `<p>${escapeHtml(Kids(args.childName))} storybook is ready, and we are waiting for your go-ahead before we print it.</p>
+    <p>Look through the book and press "Send to Print" when you are happy with it:</p>`
+        : variant === "middle"
+          ? `<p>A gentle reminder: ${escapeHtml(kids(args.childName))} storybook is ready and has not been sent to print yet.</p>`
+          : `<p>This is our final reminder that ${escapeHtml(kids(args.childName))} storybook is ready and waiting for your approval.</p>
+    <p>If anything in the book is not right, contact us using the details below and we will help.</p>`;
+    const note =
+      variant === "last"
+        ? ""
+        : `<p><strong>Note:</strong> We will not print anything until you press "Send to Print".</p>`;
+    const html = renderEmailShell(
+      bodyOf(
+        "<p>Hi,</p>",
+        intro,
+        renderButton(args.link, "Review the Full Book"),
+        note,
+        renderSignOff("Cheers,"),
+        renderReminderFooterLine(
+          "This reminder is about your order.",
+          "Stop reminders about this book",
+          args.stopUrl
+        )
+      )
+    );
+    return {
+      subject: cleanSubject(subject),
+      html: withPreheader(html, preheader),
+    };
+  }
+
+  // REVIEW_REQUEST
+  const first = variant === "first";
+  const subject = first
+    ? `How was your ${title} book?`
+    : "A small favour, if you have a minute";
+  const preheader = first
+    ? "A short review means a lot to our small team."
+    : "Two lines is plenty.";
+  const intro = first
+    ? `<p>We hope ${escapeHtml(kids(args.childName))} ${escapeHtml(args.bookTitle)} book has been enjoyed since it arrived.</p>
+    <p>If you have a minute, a short review helps other families find us and means a lot to our small team:</p>`
+    : `<p>If ${escapeHtml(kids(args.childName))} book brought a smile, we would be grateful for a short review of ${escapeHtml(args.bookTitle)}:</p>`;
+  const html = renderEmailShell(
+    bodyOf(
+      "<p>Hi,</p>",
+      intro,
+      renderButton(args.link, "Leave a Review"),
+      first ? "<p>Thank you for choosing Unilake.</p>" : "",
+      renderSignOff(first ? "Happy reading," : "Thank you,"),
+      renderReminderFooterLine(
+        "You are receiving this because you ordered a book from Unilake.",
+        "Stop these emails",
+        args.stopUrl
+      )
+    )
+  );
+  return {
+    subject: cleanSubject(subject),
+    html: withPreheader(html, preheader),
+  };
+}
+
+// ── Admin broadcast (email D, feature 5) ────────────────────────────────────
+
+export type BroadcastEmailArgs = {
+  subject: string;
+  heading: string;
+  message: string;
+  buttonText: string | null;
+  buttonUrl: string | null;
+  /** True when the recipient ticked the marketing box; false when included only because they ordered. */
+  optedIn: boolean;
+  stopUrl: string;
+};
+
+/** The admin's text is plain: blank lines separate paragraphs, a single newline is a line break. Escaped. */
+function renderBroadcastParagraphs(message: string): string {
+  return message
+    .split(/\r?\n\s*\r?\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${escapeHtml(p).replace(/\r?\n/g, "<br />")}</p>`)
+    .join("\n    ");
+}
+
+export function renderBroadcastEmail(args: BroadcastEmailArgs): {
+  subject: string;
+  html: string;
+} {
+  const firstLine = args.message.trim().split(/\r?\n/)[0] ?? "";
+  const preheader = truncateByChars(firstLine, PREHEADER_MAX);
+  const html = renderEmailShell(
+    [
+      `<h2 style="margin:0 0 16px 0;font-size:20px;color:#222;">${escapeHtml(args.heading)}</h2>`,
+      renderBroadcastParagraphs(args.message),
+      args.buttonText && args.buttonUrl
+        ? renderButton(args.buttonUrl, args.buttonText)
+        : "",
+      renderSignOff("Cheers,"),
+      renderReminderFooterLine(
+        args.optedIn
+          ? "You are receiving this because you chose to hear from Unilake."
+          : "You are receiving this because you ordered from Unilake.",
+        "Unsubscribe",
+        args.stopUrl
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n    ")
+  );
+  return {
+    subject: cleanSubject(args.subject),
+    html: withPreheader(html, preheader),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic data deletion (feature 6): the customer paid after the files of their preview were deleted.
+// ---------------------------------------------------------------------------------------------
+
+/** "We received your payment, but the book could not be made": no link to a book, only what happens next. */
+function renderPaidAfterDeletionBody(args: BodyArgs): string {
+  return `
+    <p>Hi,</p>
+    <p>We received your payment for ${escapeHtml(kids(args.childName))} personalized book. Thank you.</p>
+    <p>Unfortunately we could not start making the book: the preview and the photo had already been deleted for your privacy before your payment arrived.</p>
+    <p>Nothing more is needed from you right now. Our team will contact you shortly to put this right, either with a new photo for the book or a full refund. You can also write to us at any time using the details below.</p>
+    ${renderSignOff("Regards,")}
+  `.trim();
+}
+
+/**
+ * Payment captured on a session whose files were already deleted. Caller: webhook.service handlePaymentCaptured,
+ * once per order (after the guarded paidAfterDeletionAt write), fire-and-forget. No link to a book.
+ */
+export async function notifyPaidAfterDeletion(
+  orderSessionId: string
+): Promise<NotifyResult> {
+  const session = await loadSessionContext(orderSessionId);
+  if (!session) {
+    logger.warn({ orderSessionId }, "[Notification] notifyPaidAfterDeletion — session not found, skipping");
+    return { sent: false, reason: "session_not_found" };
+  }
+
+  const to = resolveRecipient(session.notificationEmail, session.order?.notificationEmail);
+  if (!to) return { sent: false, reason: "no_recipient_email" };
+
+  return safeSend(
+    to,
+    "We received your payment: we will contact you about your book",
+    renderEmailShell(renderPaidAfterDeletionBody({ childName: session.childName }))
   );
 }
