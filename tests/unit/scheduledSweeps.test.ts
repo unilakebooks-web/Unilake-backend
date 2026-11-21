@@ -83,8 +83,10 @@ describe("runScheduledSweeps", () => {
     expect(sweeps.coupons).toHaveBeenCalledTimes(1);
     expect(sweeps.samples).toHaveBeenCalledTimes(1);
     expect(sweeps.deletion).toHaveBeenCalledTimes(1);
-    expect(out.results.slice(0, 5).every((r) => r.error === null)).toBe(true);
-    expect(out.results[5]).toMatchObject({ name: "reminder emails", count: null, error: "failed" });
+    const before = out.results.filter((r) => r.name !== "reminder emails" && r.name !== "broadcast emails");
+    expect(before).toHaveLength(5);
+    expect(before.every((r) => r.error === null)).toBe(true);
+    expect(out.results.find((r) => r.name === "reminder emails")).toMatchObject({ count: null, error: "failed" });
     expect(JSON.stringify(out)).not.toContain("resend is down");
   });
 
@@ -102,13 +104,12 @@ describe("runScheduledSweeps", () => {
     const out = await runScheduledSweeps();
     expect(sweeps.sessions).toHaveBeenCalledTimes(1);
     expect(sweeps.coupons).toHaveBeenCalledTimes(1);
-    expect(out.results[1]).toMatchObject({
-      name: "stuck pages",
+    expect(out.results.find((r) => r.name === "stuck pages")).toMatchObject({
       count: null,
       error: "failed",
     });
-    expect(out.results[0]?.error).toBeNull();
-    expect(out.results[2]?.error).toBeNull();
+    expect(out.results.find((r) => r.name === "expired sessions")?.error).toBeNull();
+    expect(out.results.find((r) => r.name === "expired coupons")?.error).toBeNull();
   });
 
   it("a second call while one is running does nothing, and runs again once it finished", async () => {
