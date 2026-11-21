@@ -19,11 +19,13 @@ import {
   resolveSharedImageKey,
   SHARE_NOT_FOUND_MESSAGE,
   revokeShare,
+  updateShareName,
 } from "../services/share.service.js";
 import {
   SHARE_BYTE_BUDGET,
   SHARE_CARD_CACHE_ENTRIES,
   SHARE_CARD_CONCURRENCY,
+  SHARE_CARD_DECODE_RESERVE_BYTES,
   SHARE_CARD_MAX_BYTES,
   SHARE_CARD_MAX_INPUT_PIXELS,
   SHARE_CARD_QUALITIES,
@@ -63,6 +65,17 @@ export const createShareHandler = asyncHandler(
       res,
       200,
       await createOrGetShare(req.params.sessionId as string, req.body?.showName)
+    );
+  }
+);
+
+export const updateShareHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    noTrace(res);
+    sendSuccess(
+      res,
+      200,
+      await updateShareName(req.params.sessionId as string, req.body.showName)
     );
   }
 );
@@ -224,8 +237,19 @@ function isStorageSlow(error: unknown): boolean {
   return (
     e?.name === "AbortError" ||
     e?.name === "TimeoutError" ||
+    e?.name === "StorageObjectCutError" ||
     e?.code === "ERR_STREAM_PREMATURE_CLOSE"
   );
+}
+
+/** Sends the finished body, with a deadline so a client that does not read cannot hold it. */
+function sendBody(res: Response, body: Buffer) {
+  // The client left while the body was being made: nothing to send and no timer to leave behind.
+  if (res.destroyed) return;
+  res.setHeader("Content-Length", String(body.length));
+  const deadline = setTimeout(() => res.destroy(), SHARE_WRITE_DEADLINE_MS);
+  res.once("close", () => clearTimeout(deadline));
+  res.status(200).end(body);
 }
 
 function serveImage(kind: "image" | "card") {
@@ -248,17 +272,36 @@ function serveImage(kind: "image" | "card") {
       if (!key) return answerImageError(res, 404);
 
       const contentType = kind === "card" ? "image/jpeg" : "image/webp";
+      const tagFor = (etag: string | undefined) =>
+        kind === "card" ? cardEtag(etag) : etag;
 
-      if (req.method === "HEAD") {
+      // A HEAD request, a conditional request and a card (whose finished copy may be in the cache) are answered from
+      // the object's size and ETag alone: the object itself is opened only when its bytes are needed.
+      if (
+        req.method === "HEAD" ||
+        req.headers["if-none-match"] ||
+        kind === "card"
+      ) {
         const head = await headObjectChecked(key, SHARE_FIRST_BYTE_TIMEOUT_MS);
         if (!head) return answerImageError(res, 404);
-        setImageHeaders(
-          res,
-          kind === "card" ? cardEtag(head.etag) : head.etag,
-          contentType
-        );
-        res.status(200).end();
-        return;
+        setImageHeaders(res, tagFor(head.etag), contentType);
+        if (req.method === "HEAD") {
+          res.status(200).end();
+          return;
+        }
+        if (req.fresh) {
+          res.status(304).end();
+          return;
+        }
+        const cached =
+          kind === "card" && head.etag
+            ? cardCache.get(`${token}:${pageNumberText}:${head.etag}`)
+            : undefined;
+        if (cached) {
+          if (!(await reserveOrAnswer(res, cached.length, gone.signal))) return;
+          sendBody(res, cached);
+          return;
+        }
       }
 
       opened = await openObjectChecked(key, {
@@ -267,49 +310,29 @@ function serveImage(kind: "image" | "card") {
         readDeadlineMs: SHARE_READ_DEADLINE_MS,
       });
       if (!opened) return answerImageError(res, 404);
-
-      setImageHeaders(
-        res,
-        kind === "card" ? cardEtag(opened.etag) : opened.etag,
-        contentType
-      );
-      if (req.fresh) {
-        res.status(304).end();
-        return;
-      }
-
-      // The object's ETag came with its headers, so a card that is already converted is answered without reading
-      // the object and reserves only the size of the card. Without an ETag nothing is cached.
-      const cacheKey = opened.etag
-        ? `${token}:${pageNumberText}:${opened.etag}`
-        : null;
-      const cached =
-        kind === "card" && cacheKey ? cardCache.get(cacheKey) : undefined;
+      // The object may have changed since the HEAD: the headers follow the bytes that are sent.
+      setImageHeaders(res, tagFor(opened.etag), contentType);
 
       let body: Buffer;
-      if (cached) {
-        opened.discard();
-        if (!(await reserveOrAnswer(res, cached.length, gone.signal))) return;
-        body = cached;
+      if (kind === "card") {
+        // A card is decoded in memory as well as read: reserve for both.
+        const bytes = opened.contentLength + SHARE_CARD_DECODE_RESERVE_BYTES;
+        if (!(await reserveOrAnswer(res, bytes, gone.signal))) return;
+        const cacheKey = opened.etag
+          ? `${token}:${pageNumberText}:${opened.etag}`
+          : null;
+        const card = await cardBody(opened, cacheKey, gone.signal);
+        if (card.retryLater) {
+          res.setHeader("Retry-After", String(SHARE_RETRY_AFTER_SECONDS));
+          return answerImageError(res, 503);
+        }
+        body = card.body;
       } else {
         if (!(await reserveOrAnswer(res, opened.contentLength, gone.signal)))
           return;
-        if (kind === "card") {
-          const card = await cardBody(opened, cacheKey, gone.signal);
-          if (card.retryLater) {
-            res.setHeader("Retry-After", String(SHARE_RETRY_AFTER_SECONDS));
-            return answerImageError(res, 503);
-          }
-          body = card.body;
-        } else {
-          body = await opened.read();
-        }
+        body = await opened.read();
       }
-
-      res.setHeader("Content-Length", String(body.length));
-      const deadline = setTimeout(() => res.destroy(), SHARE_WRITE_DEADLINE_MS);
-      res.once("close", () => clearTimeout(deadline));
-      res.status(200).end(body);
+      sendBody(res, body);
     } catch (error) {
       // The client left (its close aborted the read): there is nobody to answer.
       if (gone.signal.aborted) return;

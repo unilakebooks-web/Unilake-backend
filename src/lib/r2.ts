@@ -235,6 +235,14 @@ export const downloadFileToBuffer = async (
 
 // ── Share routes (feature 14) ────────────────────────────────────────────────────────────
 
+/** Thrown when a body ends before the size the object reported: a cut read, worth trying again. */
+export class StorageObjectCutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StorageObjectCutError";
+  }
+}
+
 /** Thrown when an object is bigger than the caller allows, or does not say how big it is. */
 export class StorageObjectRefusedError extends Error {
   constructor(message: string) {
@@ -245,6 +253,8 @@ export class StorageObjectRefusedError extends Error {
 
 const isMissingObject = (error: unknown): boolean => {
   const e = error as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+  // A missing bucket is a wrong setting, not a missing object: it must not read as "not found".
+  if (e?.name === "NoSuchBucket" || e?.Code === "NoSuchBucket") return false;
   return e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.Code === "NoSuchKey" || e?.$metadata?.httpStatusCode === 404;
 };
 
@@ -309,6 +319,11 @@ export const openObjectChecked = async (
     discard();
     throw new StorageObjectRefusedError("The object does not report its size");
   }
+  if (contentLength === 0) {
+    // An empty object (an interrupted write) is not an image.
+    discard();
+    throw new StorageObjectRefusedError("The object is empty");
+  }
   if (contentLength > options.maxBytes) {
     discard();
     throw new StorageObjectRefusedError("The object is larger than allowed");
@@ -330,6 +345,7 @@ export const openObjectChecked = async (
         chunks.push(buffer);
       }
       // A body that is not the size the object reported was cut short or is not this object.
+      if (total < contentLength) throw new StorageObjectCutError("The body ended before the reported size");
       if (total !== contentLength) throw new StorageObjectRefusedError("The object is not the size it reported");
       return Buffer.concat(chunks, total);
     } finally {

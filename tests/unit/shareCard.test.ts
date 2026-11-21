@@ -20,7 +20,7 @@ import { toCardJpeg } from "../../src/controllers/share.controller.js";
 describe("toCardJpeg", () => {
   it("makes a 1200 px wide JPEG under 300 KB from a flat page", async () => {
     const source = await sharp({
-      create: { width: 1600, height: 2000, channels: 3, background: "#2a9d8f" },
+      create: { width: 1200, height: 1600, channels: 3, background: "#2a9d8f" },
     })
       .webp()
       .toBuffer();

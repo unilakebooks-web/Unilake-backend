@@ -4,7 +4,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { OrderSessionStatus } from "../generated/prisma/client.js";
 import { NotFoundError } from "../utils/errors.js";
 import { publicUrlToKey } from "../utils/deletionKeys.js";
-import { SHARE_TOKEN_SHAPE } from "../config/share.js";
+import { SHARE_NAME_MAX_CHARS, SHARE_TOKEN_SHAPE } from "../config/share.js";
 import { EXPIRY_EXEMPT_STATUSES } from "./session.service.js";
 
 // The view-only share link of a customer's book (feature 14). Plan: docs/phase2/features/09-sharing/PLAN.md.
@@ -67,6 +67,12 @@ export function sharedImageKey(sessionId: string, url: string): string | null {
   const prefix = `sessions/${sessionId}/final/`;
   if (!key.startsWith(prefix)) return null;
   return /^[A-Za-z0-9._-]+\.webp$/.test(key.slice(prefix.length)) ? key : null;
+}
+
+/** The first word of a name, at most SHARE_NAME_MAX_CHARS characters: all the share ever sends of a child's name. */
+export function firstWord(name: string | null | undefined): string {
+  const word = (name ?? "").trim().split(/\s+/)[0] ?? "";
+  return Array.from(word).slice(0, SHARE_NAME_MAX_CHARS).join("");
 }
 
 const newToken = () => randomBytes(24).toString("base64url");
@@ -164,12 +170,40 @@ export async function createOrGetShare(
       where: { orderSessionId: sessionId },
     });
   } else if (showName !== undefined && showName !== share.showName) {
-    share = await prisma.sessionShare.update({
-      where: { id: share.id },
+    // Guarded: a share stopped in the meantime is not changed here (the re-read shows it as stopped).
+    await prisma.sessionShare.updateMany({
+      where: { id: share.id, revokedAt: null },
       data: { showName },
+    });
+    share = await prisma.sessionShare.findUnique({
+      where: { orderSessionId: sessionId },
     });
   }
   if (!share) throw new NotFoundError("Session not found");
+  return { token: share.token, showName: share.showName };
+}
+
+/**
+ * Changes only the name flag of a LIVE share. A stopped share is never brought back by this (the customer's dialog may
+ * be stale): it answers not found, and the page shows the real state.
+ */
+export async function updateShareName(
+  sessionId: string,
+  showName: boolean,
+  now = new Date()
+): Promise<{ token: string; showName: boolean }> {
+  const session = await loadSessionFacts(sessionId);
+  if (isSessionGone(session, now)) throw new NotFoundError("Session not found");
+  const result = await prisma.sessionShare.updateMany({
+    where: { orderSessionId: sessionId, revokedAt: null },
+    data: { showName },
+  });
+  if (result.count === 0) throw new NotFoundError("Sharing is not active");
+  const share = await prisma.sessionShare.findUnique({
+    where: { orderSessionId: sessionId },
+  });
+  if (!share || share.revokedAt)
+    throw new NotFoundError("Sharing is not active");
   return { token: share.token, showName: share.showName };
 }
 
@@ -256,6 +290,12 @@ function listablePages(session: LiveShareSession) {
   const unpaid = isUnpaid(session);
   const byPage = new Map<number, typeof session.pageVersions>();
   for (const version of session.pageVersions) {
+    // Only a variant whose image the image route can serve counts: the list and the route must agree.
+    if (
+      !version.displayImageUrl ||
+      !sharedImageKey(session.id, version.displayImageUrl)
+    )
+      continue;
     const list = byPage.get(version.page.pageNumber) ?? [];
     list.push(version);
     byPage.set(version.page.pageNumber, list);
@@ -297,8 +337,8 @@ export async function getSharedBook(
     ready: pages.length > 0,
     complete: pages.length + lockedCount === total,
   };
-  if (share.showName && share.orderSession.childName)
-    book.childName = share.orderSession.childName;
+  const first = share.showName ? firstWord(share.orderSession.childName) : "";
+  if (first) book.childName = first;
   return book;
 }
 

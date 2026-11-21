@@ -23,6 +23,7 @@ import {
   headObjectChecked,
   openObjectChecked,
   r2Client,
+  StorageObjectCutError,
   StorageObjectRefusedError,
 } from "../../src/lib/r2.js";
 
@@ -94,6 +95,13 @@ describe("openObjectChecked", () => {
     );
   });
 
+  it("refuses an empty object", async () => {
+    send(async () => ({ Body: body([]), ContentLength: 0 }));
+    await expect(openObjectChecked("k", OPTIONS)).rejects.toBeInstanceOf(
+      StorageObjectRefusedError
+    );
+  });
+
   it("accepts exactly the limit and refuses one byte more", async () => {
     send(async () => ({
       Body: body([Buffer.alloc(1000)]),
@@ -122,12 +130,10 @@ describe("openObjectChecked", () => {
     );
   });
 
-  it("refuses a body shorter than the size the object reported", async () => {
+  it("reports a body shorter than the size the object reported as cut (worth trying again), not as refused", async () => {
     send(async () => ({ Body: body([Buffer.alloc(500)]), ContentLength: 600 }));
     const opened = await openObjectChecked("k", OPTIONS);
-    await expect(opened!.read()).rejects.toBeInstanceOf(
-      StorageObjectRefusedError
-    );
+    await expect(opened!.read()).rejects.toBeInstanceOf(StorageObjectCutError);
   });
 
   it("refuses a body that is not the size the header says, even when both are under the limit", async () => {

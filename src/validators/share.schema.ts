@@ -7,3 +7,10 @@ export const createShareSchema = z
   })
   .strict()
   .optional();
+
+// Change only the name flag of a live link.
+export const updateShareSchema = z
+  .object({
+    showName: z.boolean(),
+  })
+  .strict();

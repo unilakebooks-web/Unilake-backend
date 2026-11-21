@@ -23,6 +23,7 @@ import app from "../../src/app.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { config } from "../../src/config/env.js";
 import { deletePrefix, r2Client, uploadFile } from "../../src/lib/r2.js";
+import { logger } from "../../src/lib/logger.js";
 
 const MARK = "__vitest_share__";
 const RUN = Math.random().toString(36).slice(2, 8);
@@ -336,13 +337,13 @@ describe("the shared book payload", () => {
     await share(s.id, { showName: true });
     expect(
       (await call("GET", `/api/public/shares/${t}`)).json.data.childName
-    ).toBe("Aarav Kumar");
+    ).toBe("Aarav");
     // a body without the field leaves it on; {} too
     await share(s.id);
     await share(s.id, {});
     expect(
       (await call("GET", `/api/public/shares/${t}`)).json.data.childName
-    ).toBe("Aarav Kumar");
+    ).toBe("Aarav");
     await share(s.id, { showName: false });
     expect(
       (await call("GET", `/api/public/shares/${t}`)).json.data
@@ -476,6 +477,10 @@ describe("the share images", () => {
           `${path} ${bad}`
         ).toBe(404);
       }
+      // The list agrees with the route: a page whose image cannot be served is not listed.
+      const book = await call("GET", `/api/public/shares/${t}`);
+      expect(book.json.data.pages, bad).toEqual([]);
+      expect(book.json.data.ready, bad).toBe(false);
     }
   });
 });
@@ -1003,5 +1008,146 @@ describe("when storage does not behave", () => {
       expect(r.headers["cache-control"]).toBe("no-store");
       expect(r.raw.toString("utf8")).not.toContain("sessions/");
     }
+  });
+});
+
+describe("the name is only ever a first name", () => {
+  it("sends the first word only, in the JSON and in nothing else, even for a long multi-word name", async () => {
+    const s = await mk({ childName: "Aarav Kumar Sharma" });
+    const t = tokenOf(await share(s.id, { showName: true }));
+    const read = await call("GET", `/api/public/shares/${t}`);
+    expect(read.json.data.childName).toBe("Aarav");
+    expect(read.raw.toString("utf8")).not.toContain("Kumar");
+    expect(read.raw.toString("utf8")).not.toContain("Sharma");
+    const long = await mk({ childName: "A".repeat(50) });
+    const t2 = tokenOf(await share(long.id, { showName: true }));
+    expect(
+      (await call("GET", `/api/public/shares/${t2}`)).json.data.childName
+    ).toBe("A".repeat(30));
+  });
+});
+
+describe("changing only the name flag", () => {
+  const patch = (sessionId: string, body: unknown) =>
+    call("PATCH", `/api/public/sessions/${sessionId}/share`, {
+      body: JSON.stringify(body),
+    });
+
+  it("changes a live link and never brings a stopped one back", async () => {
+    const s = await mk();
+    const t = tokenOf(await share(s.id));
+    const on = await patch(s.id, { showName: true });
+    expect(on.status).toBe(200);
+    expect(on.json.data).toEqual({ token: t, showName: true });
+    expect(
+      (await call("GET", `/api/public/shares/${t}`)).json.data.childName
+    ).toBe("Aarav");
+    expect((await patch(s.id, { showName: false })).json.data.showName).toBe(
+      false
+    );
+    await call("DELETE", `/api/public/sessions/${s.id}/share`);
+    expect((await patch(s.id, { showName: true })).status).toBe(404);
+    // The stopped link's own setting is left alone, not just hidden behind the 404.
+    expect(
+      (
+        await prisma.sessionShare.findUniqueOrThrow({
+          where: { orderSessionId: s.id },
+        })
+      ).showName
+    ).toBe(false);
+    const state = await call("GET", `/api/public/sessions/${s.id}/share`);
+    expect(state.json.data).toEqual({
+      available: true,
+      active: false,
+      token: null,
+      showName: false,
+    });
+    expect((await call("GET", `/api/public/shares/${t}`)).status).toBe(404);
+  });
+
+  it("is refused for a session with no share, a sample, a gone book and a missing session; and refuses bad bodies", async () => {
+    const none = await mk();
+    expect((await patch(none.id, { showName: true })).status).toBe(404);
+    const sample = await mk({ sample: true });
+    expect((await patch(sample.id, { showName: true })).status).toBe(404);
+    const gone = await mk({ marker: "files" });
+    expect((await patch(gone.id, { showName: true })).status).toBe(404);
+    expect((await patch(crypto.randomUUID(), { showName: true })).status).toBe(
+      404
+    );
+    const live = await mk();
+    await share(live.id);
+    for (const bad of [
+      undefined,
+      {},
+      { showName: "true" },
+      { showName: 1 },
+      { showName: null },
+      { showName: true, extra: 1 },
+      [],
+    ]) {
+      const r = await call(
+        "PATCH",
+        `/api/public/sessions/${live.id}/share`,
+        bad === undefined ? {} : { body: JSON.stringify(bad) }
+      );
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+    }
+    for (const r of [
+      await patch(live.id, { showName: true }),
+      await patch(none.id, { showName: true }),
+    ]) {
+      expect(r.headers["cache-control"]).toBe("no-store");
+      expect(r.headers["referrer-policy"]).toBe("no-referrer");
+    }
+  });
+});
+
+describe("other states and failures", () => {
+  it("answers a database failure on the shared read with 500, uncached, and logs no token", async () => {
+    const t = "D".repeat(32);
+    const failure = new Error(`boom for ${t}`);
+    // The delegate is swapped for this test only and put back by hand (a spy on a Prisma delegate breaks it).
+    const holder = prisma as unknown as { sessionShare: unknown };
+    const original = holder.sessionShare;
+    Object.defineProperty(holder, "sessionShare", {
+      value: { findUnique: () => Promise.reject(failure) },
+      configurable: true,
+      writable: true,
+    });
+    const spyLog = vi.spyOn(logger, "error");
+    try {
+      const r = await call("GET", `/api/public/shares/${t}`);
+      expect(r.status).toBe(500);
+      expect(r.headers["cache-control"]).toBe("no-store");
+      expect(r.raw.toString("utf8")).not.toContain(t);
+      expect(JSON.stringify(spyLog.mock.calls)).not.toContain(t);
+      const img = await call("GET", `/api/public/shares/${t}/pages/1/image`);
+      expect(img.status).toBe(500);
+      expect(img.headers["cache-control"]).toBe("no-store");
+      expect(JSON.stringify(spyLog.mock.calls)).not.toContain(t);
+    } finally {
+      Object.defineProperty(holder, "sessionShare", {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+      spyLog.mockRestore();
+    }
+  });
+
+  it("anyone holding the session id can create a link, whoever owns the session (the session id is the credential)", async () => {
+    const s = await mk();
+    await prisma.orderSession.update({
+      where: { id: s.id },
+      data: { userId: null },
+    });
+    expect((await share(s.id)).status).toBe(200);
+  });
+
+  it("treats a trailing slash like the same route", async () => {
+    const s = await mk();
+    const t = tokenOf(await share(s.id));
+    expect((await call("GET", `/api/public/shares/${t}/`)).status).toBe(200);
   });
 });

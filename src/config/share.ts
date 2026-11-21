@@ -30,9 +30,14 @@ export const SHARE_IMAGE_MAX_AGE_SECONDS = 60;
 
 /** The link-preview card: a JPEG this wide, kept under this size. */
 export const SHARE_CARD_WIDTH = 1200;
-/** A page image is at most 1600 px on its long edge (lib/image.ts); a larger decode is refused, not converted. */
-export const SHARE_CARD_MAX_INPUT_PIXELS = 4_000_000;
+/** A page image is at most 1600 x 1600 px (lib/image.ts); a larger decode is refused, not converted. */
+export const SHARE_CARD_MAX_INPUT_PIXELS = 2_700_000;
+/** Memory a card conversion needs beyond the file itself: the decoded image, 4 bytes a pixel, rounded up. */
+export const SHARE_CARD_DECODE_RESERVE_BYTES = 11_000_000;
 export const SHARE_CARD_MAX_BYTES = 300 * 1024;
 export const SHARE_CARD_QUALITIES = [80, 70, 60];
 export const SHARE_CARD_CONCURRENCY = 2;
 export const SHARE_CARD_CACHE_ENTRIES = 20;
+
+/** The most characters of a child's first name a share ever sends (the frontend cuts at the same length, by letter). */
+export const SHARE_NAME_MAX_CHARS = 30;

@@ -35,8 +35,9 @@ import {
   getSharedCardHandler,
   getSharedImageHandler,
   revokeShareHandler,
+  updateShareHandler,
 } from "../controllers/share.controller.js";
-import { createShareSchema } from "../validators/share.schema.js";
+import { createShareSchema, updateShareSchema } from "../validators/share.schema.js";
 import {
   applyUnsubscribeHandler,
   getUnsubscribeInfoHandler,
@@ -61,6 +62,7 @@ router.post("/sessions/:sessionId/coupon-preview", requireLoggedIn, previewCoupo
 router.get("/sessions/:sessionId/coupon-offers", requireLoggedIn, listCouponOffersHandler); // read-only: the coupons that fit this order right now
 router.get("/sessions/:sessionId/share", getShareStateHandler); // the Share button: is sharing possible, and is a link live
 router.post("/sessions/:sessionId/share", validateBody(createShareSchema), createShareHandler); // create or return the view-only link
+router.patch("/sessions/:sessionId/share", validateBody(updateShareSchema), updateShareHandler); // change only the name flag of a live link
 router.delete("/sessions/:sessionId/share", revokeShareHandler); // stop sharing
 
 // the view-only shared book: the share token is the only credential, and it is never the session id
