@@ -26,6 +26,7 @@ import {
   GHOST_MIN_COUNT,
   HOUR_MS,
   LEASE_STALE_MS,
+  MAX_CONSECUTIVE_ITEM_ERRORS,
   VERDICT_GATHER_LIMIT,
 } from "../config/dataDeletion.js";
 import {
@@ -55,6 +56,7 @@ import {
   createRunContext,
   gatherPaymentVerdict,
   ghostRateExceeded,
+  isUnreachable,
   processCandidate,
   processComicItem,
   releaseLease,
@@ -115,6 +117,17 @@ async function writeReport(
     blockTtlMs: RAZORPAY_VERDICT_TTL_MS,
     onlyComicId: ctx.deps.onlyComicId,
   });
+  // A preview with an unpaid order whose payment status has not been checked yet is listed apart and never approved.
+  let notChecked: string[] = [];
+  if (group === "PREVIEWS") {
+    const clear = await freshClearVerdicts(selection.candidates, now);
+    const unchecked = selection.candidates.filter(
+      (c) => c.orderId && !clear.has(c.orderId)
+    );
+    notChecked = unchecked.map(pairKey);
+    const skip = new Set(unchecked.map(pairKey));
+    selection.candidates = selection.candidates.filter((c) => !skip.has(pairKey(c)));
+  }
   // The delivery-clock and kept-order lists are about delivered books: only the PHOTOS and BOOKS reports carry them.
   const extra =
     group === "PREVIEWS"
@@ -123,6 +136,11 @@ async function writeReport(
   const objectCounts: Record<string, number> = {};
   const sample = selection.candidates.slice(0, REPORT_SAMPLE_SIZE);
   for (const c of sample) {
+    // Sampling stops at the run deadline or on the first storage fault: the report then says it is partial.
+    if (ctx.deps.now().getTime() >= ctx.deadlineAt) {
+      objectCounts["partial"] = 1;
+      break;
+    }
     try {
       if (c.scope === "SESSION" || c.scope === "PAGES" || c.scope === "PHOTO") {
         const prefix =
@@ -145,6 +163,10 @@ async function writeReport(
         "[Data deletion] a report count failed"
       );
       objectCounts["error"] = (objectCounts["error"] ?? 0) + 1;
+      if (isUnreachable(error)) {
+        objectCounts["partial"] = 1;
+        break;
+      }
     }
   }
   const proof: Record<string, string> = {};
@@ -189,6 +211,7 @@ async function writeReport(
         legacyPdf: selection.lists.legacyPdf.slice(0, REPORT_ID_CAP),
         keptOrders: extra.keptOrders,
         blocked: selection.lists.blocked.slice(0, REPORT_ID_CAP),
+        notChecked: notChecked.slice(0, REPORT_ID_CAP),
       } as Prisma.InputJsonValue,
     },
   });
@@ -232,10 +255,53 @@ async function gatherVerdicts(ctx: RunContext, now: Date): Promise<void> {
   ctx.eventHits = await eventHitRazorpayIds(
     await createdOrderRazorpayIds(selection.candidates)
   );
-  for (const candidate of selection.candidates) {
+  // Ask about each order at most once a day: skip a clear verdict under 24 hours old, and ask the least recently
+  // checked (or never checked) first, so every due preview gets its turn within the call budget.
+  const verdicts = await freshClearVerdicts(selection.candidates, now);
+  const checkedAt = await verdictTimes(selection.candidates);
+  const waiting = selection.candidates
+    .filter((c) => !c.orderId || !verdicts.has(c.orderId))
+    .sort(
+      (a, b) =>
+        (checkedAt.get(a.orderId ?? "") ?? 0) -
+        (checkedAt.get(b.orderId ?? "") ?? 0)
+    );
+  for (const candidate of waiting) {
     if (ctx.razorpayBudget.left <= 0) break;
     await gatherPaymentVerdict(ctx, candidate);
   }
+}
+
+/** Order ids of these candidates that have a "clear" verdict made in the last 24 hours. */
+async function freshClearVerdicts(
+  candidates: DeletionCandidate[],
+  now: Date
+): Promise<Set<string>> {
+  const ids = candidates.map((c) => c.orderId).filter((v): v is string => !!v);
+  if (ids.length === 0) return new Set();
+  const rows = await prisma.deletionBlock.findMany({
+    where: {
+      subjectId: { in: ids },
+      reason: "clear",
+      checkedAt: { gt: new Date(now.getTime() - RAZORPAY_VERDICT_TTL_MS) },
+    },
+    select: { subjectId: true },
+  });
+  return new Set(rows.map((r) => r.subjectId));
+}
+
+/** When each of these orders last got a verdict (milliseconds; missing means never). */
+async function verdictTimes(
+  candidates: DeletionCandidate[]
+): Promise<Map<string, number>> {
+  const ids = candidates.map((c) => c.orderId).filter((v): v is string => !!v);
+  const rows = ids.length
+    ? await prisma.deletionBlock.findMany({
+        where: { subjectId: { in: ids } },
+        select: { subjectId: true, checkedAt: true },
+      })
+    : [];
+  return new Map(rows.map((r) => [r.subjectId, r.checkedAt.getTime()]));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -272,6 +338,8 @@ async function pauseGroup(
         ? {
             mode: "REPORT_ONLY",
             modeChangedAt: now,
+            // A fresh report is written on the next tick: a group needs one after every mode change.
+            lastReportAt: null,
             approvedRunId: null,
             approvedSelectionVersion: null,
             approvedAt: null,
@@ -329,6 +397,25 @@ async function runActiveGroup(
     await pauseGroup(group, "buckets_equal", now, false, summary);
     return;
   }
+  // A pause for repeated item errors ends only when an admin has dealt with the stuck items (retry, release or undo).
+  if (settings.pausedReason === "repeated_errors") {
+    const open = await prisma.deletionItem.count({
+      where: { scope: { in: GROUP_SCOPES[group] }, state: { in: ["CLAIMED", "FAILED"] } },
+    });
+    if (open > 0) {
+      logger.error({ group, open }, "[Data deletion] the group is still paused: items need an admin");
+      return;
+    }
+  }
+  // A pause because storage could not be reached ends when a storage call works again.
+  if (settings.pausedReason === "storage_unreachable") {
+    try {
+      await bucketProof(ctx, "public_pages");
+    } catch (error) {
+      logger.error({ err: error, group }, "[Data deletion] the group is still paused: storage is not reachable");
+      return;
+    }
+  }
   // A pause caused by a failed bucket proof ends only when the proof is checked again and holds (no throw while it lasts).
   if (settings.pausedReason?.startsWith("proof_failed:")) {
     const kind = settings.pausedReason.slice(
@@ -377,10 +464,16 @@ async function runActiveGroup(
       orderBy: { claimedAt: "asc" },
       take: 50,
     });
+    let consecutiveErrors = 0;
     for (const item of claimed) {
       if (!(await stillActive())) return;
       const outcome = await resumeItem(ctx, item);
       if (outcome) summary.attempted += 1;
+      consecutiveErrors = outcome?.kind === "failed" ? consecutiveErrors + 1 : 0;
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ITEM_ERRORS) {
+        await pauseGroup(group, "repeated_errors", ctx.deps.now(), false, summary);
+        return;
+      }
     }
     // A retired comic's files (BOOKS only): asked for by an admin, so outside dailyMax and the approved set.
     if (group === "BOOKS") {
@@ -454,12 +547,18 @@ async function runActiveGroup(
       }
     }
     let left = remaining;
+    let failedInARow = 0;
     for (const candidate of due) {
       if (left <= 0) break;
       if (!(await stillActive())) return;
       const outcome = await processCandidate(ctx, candidate);
       summary.attempted += 1;
       if (outcome.kind === "done" || outcome.kind === "failed") left -= 1;
+      failedInARow = outcome.kind === "failed" ? failedInARow + 1 : 0;
+      if (failedInARow >= MAX_CONSECUTIVE_ITEM_ERRORS) {
+        await pauseGroup(group, "repeated_errors", ctx.deps.now(), false, summary);
+        return;
+      }
       if (outcome.kind === "done" && outcome.ghost) {
         const since = new Date(
           Math.max(
@@ -476,13 +575,8 @@ async function runActiveGroup(
   } catch (error) {
     if (error instanceof DeadlineStop) return;
     if (error instanceof RunStop) {
-      summary.transitions.push(`${group} stopped: ${error.reason}`);
-      if (error.reason.startsWith("proof_failed")) {
-        await pauseGroup(group, error.reason, ctx.deps.now(), false, {
-          attempted: 0,
-          transitions: [],
-        });
-      }
+      // A stop is a pause: it throws once (when it begins) and then logs one line per run while it lasts.
+      await pauseGroup(group, error.reason, ctx.deps.now(), false, summary);
       return;
     }
     throw error;
@@ -597,8 +691,9 @@ async function reverifyDoneItems(
 }
 
 let lastPurgeAt = 0;
-async function purgeOldRows(now: Date): Promise<void> {
-  if (now.getTime() - lastPurgeAt < HOUR_MS) return;
+/** Purges our own old rows (at most once an hour; `force` is for tests). */
+export async function purgeOldRows(now: Date, force = false): Promise<void> {
+  if (!force && now.getTime() - lastPurgeAt < HOUR_MS) return;
   lastPurgeAt = now.getTime();
   const runCut = new Date(now.getTime() - DELETION_RUN_RETENTION_DAYS * DAY_MS);
   const itemCut = new Date(
@@ -621,8 +716,15 @@ async function purgeOldRows(now: Date): Promise<void> {
   await prisma.deletionRun.deleteMany({
     where: { startedAt: { lt: runCut }, id: { notIn: keep } },
   });
+  // DONE items are purged once re-verified long ago; ADDRESS and COMIC items are never re-verified, so by their done time.
   await prisma.deletionItem.deleteMany({
-    where: { state: "DONE", reverifiedAt: { lt: itemCut } },
+    where: {
+      state: "DONE",
+      OR: [
+        { reverifiedAt: { lt: itemCut } },
+        { scope: { in: ["ADDRESS", "COMIC"] }, doneAt: { lt: itemCut } },
+      ],
+    },
   });
   await prisma.deletionBlock.deleteMany({
     where: {
@@ -808,6 +910,8 @@ export async function setGroupMode(
         mode: input.mode,
         modeChangedAt: now,
         modeChangedByEmail: adminEmail,
+        // A fresh report is written on the next tick: a group needs one after every mode change.
+        lastReportAt: null,
         approvedRunId: null,
         approvedSelectionVersion: null,
         approvedAt: null,
@@ -834,6 +938,12 @@ export async function setGroupMode(
   if (now.getTime() - report.startedAt.getTime() > REPORT_VALID_MS) {
     throw new ConflictError(
       "The report is older than 7 days. Wait for a new one."
+    );
+  }
+  // The report must have been made after the group's last mode change (a pause or a switch needs a fresh one).
+  if (report.startedAt.getTime() < current.modeChangedAt.getTime()) {
+    throw new ConflictError(
+      "This group changed mode after that report was made. Wait for a new report."
     );
   }
   if (report.selectionVersion !== SELECTION_VERSION[group]) {
@@ -1073,6 +1183,17 @@ export async function undoGhosts(
 async function clearMarkerAndItem(id: string): Promise<void> {
   const item = await prisma.deletionItem.findUniqueOrThrow({ where: { id } });
   await prisma.$transaction(async (tx) => {
+    // The same locks as the claim and the payment webhook (order first, then session), and a payment that was
+    // recorded after deletion in the meantime still stops the release.
+    if (item.scope === "PDF") {
+      await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${item.subjectId} FOR UPDATE`;
+    } else {
+      const orders = await tx.$queryRaw<{ paidAfterDeletionAt: Date | null }[]>`SELECT "paidAfterDeletionAt" FROM "orders" WHERE "orderSessionId" = ${item.subjectId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "order_sessions" WHERE "id" = ${item.subjectId} FOR UPDATE`;
+      if (orders[0]?.paidAfterDeletionAt) {
+        throw new ConflictError("A payment arrived after deletion: this item cannot be released.");
+      }
+    }
     if (item.scope === "SESSION") {
       await tx.$executeRaw`UPDATE "order_sessions" SET "photoDeletedAt" = NULL, "filesDeletedAt" = NULL WHERE "id" = ${item.subjectId}`;
     } else if (item.scope === "PHOTO") {

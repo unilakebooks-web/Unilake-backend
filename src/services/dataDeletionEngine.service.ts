@@ -177,8 +177,19 @@ export function isUnreachable(error: unknown): boolean {
     ].includes(err?.code ?? "")
   )
     return true;
+  // A refused or revoked storage token (401, 403) is a setup fault, not this item: the run must stop, never mark.
+  if (
+    [
+      "AccessDenied",
+      "InvalidAccessKeyId",
+      "SignatureDoesNotMatch",
+      "Forbidden",
+      "Unauthorized",
+    ].includes(err?.name ?? "")
+  )
+    return true;
   const status = err?.$metadata?.httpStatusCode;
-  return typeof status === "number" && status >= 500;
+  return typeof status === "number" && (status >= 500 || status === 401 || status === 403);
 }
 
 const sessionInclude = {
@@ -895,8 +906,11 @@ async function finishClaimedItem(
         await finishDone(item, ctx.deps.now(), false);
         return { kind: "done", deleted: 1, ghost: false };
       }
-      await finishDone(item, ctx.deps.now(), true, "ghost_pdf");
+      // The object is absent: a resumed item has not seen the bucket proof, so it needs it before it can be DONE.
+      if ((await bucketProof(ctx, "pdfs")) === "failed") throw new RunStop("proof_failed:pdfs");
+      await finishDone(item, ctx.deps.now(), true, "ghost_evidenced");
       ctx.counters.ghosts += 1;
+      ctx.counters.ghostsEvidenced += 1;
       return { kind: "done", deleted: 0, ghost: true };
     }
     if (!plan) return failNow(ctx, item, "no_plan");
@@ -1177,8 +1191,12 @@ export async function ghostRateExceeded(
   scopes: DeletionScope[],
   since: Date
 ): Promise<boolean> {
+  // ADDRESS and COMIC items have no storage listing to be a ghost of: they do not count in the rate.
   const items = await prisma.deletionItem.findMany({
-    where: { scope: { in: scopes }, claimedAt: { gte: since } },
+    where: {
+      scope: { in: scopes.filter((s) => s !== "ADDRESS" && s !== "COMIC") },
+      claimedAt: { gte: since },
+    },
     select: { ghost: true, lastError: true },
   });
   if (items.length === 0) return false;

@@ -447,6 +447,14 @@ describe("A, the unfinished preview", () => {
     expect(callFor(ready.notificationEmail!).html).not.toContain("is kept until");
   });
 
+  it("a preview whose photo alone was deleted gets no reminder either (feature 6)", async () => {
+    await enableA();
+    const gone = await makeSession({ createdAt: ago(100), email: email("photo") });
+    await prisma.$executeRaw`UPDATE "order_sessions" SET "photoDeletedAt" = ${NOW} WHERE "id" = ${gone.id}`;
+    await sweepReminders(NOW);
+    expect(sentTo()).not.toContain(gone.notificationEmail);
+  });
+
   it("a preview whose files were deleted gets no reminder (feature 6)", async () => {
     await enableA();
     const gone = await makeSession({ createdAt: ago(100), email: email("gone") });

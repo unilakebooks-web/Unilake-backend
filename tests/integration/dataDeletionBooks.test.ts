@@ -64,6 +64,8 @@ interface Opts {
   deliveredAt?: Date | null;
   orderCreatedAt?: Date;
   withPdf?: boolean;
+  /** The PDF is recorded on the order but the file does not exist. */
+  ghostPdf?: boolean;
   pdfUrl?: string | null;
   address?: {
     syncStatus: "FAILED" | "SYNCED" | "SYNCING";
@@ -118,7 +120,7 @@ async function mkDelivered(o: Opts = {}) {
       pdfUrl:
         o.pdfUrl !== undefined
           ? o.pdfUrl
-          : o.withPdf
+          : o.withPdf || o.ghostPdf
             ? pdfKeyFor(session.id)
             : null,
       shippingName: `${MARK} ${RUN}`,
@@ -628,5 +630,46 @@ describe("resuming, releasing and undoing", () => {
     });
     await sweepDataDeletion(deps());
     expect((await sess(s.id)).photoDeletedAt).not.toBeNull();
+  });
+});
+
+describe("a recorded PDF whose file is missing (a ghost)", () => {
+  it("is DONE as a ghost once the bucket proof passes (another order's PDF exists), and the real PDF is deleted normally", async () => {
+    const ghost = await mkDelivered({
+      deliveredAt: ago(50 * DAY),
+      ghostPdf: true,
+    });
+    const real = await mkDelivered({
+      deliveredAt: ago(46 * DAY),
+      withPdf: true,
+    });
+    await sweepDataDeletion(deps());
+    const item = await prisma.deletionItem.findUniqueOrThrow({
+      where: { subjectId_scope: { subjectId: ghost.orderId, scope: "PDF" } },
+    });
+    expect(item.state).toBe("DONE");
+    expect(item.ghost).toBe(true);
+    expect((await ord(ghost.orderId)).pdfDeletedAt).not.toBeNull();
+    expect(await objectExists("public", pdfKeyFor(real.id))).toBe(false);
+    expect((await ord(real.orderId)).pdfDeletedAt).not.toBeNull();
+  });
+
+  it("with nothing to prove the bucket by, the run stops and pauses the group instead of marking the PDF", async () => {
+    const ghost = await mkDelivered({
+      deliveredAt: ago(50 * DAY),
+      ghostPdf: true,
+    });
+    await expect(sweepDataDeletion(deps())).rejects.toThrow(
+      /BOOKS paused: proof_failed:pdfs/
+    );
+    expect((await ord(ghost.orderId)).pdfDeletedAt).toBeNull();
+    const g = await prisma.deletionGroupSetting.findUniqueOrThrow({
+      where: { group: "BOOKS" },
+    });
+    expect(g.pausedReason).toBe("proof_failed:pdfs");
+    await prisma.deletionGroupSetting.update({
+      where: { group: "BOOKS" },
+      data: { pausedReason: null, pausedAt: null },
+    });
   });
 });

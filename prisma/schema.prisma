@@ -748,6 +748,8 @@ model WebhookEvent {
   payloadJson Json
   processedAt DateTime @default(now())
 
+  // Automatic data deletion (feature 6) looks for payment events by kind and time when it checks an order.
+  @@index([source, eventType, processedAt])
   @@map("webhook_events")
 }
 

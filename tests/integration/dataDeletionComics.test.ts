@@ -23,10 +23,33 @@ import {
   deleteComic,
   getAdminComicsList,
   updateComic,
+  updateComicPricing,
   updateComicStatus,
 } from "../../src/services/comic.service.js";
-import { createPage } from "../../src/services/page.service.js";
-import { createFont } from "../../src/services/font.service.js";
+import {
+  createPage,
+  deletePage,
+  getPageArtworkUploadUrl,
+  reorderComicPages,
+  updatePage,
+} from "../../src/services/page.service.js";
+import {
+  createBubble,
+  deleteBubble,
+  updateBubble,
+} from "../../src/services/bubble.service.js";
+import {
+  createFont,
+  deleteFont,
+  getFontUploadUrl,
+  updateFont,
+} from "../../src/services/font.service.js";
+import {
+  createComicFact,
+  deleteComicFact,
+  toggleComicFactStatus,
+  updateComicFact,
+} from "../../src/services/comicFact.service.js";
 import { createSample } from "../../src/services/sampleBook.service.js";
 import { sweepDataDeletion } from "../../src/services/dataDeletion.service.js";
 import type { DeletionDeps } from "../../src/services/dataDeletionEngine.service.js";
@@ -391,5 +414,66 @@ describe("the books sweep deletes a retired comic's own files", () => {
     expect(
       (await getAdminComicsList({} as never)).some((c) => c.id === id)
     ).toBe(false);
+  });
+});
+
+describe("every admin write on a retired comic is refused", () => {
+  it("pricing, pages, bubbles, fonts and facts, by comic, page, bubble, font or fact id", async () => {
+    const comic = await mkComic();
+    const page = await prisma.page.create({
+      data: { comicId: comic.id, pageNumber: 1 },
+    });
+    const font = await prisma.font.create({
+      data: {
+        comicId: comic.id,
+        name: "f",
+        fileUrl: `comics/${comic.id}/fonts/x.ttf`,
+      },
+    });
+    const bubble = await prisma.bubble.create({
+      data: {
+        pageId: page.id,
+        x: 0.1,
+        y: 0.1,
+        width: 0.2,
+        height: 0.1,
+        dialogue: "hi",
+      },
+    });
+    const fact = await prisma.comicFact.create({
+      data: {
+        comicId: comic.id,
+        placement: "PRELOADER",
+        text: "fact",
+      },
+    });
+    await prisma.$executeRaw`UPDATE "comics" SET "retiredAt" = ${new Date()} WHERE "id" = ${comic.id}`;
+    const calls: [string, () => Promise<unknown>][] = [
+      ["updateComicPricing", () => updateComicPricing(comic.id, {} as never)],
+      [
+        "getPageArtworkUploadUrl",
+        () => getPageArtworkUploadUrl(comic.id, {} as never),
+      ],
+      ["createPage", () => createPage(comic.id, {} as never)],
+      ["updatePage", () => updatePage(page.id, {} as never)],
+      ["deletePage", () => deletePage(page.id)],
+      ["reorderComicPages", () => reorderComicPages(comic.id, {} as never)],
+      ["createBubble", () => createBubble(page.id, {} as never)],
+      ["updateBubble", () => updateBubble(bubble.id, {} as never)],
+      ["deleteBubble", () => deleteBubble(bubble.id)],
+      ["getFontUploadUrl", () => getFontUploadUrl(comic.id, {} as never)],
+      ["createFont", () => createFont(comic.id, {} as never)],
+      ["updateFont", () => updateFont(font.id, {} as never)],
+      ["deleteFont", () => deleteFont(font.id)],
+      ["createComicFact", () => createComicFact(comic.id, {} as never)],
+      ["updateComicFact", () => updateComicFact(fact.id, {} as never)],
+      ["toggleComicFactStatus", () => toggleComicFactStatus(fact.id)],
+      ["deleteComicFact", () => deleteComicFact(fact.id)],
+    ];
+    for (const [name, call] of calls) {
+      await expect(call(), name).rejects.toThrow(/retired/);
+    }
+    await prisma.bubble.deleteMany({ where: { id: bubble.id } });
+    await prisma.comicFact.deleteMany({ where: { id: fact.id } });
   });
 });

@@ -1032,6 +1032,7 @@ export const reorderComics = async (orderedIds: string[], actorId?: string) => {
       SELECT "id" FROM "comics"
       WHERE "id" IN (${Prisma.join(assignments.map((a) => a.id))})
         AND "status" = 'PUBLISHED'
+        AND "retiredAt" IS NULL
       ORDER BY "id"
       FOR UPDATE
     )

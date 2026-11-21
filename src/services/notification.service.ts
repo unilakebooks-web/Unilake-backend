@@ -814,7 +814,7 @@ export function renderBroadcastEmail(args: BroadcastEmailArgs): {
 function renderPaidAfterDeletionBody(args: BodyArgs): string {
   return `
     <p>Hi,</p>
-    <p>We received your payment for ${escapeHtml(kid(args.childName))} personalized book. Thank you.</p>
+    <p>We received your payment for ${escapeHtml(kids(args.childName))} personalized book. Thank you.</p>
     <p>Unfortunately we could not start making the book: the preview and the photo had already been deleted for your privacy before your payment arrived.</p>
     <p>Nothing more is needed from you right now. Our team will contact you shortly to put this right, either with a new photo for the book or a full refund. You can also write to us at any time using the details below.</p>
     ${renderSignOff("Regards,")}

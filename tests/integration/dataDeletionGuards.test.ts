@@ -300,6 +300,47 @@ describe("the payment webhook when the files are already deleted", () => {
     ).toBe("PAID");
   });
 
+  it("a deletion claim that commits between the webhook's read and its transaction is still seen: no book, flagged, one mail", async () => {
+    const s = await mk({
+      status: "AWAITING_PAYMENT",
+      marker: null,
+      order: { status: "CREATED" },
+    });
+    const client = prisma as unknown as {
+      $transaction: (...args: unknown[]) => Promise<unknown>;
+    };
+    const real = client.$transaction.bind(prisma);
+    client.$transaction = async (...args: unknown[]) => {
+      // the claim commits here: after the webhook read the unmarked session, before its transaction starts
+      client.$transaction = real;
+      const t = new Date();
+      await prisma.$executeRaw`UPDATE "order_sessions" SET "photoDeletedAt" = ${t}, "filesDeletedAt" = ${t} WHERE "id" = ${s.id}`;
+      return real(...args);
+    };
+    try {
+      const evt = signedCapture(
+        s.razorpayOrderId!,
+        `evt_${MARK}_${RUN}_interleave`,
+        `pay_${RUN}_interleave`
+      );
+      await handleRazorpayWebhook(evt.body, evt.signature, evt.eventId);
+    } finally {
+      client.$transaction = real;
+    }
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: s.orderId! },
+    });
+    expect(order.status).toBe("PAID");
+    expect(order.paidAfterDeletionAt).not.toBeNull();
+    expect(addBulk).not.toHaveBeenCalled();
+    expect(notify.received).not.toHaveBeenCalled();
+    expect(notify.afterDeletion).toHaveBeenCalledTimes(1);
+    expect(
+      (await prisma.orderSession.findUniqueOrThrow({ where: { id: s.id } }))
+        .status
+    ).toBe("PAID");
+  });
+
   it("a normal payment is unchanged: GENERATING_PAID, the 'payment received' mail, no flag", async () => {
     const s = await mk({
       status: "AWAITING_PAYMENT",

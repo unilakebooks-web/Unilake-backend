@@ -22,10 +22,16 @@ import {
   uploadFile,
 } from "../../src/lib/r2.js";
 import {
-  sweepDataDeletion,
+  getDeletionOverview,
+  purgeOldRows,
   setGroupMode,
+  sweepDataDeletion,
+  undoGhosts,
 } from "../../src/services/dataDeletion.service.js";
-import type { DeletionDeps } from "../../src/services/dataDeletionEngine.service.js";
+import {
+  ghostRateExceeded,
+  type DeletionDeps,
+} from "../../src/services/dataDeletionEngine.service.js";
 import { SELECTION_VERSION } from "../../src/config/dataDeletion.js";
 
 const MARK = "__vitest_deletion__";
@@ -1011,5 +1017,499 @@ describe("safety rules added after review", () => {
     });
     expect(g.pausedReason).toBe("proof_failed:public_pages");
     expect(g.pausedAt?.getTime()).toBe(pausedAt.getTime());
+  });
+});
+
+/** Runs `body` with the storage client's send replaced (restored afterwards). */
+async function withStorage(
+  wrap: (
+    cmd: unknown,
+    original: (c: unknown, o: unknown) => Promise<unknown>,
+    opts: unknown
+  ) => Promise<unknown>,
+  body: () => Promise<void>
+) {
+  const original = r2Client.send.bind(r2Client) as (
+    c: unknown,
+    o: unknown
+  ) => Promise<unknown>;
+  (r2Client as { send: unknown }).send = async (cmd: unknown, opts: unknown) =>
+    wrap(cmd, original, opts);
+  try {
+    await body();
+  } finally {
+    (r2Client as { send: unknown }).send = original;
+  }
+}
+
+describe("setbacks and the admin switch (after the pull request review)", () => {
+  async function reportFor() {
+    await setMode("PREVIEWS", "REPORT_ONLY");
+    await sweepDataDeletion(tdeps());
+    return prisma.deletionRun.findFirstOrThrow({
+      where: { group: "PREVIEWS", mode: "REPORT_ONLY" },
+      orderBy: { startedAt: "desc" },
+    });
+  }
+
+  it("three items in a row failing with an error pause the group; the fourth is never marked; the pause lasts quietly", async () => {
+    const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+    const made: { id: string }[] = [];
+    for (let i = 0; i < 4; i++)
+      made.push(
+        await mkSession({ expiresAt: ago(2 * HOUR + i * HOUR), photo: true })
+      );
+    await withStorage(
+      async (cmd, original, opts) => {
+        if (cmd instanceof DeleteObjectCommand)
+          throw Object.assign(new Error("odd"), {
+            name: "InternalFailure",
+            $metadata: { httpStatusCode: 400 },
+          });
+        return original(cmd, opts);
+      },
+      async () => {
+        await expect(sweepDataDeletion(tdeps())).rejects.toThrow(
+          /PREVIEWS paused: repeated_errors/
+        );
+      }
+    );
+    const count = () =>
+      prisma.orderSession.count({
+        where: {
+          id: { in: made.map((m) => m.id) },
+          filesDeletedAt: { not: null },
+        },
+      });
+    expect(await count()).toBe(3);
+    await expect(sweepDataDeletion(tdeps())).resolves.toBeTypeOf("number");
+    expect(await count()).toBe(3);
+  });
+
+  it("a refused storage token (403) stops the run and marks nothing; the pause ends by itself when storage works again", async () => {
+    const { ListObjectsV2Command } = await import("@aws-sdk/client-s3");
+    const s = await mkSession({ expiresAt: ago(2 * HOUR), photo: true });
+    await withStorage(
+      async (cmd, original, opts) => {
+        if (cmd instanceof ListObjectsV2Command)
+          throw Object.assign(new Error("denied"), {
+            name: "AccessDenied",
+            $metadata: { httpStatusCode: 403 },
+          });
+        return original(cmd, opts);
+      },
+      async () => {
+        await expect(sweepDataDeletion(tdeps())).rejects.toThrow(
+          /PREVIEWS paused: storage_unreachable/
+        );
+      }
+    );
+    expect((await state(s.id)).filesDeletedAt).toBeNull();
+    await sweepDataDeletion(tdeps());
+    expect((await state(s.id)).filesDeletedAt).not.toBeNull();
+    expect(
+      (
+        await prisma.deletionGroupSetting.findUniqueOrThrow({
+          where: { group: "PREVIEWS" },
+        })
+      ).pausedReason
+    ).toBeNull();
+  }, 90_000);
+
+  it("switching to ACTIVE works with the report, the typed confirmation and a fresh canary; the old report cannot re-arm it after a mode change", async () => {
+    await mkSession({ expiresAt: ago(2 * HOUR), photo: true });
+    const report = await reportFor();
+    expect(report.dueCount).toBe(1);
+    const on = await setGroupMode(
+      "PREVIEWS",
+      {
+        mode: "ACTIVE",
+        reportRunId: report.id,
+        dueCount: 1,
+        confirmation: "DELETE 1",
+        dailyMax: 20,
+      },
+      "master@example.test",
+      tdeps()
+    );
+    expect(on).toMatchObject({
+      mode: "ACTIVE",
+      approvedRunId: report.id,
+      dailyMax: 20,
+      modeChangedByEmail: "master@example.test",
+    });
+    await setGroupMode(
+      "PREVIEWS",
+      { mode: "REPORT_ONLY" },
+      "master@example.test",
+      tdeps()
+    );
+    await expect(
+      setGroupMode(
+        "PREVIEWS",
+        {
+          mode: "ACTIVE",
+          reportRunId: report.id,
+          dueCount: 1,
+          confirmation: "DELETE 1",
+        },
+        "m@example.test",
+        tdeps()
+      )
+    ).rejects.toThrow(/changed mode/);
+    await sweepDataDeletion(tdeps());
+    const fresh = await prisma.deletionRun.findFirstOrThrow({
+      where: { group: "PREVIEWS", mode: "REPORT_ONLY" },
+      orderBy: { startedAt: "desc" },
+    });
+    expect(fresh.id).not.toBe(report.id);
+    await setGroupMode(
+      "PREVIEWS",
+      {
+        mode: "ACTIVE",
+        reportRunId: fresh.id,
+        dueCount: fresh.dueCount,
+        confirmation: `DELETE ${fresh.dueCount}`,
+      },
+      "m@example.test",
+      tdeps()
+    );
+  });
+
+  it("every refusal of the switch to ACTIVE", async () => {
+    await mkSession({ expiresAt: ago(2 * HOUR), photo: true });
+    const report = await reportFor();
+    const body = {
+      mode: "ACTIVE" as const,
+      reportRunId: report.id,
+      dueCount: report.dueCount,
+      confirmation: `DELETE ${report.dueCount}`,
+    };
+    const go = (b: object = body) =>
+      setGroupMode("PREVIEWS", b as never, "m@example.test", tdeps());
+    const group = await prisma.deletionGroupSetting.findUniqueOrThrow({
+      where: { group: "PREVIEWS" },
+    });
+    await expect(go({ ...body, confirmation: "delete 1" })).rejects.toThrow(
+      /Type DELETE/
+    );
+    await expect(go({ ...body, confirmation: "DELETE 99" })).rejects.toThrow(
+      /Type DELETE/
+    );
+    await expect(go({ ...body, dueCount: 99 })).rejects.toThrow(/Type DELETE/);
+    await expect(go({ mode: "ACTIVE" })).rejects.toThrow(
+      /Read the latest report/
+    );
+    await expect(
+      go({
+        ...body,
+        expectedModeChangedAt: new Date(
+          group.modeChangedAt.getTime() - 5000
+        ).toISOString(),
+      })
+    ).rejects.toThrow(/changed by someone else/);
+    await prisma.deletionRun.update({
+      where: { id: report.id },
+      data: { startedAt: new Date(NOW.getTime() - 8 * DAY) },
+    });
+    await expect(go()).rejects.toThrow(/older than 7 days|Wait for a new/);
+    await prisma.deletionRun.update({
+      where: { id: report.id },
+      data: { startedAt: new Date(NOW.getTime() + 10), selectionVersion: 999 },
+    });
+    await expect(go()).rejects.toThrow(/rules for this group changed/);
+    await prisma.deletionRun.update({
+      where: { id: report.id },
+      data: {
+        selectionVersion: SELECTION_VERSION.PREVIEWS,
+        proof: { private_photo: "failed" },
+      },
+    });
+    await expect(go()).rejects.toThrow(/storage check in this report failed/);
+    await prisma.deletionRun.update({
+      where: { id: report.id },
+      data: { proof: {}, dueCount: 0 },
+    });
+    await expect(
+      go({ ...body, dueCount: 0, confirmation: "DELETE 0" })
+    ).rejects.toThrow(/nothing to delete/);
+    await prisma.deletionRun.update({
+      where: { id: report.id },
+      data: { dueCount: report.dueCount },
+    });
+    await prisma.deletionSetting.update({
+      where: { id: 1 },
+      data: { canaryPassedAt: ago(3 * DAY) },
+    });
+    await expect(go()).rejects.toThrow(/storage canary/);
+    await prisma.deletionSetting.update({
+      where: { id: 1 },
+      data: { canaryPassedAt: NOW },
+    });
+    await prisma.deletionRun.create({
+      data: {
+        group: "PREVIEWS",
+        mode: "REPORT_ONLY",
+        selectionVersion: SELECTION_VERSION.PREVIEWS,
+        startedAt: new Date(NOW.getTime() + 60_000),
+        dueCount: 1,
+      },
+    });
+    await expect(go()).rejects.toThrow(/newer report exists/);
+  });
+
+  it("ghost rate boundaries: more than 20% and at least 3 evidenced ghosts in the window", async () => {
+    const mk = async (ghosts: number, others: number) => {
+      await prisma.deletionItem.deleteMany({
+        where: { subjectId: { startsWith: "ghostrate-" } },
+      });
+      for (let i = 0; i < ghosts + others; i++) {
+        await prisma.deletionItem.create({
+          data: {
+            subjectType: "SESSION",
+            subjectId: `ghostrate-${i}`,
+            scope: "SESSION",
+            state: "DONE",
+            ghost: i < ghosts,
+            lastError: i < ghosts ? "ghost_evidenced" : null,
+            claimedAt: new Date(),
+          },
+        });
+      }
+    };
+    const since = new Date(Date.now() - DAY);
+    await mk(2, 3);
+    expect(await ghostRateExceeded(["SESSION"], since)).toBe(false);
+    await mk(3, 12);
+    expect(await ghostRateExceeded(["SESSION"], since)).toBe(false);
+    await mk(3, 11);
+    expect(await ghostRateExceeded(["SESSION"], since)).toBe(true);
+    expect(
+      await ghostRateExceeded(["SESSION"], new Date(Date.now() + 1000))
+    ).toBe(false);
+    await prisma.deletionItem.deleteMany({
+      where: { subjectId: { startsWith: "ghostrate-" } },
+    });
+    for (let i = 0; i < 3; i++) {
+      await prisma.deletionItem.create({
+        data: {
+          subjectType: "SESSION",
+          subjectId: `ghostrate-g${i}`,
+          scope: "PAGES",
+          state: "DONE",
+          ghost: true,
+          lastError: "ghost_evidenced",
+          claimedAt: new Date(),
+        },
+      });
+    }
+    for (let i = 0; i < 30; i++) {
+      await prisma.deletionItem.create({
+        data: {
+          subjectType: "ORDER",
+          subjectId: `ghostrate-a${i}`,
+          scope: "ADDRESS",
+          state: "DONE",
+          claimedAt: new Date(),
+        },
+      });
+    }
+    expect(await ghostRateExceeded(["PAGES", "ADDRESS"], since)).toBe(true);
+    await prisma.deletionItem.deleteMany({
+      where: { subjectId: { startsWith: "ghostrate-" } },
+    });
+  });
+
+  it("the report lists an unpaid order whose payment was not checked apart, and never approves it", async () => {
+    const old = ago(3 * DAY);
+    const bad = await mkSession({
+      status: "AWAITING_PAYMENT",
+      expiresAt: ago(2 * HOUR),
+      photo: true,
+      order: { updatedAt: old },
+    });
+    const good = await mkSession({
+      status: "AWAITING_PAYMENT",
+      expiresAt: ago(3 * HOUR),
+      photo: true,
+      order: { updatedAt: old },
+    });
+    const badRzp = (
+      await prisma.order.findUniqueOrThrow({ where: { id: bad.orderId! } })
+    ).razorpayOrderId!;
+    rzp.fetchPayments.mockImplementation(async (id: string) => {
+      if (id === badRzp) throw new Error("razorpay down");
+      return { entity: "collection", count: 0, items: [] };
+    });
+    const report = await reportFor();
+    const lists = report.lists as { due: string[]; blocked: string[] };
+    expect(lists.due).toContain(`SESSION:${good.id}`);
+    // a payment status that could not be read is recorded as a block: listed apart, never in the due list
+    expect(lists.due).not.toContain(`SESSION:${bad.id}`);
+    expect(lists.blocked).toContain(bad.id);
+    expect(report.dueCount).toBe(1);
+  });
+
+  it("the overview carries what the admin page needs, and undo by time range clears ghosts and says when it is cut off", async () => {
+    await prisma.deletionItem.deleteMany({
+      where: { subjectId: "overview-failed" },
+    });
+    const a = await mkSession({ expiresAt: ago(2 * HOUR), ghostPhoto: true });
+    await prisma.$executeRaw`UPDATE "order_sessions" SET "photoDeletedAt" = ${ago(HOUR)}, "filesDeletedAt" = ${ago(HOUR)} WHERE "id" = ${a.id}`;
+    await prisma.deletionItem.create({
+      data: {
+        subjectType: "SESSION",
+        subjectId: a.id,
+        scope: "SESSION",
+        state: "DONE",
+        ghost: true,
+        lastError: "ghost_evidenced",
+        preCount: { private: 0, public: 0 },
+        claimedAt: new Date(),
+      },
+    });
+    await prisma.deletionItem.create({
+      data: {
+        subjectType: "SESSION",
+        subjectId: "overview-failed",
+        scope: "PHOTO",
+        state: "FAILED",
+        attempts: 5,
+        lastError: "verify_failed",
+        claimedAt: new Date(),
+      },
+    });
+    const overview = await getDeletionOverview();
+    expect(overview.groups.map((g) => g.group)).toEqual([
+      "PREVIEWS",
+      "PHOTOS",
+      "BOOKS",
+    ]);
+    const previews = overview.groups.find((g) => g.group === "PREVIEWS")!;
+    expect(previews.mode).toBe("ACTIVE");
+    expect(previews.items.ghostsLast24h).toBeGreaterThanOrEqual(1);
+    expect(
+      previews.attention.some((i) => i.subjectId === a.id && i.ghost)
+    ).toBe(true);
+    const photos = overview.groups.find((g) => g.group === "PHOTOS")!;
+    expect(photos.items.failed).toBeGreaterThanOrEqual(1);
+    expect(overview.canary).toHaveProperty("passedAt");
+    expect(typeof overview.paidAfterDeletionOrders).toBe("number");
+    const result = await undoGhosts(
+      {
+        from: new Date(Date.now() - DAY).toISOString(),
+        to: new Date(Date.now() + DAY).toISOString(),
+      },
+      tdeps()
+    );
+    expect(result.undone).toBeGreaterThanOrEqual(1);
+    expect(result.truncated).toBe(false);
+    expect((await state(a.id)).filesDeletedAt).toBeNull();
+    await prisma.deletionItem.deleteMany({
+      where: { subjectId: "overview-failed" },
+    });
+  });
+
+  it("purge removes only what is old: done items after 90 days (address and comic ones by their done time), blocks after a day, runs after 90 days except the approved and the latest", async () => {
+    const now = new Date();
+    const old = new Date(now.getTime() - 100 * DAY);
+    const fresh = new Date(now.getTime() - 10 * DAY);
+    const mkItem = (id: string, scope: "SESSION" | "ADDRESS", extra: object) =>
+      prisma.deletionItem.create({
+        data: {
+          subjectType: "SESSION",
+          subjectId: `purge-${id}`,
+          scope,
+          state: "DONE",
+          ...extra,
+        },
+      });
+    await mkItem("old-reverified", "SESSION", {
+      reverifiedAt: old,
+      doneAt: old,
+    });
+    await mkItem("fresh-reverified", "SESSION", {
+      reverifiedAt: fresh,
+      doneAt: fresh,
+    });
+    await mkItem("old-address", "ADDRESS", { doneAt: old });
+    await mkItem("fresh-address", "ADDRESS", { doneAt: fresh });
+    await prisma.deletionBlock.create({
+      data: {
+        subjectId: "purge-block-old",
+        reason: "clear",
+        checkedAt: new Date(now.getTime() - 2 * DAY),
+      },
+    });
+    await prisma.deletionBlock.create({
+      data: { subjectId: "purge-block-new", reason: "clear", checkedAt: now },
+    });
+    const runBase = {
+      group: "PHOTOS" as const,
+      mode: "REPORT_ONLY" as const,
+      selectionVersion: 1,
+    };
+    const oldRun = await prisma.deletionRun.create({
+      data: { ...runBase, startedAt: old },
+    });
+    const approvedRun = await prisma.deletionRun.create({
+      data: { ...runBase, startedAt: new Date(old.getTime() - DAY) },
+    });
+    const latestRun = await prisma.deletionRun.create({
+      data: { ...runBase, startedAt: fresh },
+    });
+    await prisma.deletionGroupSetting.update({
+      where: { group: "PHOTOS" },
+      data: { approvedRunId: approvedRun.id },
+    });
+    await purgeOldRows(now, true);
+    const has = async (id: string) =>
+      !!(await prisma.deletionItem.findFirst({
+        where: { subjectId: `purge-${id}` },
+      }));
+    expect(await has("old-reverified")).toBe(false);
+    expect(await has("fresh-reverified")).toBe(true);
+    expect(await has("old-address")).toBe(false);
+    expect(await has("fresh-address")).toBe(true);
+    expect(
+      await prisma.deletionBlock.findUnique({
+        where: { subjectId: "purge-block-old" },
+      })
+    ).toBeNull();
+    expect(
+      await prisma.deletionBlock.findUnique({
+        where: { subjectId: "purge-block-new" },
+      })
+    ).not.toBeNull();
+    expect(
+      await prisma.deletionRun.findUnique({ where: { id: oldRun.id } })
+    ).toBeNull();
+    expect(
+      await prisma.deletionRun.findUnique({ where: { id: approvedRun.id } })
+    ).not.toBeNull();
+    expect(
+      await prisma.deletionRun.findUnique({ where: { id: latestRun.id } })
+    ).not.toBeNull();
+    await prisma.deletionGroupSetting.update({
+      where: { group: "PHOTOS" },
+      data: { approvedRunId: null },
+    });
+    await prisma.deletionItem.deleteMany({
+      where: { subjectId: { startsWith: "purge-" } },
+    });
+    await prisma.deletionBlock.deleteMany({
+      where: { subjectId: { startsWith: "purge-" } },
+    });
+  });
+
+  it("a marker written while the database session runs in another time zone still stores the injected UTC clock", async () => {
+    const s = await mkSession({ expiresAt: ago(2 * HOUR) });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL TIME ZONE 'Asia/Kolkata'`;
+      await tx.$executeRaw`UPDATE "order_sessions" SET "photoDeletedAt" = ${NOW} WHERE "id" = ${s.id}`;
+    });
+    expect((await state(s.id)).photoDeletedAt?.toISOString()).toBe(
+      NOW.toISOString()
+    );
   });
 });

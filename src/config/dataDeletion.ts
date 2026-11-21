@@ -67,6 +67,8 @@ export const RAZORPAY_VERDICT_TTL_MS = DAY_MS;
 /** A run lease older than this is taken over. */
 export const LEASE_STALE_MS = 5 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
+/** After this many items in a row fail with an error in one run, the group pauses (a setup fault would otherwise mark item after item). */
+export const MAX_CONSECUTIVE_ITEM_ERRORS = 3;
 /** After an error an item waits this long before its next attempt. */
 export const ATTEMPT_GAP_MS = 30 * 60 * 1000;
 /** A DONE item is listed once more after this long and any leftover (a late writer) is deleted. */

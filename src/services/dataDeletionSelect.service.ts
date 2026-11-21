@@ -192,6 +192,16 @@ const emptyLists = (): SelectionLists => ({
   blocked: [],
 });
 
+/** Takes one item from each list in turn until all are used. */
+function interleave<T>(lists: T[][]): T[] {
+  const out: T[] = [];
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < longest; i++) {
+    for (const list of lists) if (i < list.length) out.push(list[i] as T);
+  }
+  return out;
+}
+
 /** The items of a group that are due now, oldest first. */
 export async function selectDue(
   group: DeletionGroup,
@@ -206,7 +216,8 @@ export async function selectDue(
   const pdf = await selectDelivered(group, "PDF", now, options, blocked);
   const address = await selectAddress(now, options);
   return {
-    candidates: [...pages.candidates, ...pdf.candidates, ...address].slice(
+    // One of each in turn, so a long backlog of one scope cannot hold the others back past their own days.
+    candidates: interleave([pages.candidates, pdf.candidates, address]).slice(
       0,
       Math.max(options.limit, 0)
     ),
