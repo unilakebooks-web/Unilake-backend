@@ -947,6 +947,8 @@ describe("comic delete and page reorder around samples", () => {
         pageCount,
         freePreviewPages: 1,
         status: "UNPUBLISHED",
+        // Deleting an unpublished comic waits 30 days from the day it was unpublished (feature 6).
+        unpublishedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
       },
     });
     const ids: string[] = [];

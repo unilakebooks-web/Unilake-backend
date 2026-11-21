@@ -105,8 +105,10 @@ type DueReminder = {
   childName: string | null;
   bookTitle: string;
   coverUrl: string | null;
-  /** Used for the deletion date of the last A reminder. */
+  /** When the session was made. */
   sessionCreatedAt: Date;
+  /** The date the preview is kept until (reminder A only), shown in the last A reminder while deletion is on. */
+  sessionExpiresAt?: Date;
   sessionStatus: string;
   /** An earlier reminder of this kind already went (or was claimed) for this session. */
   alreadyReminded: boolean;
@@ -163,6 +165,7 @@ type Base = {
   bookTitle: string;
   coverUrl: string | null;
   sessionCreatedAt: Date;
+  sessionExpiresAt?: Date;
   sessionStatus: string;
 };
 
@@ -180,6 +183,9 @@ async function previewBases(
     db.orderSession.findMany({
       where: {
         isSample: false,
+        // Automatic data deletion (feature 6): a preview whose files were deleted is no longer worth a reminder.
+        photoDeletedAt: null,
+        filesDeletedAt: null,
         createdAt: {
           gte: new Date(
             now.getTime() - maxOffset * HOUR_MS - CATCH_UP_WINDOW_MS
@@ -216,6 +222,7 @@ async function previewBases(
       select: {
         id: true,
         createdAt: true,
+        expiresAt: true,
         status: true,
         notificationEmail: true,
         childName: true,
@@ -247,6 +254,7 @@ async function previewBases(
       bookTitle: s.comic.title,
       coverUrl: s.comic.coverThumbnailUrls[0] ?? null,
       sessionCreatedAt: s.createdAt,
+      sessionExpiresAt: s.expiresAt,
       sessionStatus: s.status,
     }));
 }
@@ -485,6 +493,7 @@ async function findDueReminders(
         bookTitle: base.bookTitle,
         coverUrl: base.coverUrl,
         sessionCreatedAt: base.sessionCreatedAt,
+        sessionExpiresAt: base.sessionExpiresAt,
         sessionStatus: base.sessionStatus,
         alreadyReminded: remindedSessions.has(base.orderSessionId),
       });
@@ -591,16 +600,24 @@ export async function claimDueReminders(
   }, CLAIM_TRANSACTION_OPTIONS);
 }
 
-function formatDeletionDate(createdAt: Date, days: number): string {
-  return new Date(createdAt.getTime() + days * DAY_MS).toLocaleDateString(
-    "en-IN",
-    {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      timeZone: REPORTING_TIMEZONE,
-    }
-  );
+/** The date a preview is kept until (its expiry), in the reporting timezone. */
+function formatKeptUntil(expiresAt: Date): string {
+  return expiresAt.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: REPORTING_TIMEZONE,
+  });
+}
+
+/** True while automatic deletion of unpaid previews is switched on: only then may a reminder say when one is deleted. */
+async function previewDeletionIsActive(): Promise<boolean> {
+  // Reached only for the last A reminder of a preview that is still ready, so one small query per such mail.
+  const group = await prisma.deletionGroupSetting.findUnique({
+    where: { group: "PREVIEWS" },
+    select: { mode: true },
+  });
+  return group?.mode === "ACTIVE";
 }
 
 /** A coupon code worth showing: it exists, is switched on, is in its dates and is open to everyone. */
@@ -760,16 +777,14 @@ async function sendClaimedReminder(
       coverUrl: claim.coverUrl,
       link:
         isReview && reviewUrl ? reviewUrl : previewUrl(claim.orderSessionId),
-      // A promise of deletion only while the preview is still inside its days, and only if the admin says
-      // previews really are deleted (nothing else deletes them yet).
+      // A promise of deletion only while the preview is still inside its days, and only while automatic deletion
+      // of unpaid previews is really switched on (feature 6; the admin's deletion-days setting is no longer used).
       deletionDate:
         isLastPreview &&
         claim.sessionStatus === "PREVIEW_READY" &&
-        settings.previewDeletionDays
-          ? formatDeletionDate(
-              claim.sessionCreatedAt,
-              settings.previewDeletionDays
-            )
+        claim.sessionExpiresAt &&
+        (await previewDeletionIsActive())
+          ? formatKeptUntil(claim.sessionExpiresAt)
           : null,
       couponCode: isLastPreview
         ? await usableCouponCode(settings.reminderCouponCode, now)

@@ -33,6 +33,7 @@ import {
   notifyBookReady,
   notifyPreviewReady,
 } from "../../services/notification.service.js";
+import { failPageVersionIfFilesDeleted } from "../../services/pageVersionDeletionGuard.js";
 
 type GeneratePageJobData = {
   pageVersionId: string;
@@ -345,6 +346,18 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
       // derivative failed. The client falls back to imageUrl.
       displayImageUrl: pageVersion.displayImageUrl,
       pageVersionId: pageVersion.id,
+    });
+    return;
+  }
+
+  // Automatic data deletion (feature 6): a session whose files were deleted cannot be generated. The version is
+  // failed at once, the open preview is told, and the job ends without retrying against missing files.
+  if (await failPageVersionIfFilesDeleted(pageVersionId, orderSession)) {
+    emitPageError(sessionId, {
+      pageNumber: page.pageNumber,
+      variantIndex: pageVersion.variantIndex,
+      errorMessage: "The files of this preview were deleted",
+      isFinal: true,
     });
     return;
   }

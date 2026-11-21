@@ -27,6 +27,7 @@ import type {
   UpdatePageInput,
 } from "../validators/page.schema.js";
 import type { Bubble, Font } from "../generated/prisma/client.js";
+import { assertComicNotRetired, assertPageComicNotRetired } from "./retiredComicGuard.js";
 
 const PAGE_ASSET_UPLOAD_EXPIRY_SECONDS = 15 * 60;
 
@@ -96,6 +97,8 @@ export async function getPageArtworkUploadUrl(
   comicId: string,
   input: GetPageArtworkUploadUrlInput
 ) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   const comic = await prisma.comic.findUnique({ where: { id: comicId } });
 
   if (!comic) {
@@ -131,6 +134,8 @@ export async function getPageArtworkUploadUrl(
 }
 
 export async function createPage(comicId: string, input: CreatePageInput) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   const comic = await prisma.comic.findUnique({ where: { id: comicId } });
 
   if (!comic) {
@@ -229,6 +234,8 @@ export async function listComicPages(comicId: string) {
 }
 
 export async function updatePage(pageId: string, input: UpdatePageInput) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertPageComicNotRetired(pageId);
   const page = await prisma.page.findUnique({
     where: { id: pageId },
   });
@@ -353,6 +360,8 @@ export async function updatePage(pageId: string, input: UpdatePageInput) {
 }
 
 export async function deletePage(pageId: string) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertPageComicNotRetired(pageId);
   const page = await prisma.page.findUnique({
     where: { id: pageId },
   });
@@ -427,6 +436,8 @@ export async function reorderComicPages(
   comicId: string,
   orderedPageIds: string[]
 ) {
+  // Retired comics (feature 6) can no longer be changed.
+  await assertComicNotRetired(comicId);
   const comic = await prisma.comic.findUnique({
     where: { id: comicId },
     select: { id: true, status: true },

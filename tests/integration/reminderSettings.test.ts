@@ -138,21 +138,13 @@ describe("updateReminderSettings", () => {
     ).rejects.toThrow(/window/);
   });
 
-  it("the deletion days must be longer than the last unfinished-preview send time, whichever side is edited", async () => {
-    // the default last send time is 96 h = 4 days
-    await expect(
-      updateReminderSettings({ previewDeletionDays: 4 })
-    ).rejects.toThrow(/deletion days/i);
-    await expect(
-      updateReminderSettings({ previewDeletionDays: 3 })
-    ).rejects.toThrow(/deletion days/i);
-    const ok = await updateReminderSettings({ previewDeletionDays: 5 });
-    expect(ok.previewDeletionDays).toBe(5);
-    // lengthening the send times past the stored deletion days is refused too
-    await expect(
-      updateReminderSettings({ previewOffsetsHours: [3, 24, 144] })
-    ).rejects.toThrow(/deletion days/i);
-    // and empty (no promise of deletion) is always allowed
+  it("the stored deletion days no longer block a save: the setting is kept but unused (feature 6)", async () => {
+    // the default last send time is 96 h = 4 days: these used to be refused
+    expect((await updateReminderSettings({ previewDeletionDays: 4 })).previewDeletionDays).toBe(4);
+    expect((await updateReminderSettings({ previewDeletionDays: 2 })).previewDeletionDays).toBe(2);
+    // lengthening the send times past the stored value is accepted too
+    const longer = await updateReminderSettings({ previewOffsetsHours: [3, 24, 100] });
+    expect(longer.previewOffsetsHours).toEqual([3, 24, 100]);
     const cleared = await updateReminderSettings({ previewDeletionDays: null });
     expect(cleared.previewDeletionDays).toBeNull();
   });

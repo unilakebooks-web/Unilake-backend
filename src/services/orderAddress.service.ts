@@ -101,7 +101,7 @@ type Tx = Prisma.TransactionClient;
 
 // One lock per order for every edit, sync claim and manual mark (the pattern of the
 // role-change lock in user.service.ts), so two of them can never interleave.
-async function lockOrderAddress(tx: Tx, orderId: string): Promise<void> {
+export async function lockOrderAddress(tx: Tx, orderId: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`order-address:${orderId}`}))`;
 }
 

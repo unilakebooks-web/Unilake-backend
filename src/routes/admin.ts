@@ -210,6 +210,20 @@ import {
 } from "../controllers/reminder.controller.js";
 import { updateReminderSettingsSchema } from "../validators/reminder.schema.js";
 import {
+  getDeletionOverviewHandler,
+  releaseDeletionItemHandler,
+  retryDeletionItemsHandler,
+  runDeletionCanaryHandler,
+  setDeletionModeHandler,
+  undoGhostHandler,
+} from "../controllers/dataDeletion.controller.js";
+import {
+  deletionItemActionSchema,
+  retryDeletionSchema,
+  setDeletionModeSchema,
+  undoGhostSchema,
+} from "../validators/dataDeletion.schema.js";
+import {
   cancelBroadcastHandler,
   createBroadcastHandler,
   deleteBroadcastHandler,
@@ -681,6 +695,15 @@ router.patch(
   updateReminderSettingsHandler
 );
 router.get("/reminders/status", getReminderStatusHandler);
+
+// DATA DELETION (feature 6): Master only (not in the sub-admin list). /data-deletion/canary and the
+// action routes are registered before /data-deletion/:group so they are not read as a group.
+router.get("/data-deletion", getDeletionOverviewHandler);
+router.post("/data-deletion/canary", runDeletionCanaryHandler);
+router.post("/data-deletion/retry", validateBody(retryDeletionSchema), retryDeletionItemsHandler);
+router.post("/data-deletion/release", validateBody(deletionItemActionSchema), releaseDeletionItemHandler);
+router.post("/data-deletion/undo-ghost", validateBody(undoGhostSchema), undoGhostHandler);
+router.patch("/data-deletion/:group", validateBody(setDeletionModeSchema), setDeletionModeHandler);
 
 // BROADCAST EMAILS (admin writes one email and sends it to an audience)
 // /broadcasts/audience is registered before /broadcasts/:id so it is not read as an id.

@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -292,6 +293,156 @@ export async function deletePrefix(
   );
 
   return deleted;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic data deletion (feature 6). Used only by services/dataDeletion.service.ts. Every
+// helper takes an abort signal (the engine passes one with its own deadline) and every delete is
+// checked against an allow-list, so a wrong argument cannot reach anything else.
+// ---------------------------------------------------------------------------------------------
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/** The only listing prefixes the engine uses: a session folder, a session's photo objects, a canary folder. */
+const DELETION_LIST_PREFIX_PATTERNS = [
+  new RegExp(`^sessions/${UUID}/$`),
+  new RegExp(`^sessions/${UUID}/photo-$`),
+  new RegExp(`^pdfs/${UUID}\\.pdf$`),
+  new RegExp(`^comics/[^/]+/(pages|fonts)/$`),
+];
+
+/** The only keys the engine deletes. A comic's video and LoRA keys are exact keys in shared folders. */
+const DELETION_KEY_PATTERNS = [
+  new RegExp(`^sessions/${UUID}/.+$`),
+  new RegExp(`^pdfs/${UUID}\\.pdf$`),
+  new RegExp(`^comics/[^/]+/(pages|fonts)/.+$`),
+  /^comics\/videos\/[^/]+$/,
+  /^comics\/lora\/[^/]+$/,
+];
+
+export const isDeletionListPrefix = (prefix: string): boolean =>
+  !prefix.includes("..") && DELETION_LIST_PREFIX_PATTERNS.some((pattern) => pattern.test(prefix));
+
+export const isDeletionKey = (key: string): boolean =>
+  !key.includes("..") && DELETION_KEY_PATTERNS.some((pattern) => pattern.test(key));
+
+const bucketName = (bucket: "public" | "private"): string =>
+  bucket === "public" ? config.r2.publicBucket : config.r2.privateBucket;
+
+/** The key of an order's final PDF (the same shape compilePdfForSession writes). */
+export const pdfKeyFor = (sessionId: string): string => {
+  if (!new RegExp(`^${UUID}$`).test(sessionId)) {
+    throw new Error("pdfKeyFor needs a session id");
+  }
+  return `pdfs/${sessionId}.pdf`;
+};
+
+export interface ObjectsPage {
+  keys: string[];
+  /** Set while the listing is truncated: pass it back to read the next page. */
+  next: string | undefined;
+}
+
+/** One page (up to 1,000 keys) of the objects under an allowed prefix. */
+export async function listObjectsPage(
+  bucket: "public" | "private",
+  prefix: string,
+  continuationToken: string | undefined,
+  signal?: AbortSignal
+): Promise<ObjectsPage> {
+  if (!isDeletionListPrefix(prefix)) {
+    throw new Error("listObjectsPage: prefix is not allowed");
+  }
+  const page = await r2Client.send(
+    new ListObjectsV2Command({
+      Bucket: bucketName(bucket),
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }),
+    { abortSignal: signal }
+  );
+  const keys = (page.Contents ?? [])
+    .map((object) => object.Key)
+    .filter((key): key is string => !!key && key.startsWith(prefix));
+  // Continue on IsTruncated alone: a page can be short or even empty and still truncated.
+  return { keys, next: page.IsTruncated ? page.NextContinuationToken : undefined };
+}
+
+/** How many objects sit under an allowed prefix. */
+export async function countPrefix(
+  bucket: "public" | "private",
+  prefix: string,
+  signal?: AbortSignal
+): Promise<number> {
+  let total = 0;
+  let token: string | undefined;
+  do {
+    const page = await listObjectsPage(bucket, prefix, token, signal);
+    total += page.keys.length;
+    token = page.next;
+  } while (token);
+  return total;
+}
+
+/** Whether an object exists (a missing object is false; any other failure throws). */
+export async function objectExists(
+  bucket: "public" | "private",
+  key: string,
+  signal?: AbortSignal
+): Promise<boolean> {
+  try {
+    await r2Client.send(
+      new HeadObjectCommand({ Bucket: bucketName(bucket), Key: key }),
+      { abortSignal: signal }
+    );
+    return true;
+  } catch (error) {
+    const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (
+      err.name === "NotFound" ||
+      err.name === "NoSuchKey" ||
+      err.$metadata?.httpStatusCode === 404
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** Deletes one object. Refuses any key that is not on the allow-list. */
+export async function deleteKeyChecked(
+  bucket: "public" | "private",
+  key: string,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!isDeletionKey(key)) {
+    throw new Error("deleteKeyChecked: key is not allowed");
+  }
+  await r2Client.send(
+    new DeleteObjectCommand({ Bucket: bucketName(bucket), Key: key }),
+    { abortSignal: signal }
+  );
+}
+
+/** Uploads a tiny object (the canary's). */
+export async function putObjectChecked(
+  bucket: "public" | "private",
+  key: string,
+  body: Buffer,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!isDeletionKey(key)) {
+    throw new Error("putObjectChecked: key is not allowed");
+  }
+  await r2Client.send(
+    new PutObjectCommand({
+      Bucket: bucketName(bucket),
+      Key: key,
+      Body: body,
+      ContentType: "text/plain",
+    }),
+    { abortSignal: signal }
+  );
 }
 
 export async function downloadFileToLocalPath(

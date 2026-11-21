@@ -5,6 +5,7 @@ const sweeps = vi.hoisted(() => ({
   pages: vi.fn(),
   coupons: vi.fn(),
   samples: vi.fn(),
+  deletion: vi.fn(),
   reminders: vi.fn(),
   broadcasts: vi.fn(),
 }));
@@ -19,6 +20,9 @@ vi.mock("../../src/services/coupon.service.js", () => ({
 }));
 vi.mock("../../src/jobs/workers/sampleSweeper.js", () => ({
   sweepSampleSessions: sweeps.samples,
+}));
+vi.mock("../../src/services/dataDeletion.service.js", () => ({
+  sweepDataDeletion: sweeps.deletion,
 }));
 vi.mock("../../src/services/reminder.service.js", () => ({
   sweepReminders: sweeps.reminders,
@@ -42,41 +46,45 @@ beforeEach(() => {
   sweeps.pages.mockReset().mockResolvedValue(1);
   sweeps.coupons.mockReset().mockResolvedValue(0);
   sweeps.samples.mockReset().mockResolvedValue(3);
+  sweeps.deletion.mockReset().mockResolvedValue(6);
   sweeps.reminders.mockReset().mockResolvedValue(4);
   sweeps.broadcasts.mockReset().mockResolvedValue(5);
 });
 
 describe("runScheduledSweeps", () => {
-  it("runs the six sweeps in order and reports each count", async () => {
+  it("runs the seven sweeps in order and reports each count", async () => {
     const order: string[] = [];
     sweeps.sessions.mockImplementation(async () => (order.push("sessions"), 2));
     sweeps.pages.mockImplementation(async () => (order.push("pages"), 1));
     sweeps.coupons.mockImplementation(async () => (order.push("coupons"), 0));
     sweeps.samples.mockImplementation(async () => (order.push("samples"), 3));
+    sweeps.deletion.mockImplementation(async () => (order.push("deletion"), 6));
     sweeps.reminders.mockImplementation(async () => (order.push("reminders"), 4));
     sweeps.broadcasts.mockImplementation(async () => (order.push("broadcasts"), 5));
     const out = await runScheduledSweeps();
     expect(out.skipped).toBe(false);
-    expect(order).toEqual(["sessions", "pages", "coupons", "samples", "reminders", "broadcasts"]);
+    expect(order).toEqual(["sessions", "pages", "coupons", "samples", "deletion", "reminders", "broadcasts"]);
     expect(out.results.map((r) => [r.name, r.count, r.error])).toEqual([
       ["expired sessions", 2, null],
       ["stuck pages", 1, null],
       ["expired coupons", 0, null],
       ["sample books", 3, null],
+      ["data deletion", 6, null],
       ["reminder emails", 4, null],
       ["broadcast emails", 5, null],
     ]);
   });
 
-  it("a failing reminder sweep is reported and the four sweeps before it still ran", async () => {
+  it("a failing reminder sweep is reported and the five sweeps before it still ran", async () => {
     sweeps.reminders.mockRejectedValue(new Error("resend is down"));
     const out = await runScheduledSweeps();
     expect(sweeps.sessions).toHaveBeenCalledTimes(1);
     expect(sweeps.pages).toHaveBeenCalledTimes(1);
     expect(sweeps.coupons).toHaveBeenCalledTimes(1);
     expect(sweeps.samples).toHaveBeenCalledTimes(1);
-    expect(out.results.slice(0, 4).every((r) => r.error === null)).toBe(true);
-    expect(out.results[4]).toMatchObject({ name: "reminder emails", count: null, error: "failed" });
+    expect(sweeps.deletion).toHaveBeenCalledTimes(1);
+    expect(out.results.slice(0, 5).every((r) => r.error === null)).toBe(true);
+    expect(out.results[5]).toMatchObject({ name: "reminder emails", count: null, error: "failed" });
     expect(JSON.stringify(out)).not.toContain("resend is down");
   });
 
@@ -150,6 +158,7 @@ describe("runScheduledSweeps", () => {
         ["stuck pages", "timed out"],
         ["expired coupons", null],
         ["sample books", null],
+        ["data deletion", null],
         ["reminder emails", null],
         ["broadcast emails", null],
       ]);

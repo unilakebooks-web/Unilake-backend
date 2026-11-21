@@ -231,7 +231,9 @@ const PAID_SETTLE_MINUTES = 10;
 export function orderRule(
   order: { status: OrderStatus; pdfUrl: string | null; updatedAt: Date },
   sessionStatus: OrderSessionStatus,
-  now: Date
+  now: Date,
+  // Automatic data deletion (feature 6): the session's files were deleted, so no page can be remade.
+  filesDeleted = false
 ): OrderRule {
   const no = (reason: string): OrderRule => ({
     canRegenerate: false,
@@ -239,6 +241,12 @@ export function orderRule(
     mode: null,
   });
   const frozen = "This order was already sent to print: its pages are frozen.";
+
+  if (filesDeleted) {
+    return no(
+      "The photo and files of this order were deleted for the customer's privacy, so its pages cannot be remade. Contact the customer."
+    );
+  }
 
   if (order.pdfUrl) return no(frozen);
 
