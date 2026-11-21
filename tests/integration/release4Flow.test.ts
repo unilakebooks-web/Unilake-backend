@@ -489,6 +489,11 @@ describe("scenario 1: an unpaid preview is shared, reminded, then deleted", () =
       expect(await sweepReminders(at(6 * DAY + 6 * H))).toBe(1);
       expect(sentTo()).toEqual([control.email]);
       expect(sentTo()).not.toContain(book.email);
+      // The one coupling between reminder A and the deletion mode: while previews are really being deleted (PREVIEWS is
+      // ACTIVE) the last reminder says how long the preview is kept.
+      expect(String(fakes.send.mock.calls[0]![0].html)).toContain(
+        "is kept until"
+      );
       // And a plain later sweep, after the expiry too: still nothing for the deleted preview.
       fakes.send.mockClear();
       expect(await sweepReminders(at(7 * DAY + 6 * H))).toBe(0);

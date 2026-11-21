@@ -79,8 +79,7 @@ const offsetsSchema = (kind: keyof typeof MAX_OFFSET_HOURS, label: string) =>
 /**
  * Body for PATCH /reminders/settings. Every field is optional (omitted = unchanged, null clears the
  * nullable ones), the same convention as updateSiteSettingSchema. Rules that depend on the stored values
- * (the review reminder needs a link, the reserve cannot exceed the budget, the window must be one range, the
- * deletion days must be longer than the last unfinished-preview send time)
+ * (the review reminder needs a link, the reserve cannot exceed the budget, the window must be one range)
  * are checked in the service against the merged result.
  */
 export const updateReminderSettingsSchema = z
@@ -106,7 +105,8 @@ export const updateReminderSettingsSchema = z
       })
       .nullable()
       .optional(),
-    // Set only once previews really are deleted; it is the number of days the last reminder tells people.
+    // Kept only for compatibility: accepted and stored, but no longer used (the last reminder takes its date from the
+    // preview's own expiry while automatic deletion is switched on: feature 6, D-087).
     previewDeletionDays: z
       .number()
       .int("Deletion days must be a whole number")
