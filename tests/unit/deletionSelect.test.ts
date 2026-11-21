@@ -1,24 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 
-// The selection module imports prisma, r2 and the session service; the two functions under test are pure,
-// so those are replaced (the exempt list is copied from session.service.ts).
+// The selection module imports prisma, r2 and the session service; the functions under test are pure, so the
+// database, storage and queue modules are replaced. The session service itself is the real one: the exempt list
+// below is read from it, so a change to EXPIRY_EXEMPT_STATUSES is followed by these tests (and fails them if the
+// change was not meant to reach deletion).
 vi.mock("../../src/lib/prisma.js", () => ({ prisma: {} }));
 vi.mock("../../src/lib/r2.js", () => ({
   pdfKeyFor: (id: string) => `pdfs/${id}.pdf`,
 }));
-vi.mock("../../src/services/session.service.js", () => ({
-  EXPIRY_EXEMPT_STATUSES: [
-    "AWAITING_PAYMENT",
-    "PAID",
-    "GENERATING_PAID",
-    "PAID_PAGES_READY",
-    "CONFIRMED",
-    "COMPILING_PDF",
-    "PDF_FAILED",
-    "SHIPMENT_QUEUED",
-    "SHIPMENT_FAILED",
-    "COMPLETED",
-  ],
+vi.mock("../../src/jobs/queues.js", () => ({
+  sdGenerationQueue: {},
+  shiprocketQueue: {},
+  pdfCompilationQueue: {},
 }));
 
 import {

@@ -99,3 +99,10 @@ export const PROOF_MIN_AGE_MS = 6 * HOUR_MS;
 /** Retention of our own rows. */
 export const DELETION_RUN_RETENTION_DAYS = 90;
 export const DELETION_ITEM_RETENTION_DAYS = 90;
+
+/** An item CLAIMED or FAILED this long is logged at error level, once per run (count and oldest age). */
+export const STUCK_ITEM_ERROR_AFTER_MS = DAY_MS;
+/** In steady state a due item this long past due means a backlog above dailyMax: logged at error level. */
+export const BACKLOG_ERROR_AFTER_MS = DAY_MS;
+/** During the first run after OFF to ACTIVE, a due item outside the approved set this old is logged at error level. */
+export const OUTSIDE_APPROVAL_ERROR_AFTER_MS = 2 * DAY_MS;

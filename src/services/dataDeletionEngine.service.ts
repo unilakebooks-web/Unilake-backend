@@ -139,6 +139,11 @@ export function createRunContext(
 export const storageSignal = () => AbortSignal.timeout(STORAGE_CALL_TIMEOUT_MS);
 const signal = storageSignal;
 
+/** A real storage call to one bucket (a read of a key that cannot exist): throws when the bucket is unreachable or refused. */
+export async function probeBucket(bucket: "public" | "private"): Promise<void> {
+  await objectExists(bucket, `sessions/${randomUUID()}/probe`, signal());
+}
+
 /** The two buckets must differ: with one bucket for both, a session folder would hold a customer's photo and its pages. */
 export const bucketsAreDistinct = (): boolean =>
   config.r2.publicBucket !== config.r2.privateBucket;
@@ -189,7 +194,10 @@ export function isUnreachable(error: unknown): boolean {
   )
     return true;
   const status = err?.$metadata?.httpStatusCode;
-  return typeof status === "number" && (status >= 500 || status === 401 || status === 403);
+  return (
+    typeof status === "number" &&
+    (status >= 500 || status === 401 || status === 403)
+  );
 }
 
 const sessionInclude = {
@@ -655,6 +663,11 @@ async function deleteUnderPrefix(
     await assertStillClaimed(itemId);
     const page = await listObjectsPage(bucket, prefix, token, signal());
     for (let i = 0; i < page.keys.length; i += 10) {
+      // A page holds up to 1,000 keys: the deadline and the item row are checked before every batch of 10, not once a page.
+      if (i > 0) {
+        checkDeadline(ctx);
+        await assertStillClaimed(itemId);
+      }
       await Promise.all(
         page.keys
           .slice(i, i + 10)
@@ -907,7 +920,9 @@ async function finishClaimedItem(
         return { kind: "done", deleted: 1, ghost: false };
       }
       // The object is absent: a resumed item has not seen the bucket proof, so it needs it before it can be DONE.
-      if ((await bucketProof(ctx, "pdfs")) === "failed") throw new RunStop("proof_failed:pdfs");
+      const proof = await bucketProof(ctx, "pdfs");
+      if (proof === "failed") throw new RunStop("proof_failed:pdfs");
+      if (proof === "none") return failNow(ctx, item, "ghost_unproven");
       await finishDone(item, ctx.deps.now(), true, "ghost_evidenced");
       ctx.counters.ghosts += 1;
       ctx.counters.ghostsEvidenced += 1;
@@ -968,11 +983,18 @@ async function paymentGuard(
   | { ok: true }
   | { ok: false; kind: "blocked" | "skipped"; reason: string; record: boolean }
 > {
-  const order = session.order;
-  if (!order) return { ok: true };
   const now = ctx.deps.now();
   const decision = r1Decision(session, now);
-  if (!decision.needsPaymentCheck) return { ok: true };
+  // An ineligible preview is never "clear": the caller must not store a clear verdict or go on to claim it.
+  if (!decision.eligible)
+    return {
+      ok: false,
+      kind: "skipped",
+      reason: decision.reason,
+      record: false,
+    };
+  const order = session.order;
+  if (!order || !decision.needsPaymentCheck) return { ok: true };
   const ids = [
     order.razorpayOrderId,
     ...order.supersededRazorpayOrderIds,
@@ -1035,6 +1057,26 @@ export async function gatherPaymentVerdict(
   return guard.reason;
 }
 
+/**
+ * The bucket proof of a ghost candidate, per bucket it records a key in. True when the database offers no candidate to
+ * prove the bucket with (the ghost is then not accepted); a failed proof stops the run.
+ */
+async function ghostIsUnproven(ctx: RunContext, plan: Plan): Promise<boolean> {
+  let unproven = false;
+  for (const kind of plan.proofs) {
+    const touches = plan.buckets.some(
+      (b) =>
+        b.recorded.length > 0 &&
+        (kind === "private_photo") === (b.bucket === "private")
+    );
+    if (!touches) continue;
+    const proof = await bucketProof(ctx, kind);
+    if (proof === "failed") throw new RunStop(`proof_failed:${kind}`);
+    if (proof === "none") unproven = true;
+  }
+  return unproven;
+}
+
 /** Processes one new due candidate: guard, pre-check, claim, delete, verify. */
 export async function processCandidate(
   ctx: RunContext,
@@ -1075,21 +1117,8 @@ export async function processCandidate(
       ctx.counters.blocked += 1;
       return { kind: "blocked", reason: check.reason };
     }
-    let ghost = check.ghost;
-    let unproven = false;
-    if (ghost) {
-      for (const kind of plan.proofs) {
-        const touches = plan.buckets.some(
-          (b) =>
-            b.recorded.length > 0 &&
-            (kind === "private_photo") === (b.bucket === "private")
-        );
-        if (!touches) continue;
-        const proof = await bucketProof(ctx, kind);
-        if (proof === "failed") throw new RunStop(`proof_failed:${kind}`);
-        if (proof === "none") unproven = true;
-      }
-    }
+    const ghost = check.ghost;
+    const unproven = ghost && (await ghostIsUnproven(ctx, plan));
     const claimed = await claimItem(ctx, candidate, check.preCount);
     if ("refused" in claimed)
       return { kind: "refused", reason: claimed.refused };
@@ -1168,11 +1197,26 @@ export async function resumeItem(
     const session = await loadSession(sessionId);
     if (!session) return failNow(ctx, claimedAgain, "session_gone");
     const plan = buildPlan(item.scope, sessionId, session);
+    // An item whose listing was empty before the claim (a retried ghost_unproven, or a crash) goes through the same
+    // ghost checks and bucket proof as a new item: a wrong bucket setting must never end as DONE.
+    const pre = (item.preCount ?? {}) as PreCount;
+    let ghost = false;
+    if (
+      (pre.private ?? 0) + (pre.public ?? 0) === 0 &&
+      plan.buckets.some((b) => b.recorded.length > 0)
+    ) {
+      const check = await preCheck(ctx, plan);
+      if (check.kind === "blocked")
+        return failNow(ctx, claimedAgain, check.reason);
+      ghost = check.ghost;
+      if (ghost && (await ghostIsUnproven(ctx, plan)))
+        return failNow(ctx, claimedAgain, "ghost_unproven");
+    }
     return await finishClaimedItem(
       ctx,
       claimedAgain,
       plan,
-      false,
+      ghost,
       plan.evidenced
     );
   } catch (error) {
@@ -1307,6 +1351,18 @@ export async function acquireLease(deps: DeletionDeps): Promise<string | null> {
   return taken ? owner : null;
 }
 
+/** Pushes the lease out again; false when it was taken over. For a request that works through many items. */
+export async function renewLease(
+  owner: string,
+  deps: DeletionDeps
+): Promise<boolean> {
+  const renewed = await prisma.deletionSetting.updateMany({
+    where: { id: 1, leaseOwner: owner },
+    data: { leaseUntil: new Date(deps.now().getTime() + LEASE_STALE_MS) },
+  });
+  return renewed.count === 1;
+}
+
 export async function releaseLease(owner: string): Promise<void> {
   await prisma.deletionSetting.updateMany({
     where: { id: 1, leaseOwner: owner },
@@ -1327,7 +1383,10 @@ export async function stillOwnsLease(owner: string): Promise<boolean> {
 // A retired comic's files (scope COMIC)
 // ---------------------------------------------------------------------------------------------
 
-/** Whether another row refers to this key (in URL or key form), so deleting it would break something that is kept. */
+/**
+ * Whether another row refers to this key (in URL or key form), so deleting it would break something that is kept.
+ * The columns it reads are listed in SCANNED_URL_COLUMNS (utils/deletionKeys.ts): keep the two in step.
+ */
 async function keyReferencedElsewhere(
   comicId: string,
   bucket: "public" | "private",
@@ -1350,7 +1409,21 @@ async function keyReferencedElsewhere(
     const videos = await prisma.comic.count({
       where: { id: { not: comicId }, previewVideoUrl: { endsWith: key } },
     });
-    return videos > 0;
+    if (videos > 0) return true;
+    // The site content tables keep public URLs (or paths) of uploaded files: any of them naming the key keeps it.
+    const named = { endsWith: key };
+    const site = await Promise.all([
+      prisma.country.count({ where: { flagUrl: named } }),
+      prisma.heroImage.count({ where: { imageUrl: named } }),
+      prisma.customerReview.count({ where: { videoUrl: named } }),
+      prisma.teamMember.count({ where: { imageUrl: named } }),
+      prisma.howItWorks.count({
+        where: { OR: [{ videoUrl: named }, { posterUrl: named }] },
+      }),
+      prisma.blog.count({ where: { coverImageUrl: named } }),
+      prisma.googleReview.count({ where: { imageUrl: named } }),
+    ]);
+    return site.some((n) => n > 0);
   }
   const lora = await prisma.comic.count({
     where: { id: { not: comicId }, loraFileUrl: key },

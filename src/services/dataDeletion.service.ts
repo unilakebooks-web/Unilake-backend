@@ -8,6 +8,7 @@ import type {
 } from "../generated/prisma/client.js";
 import {
   APPROVAL_WINDOW_MS,
+  BACKLOG_ERROR_AFTER_MS,
   CANARY_AUTO_INTERVAL_MS,
   CANARY_VALID_MS,
   DAILY_MAX_LIMIT,
@@ -27,6 +28,8 @@ import {
   HOUR_MS,
   LEASE_STALE_MS,
   MAX_CONSECUTIVE_ITEM_ERRORS,
+  OUTSIDE_APPROVAL_ERROR_AFTER_MS,
+  STUCK_ITEM_ERROR_AFTER_MS,
   VERDICT_GATHER_LIMIT,
 } from "../config/dataDeletion.js";
 import {
@@ -46,6 +49,7 @@ import {
   selectDue,
   selectReportLists,
   type DeletionCandidate,
+  type ExtraReportLists,
 } from "./dataDeletionSelect.service.js";
 import {
   DeadlineStop,
@@ -58,8 +62,10 @@ import {
   ghostRateExceeded,
   isUnreachable,
   processCandidate,
+  probeBucket,
   processComicItem,
   releaseLease,
+  renewLease,
   resumeItem,
   runCanary,
   stillOwnsLease,
@@ -87,6 +93,11 @@ const GROUP_SCOPES: Record<DeletionGroup, DeletionScope[]> = {
   PREVIEWS: ["SESSION"],
   PHOTOS: ["PHOTO"],
   BOOKS: ["PAGES", "PDF", "ADDRESS", "COMIC"],
+};
+const GROUP_BUCKETS: Record<DeletionGroup, ("public" | "private")[]> = {
+  PREVIEWS: ["private", "public"],
+  PHOTOS: ["private"],
+  BOOKS: ["public"],
 };
 const PROOF_KINDS: Record<DeletionGroup, ProofKind[]> = {
   PREVIEWS: ["private_photo", "public_pages"],
@@ -126,12 +137,21 @@ async function writeReport(
     );
     notChecked = unchecked.map(pairKey);
     const skip = new Set(unchecked.map(pairKey));
-    selection.candidates = selection.candidates.filter((c) => !skip.has(pairKey(c)));
+    selection.candidates = selection.candidates.filter(
+      (c) => !skip.has(pairKey(c))
+    );
   }
   // The delivery-clock and kept-order lists are about delivered books: only the PHOTOS and BOOKS reports carry them.
-  const extra =
+  const extra: ExtraReportLists =
     group === "PREVIEWS"
-      ? { failedClock: [], keptOrders: [] }
+      ? {
+          failedClock: [],
+          keptOrders: [],
+          paidNotDelivered: [],
+          openAddress: [],
+          stuckSync: [],
+          outOfPrefix: [],
+        }
       : await selectReportLists(now);
   const objectCounts: Record<string, number> = {};
   const sample = selection.candidates.slice(0, REPORT_SAMPLE_SIZE);
@@ -210,6 +230,10 @@ async function writeReport(
         ].slice(0, REPORT_ID_CAP),
         legacyPdf: selection.lists.legacyPdf.slice(0, REPORT_ID_CAP),
         keptOrders: extra.keptOrders,
+        paidNotDelivered: extra.paidNotDelivered,
+        openAddress: extra.openAddress,
+        stuckSync: extra.stuckSync,
+        outOfPrefix: extra.outOfPrefix,
         blocked: selection.lists.blocked.slice(0, REPORT_ID_CAP),
         notChecked: notChecked.slice(0, REPORT_ID_CAP),
       } as Prisma.InputJsonValue,
@@ -356,16 +380,70 @@ async function pauseGroup(
     );
 }
 
+/**
+ * The (scope, id) pairs of the approved report, an empty set when no report was approved, and null when one was but its
+ * run or its list is gone (the caller must not read that as "nothing approved").
+ */
 async function approvedPairs(settings: {
   approvedRunId: string | null;
-}): Promise<Set<string>> {
+}): Promise<Set<string> | null> {
   if (!settings.approvedRunId) return new Set();
   const run = await prisma.deletionRun.findUnique({
     where: { id: settings.approvedRunId },
     select: { lists: true },
   });
   const due = (run?.lists as { due?: string[] } | null)?.due;
-  return new Set(due ?? []);
+  return due ? new Set(due) : null;
+}
+
+/** The oldest `dueAt` of these candidates, or null when there are none. */
+function oldestDueAt(candidates: DeletionCandidate[]): Date | null {
+  let oldest: Date | null = null;
+  for (const c of candidates)
+    if (!oldest || c.dueAt.getTime() < oldest.getTime()) oldest = c.dueAt;
+  return oldest;
+}
+
+const ageHours = (from: Date, now: Date) =>
+  Math.floor((now.getTime() - from.getTime()) / HOUR_MS);
+
+/** Steady state: a due item more than 24 hours past due is a backlog above dailyMax (one error line per run). */
+function logOldDue(
+  group: DeletionGroup,
+  candidates: DeletionCandidate[],
+  now: Date
+) {
+  const oldest = oldestDueAt(candidates);
+  if (oldest && now.getTime() - oldest.getTime() > BACKLOG_ERROR_AFTER_MS)
+    logger.error(
+      { group, oldestDueAgeHours: ageHours(oldest, now) },
+      "[Data deletion] the oldest due item is more than 24 hours past due (a backlog above the daily maximum)"
+    );
+}
+
+/** One error line per run while an item has been FAILED or CLAIMED for over 24 hours (count and oldest age, no throw). */
+async function logStuckItems(now: Date): Promise<void> {
+  const cut = new Date(now.getTime() - STUCK_ITEM_ERROR_AFTER_MS);
+  const stuck = await prisma.deletionItem.findMany({
+    where: {
+      OR: [
+        { state: "CLAIMED", claimedAt: { lte: cut } },
+        { state: "FAILED", updatedAt: { lte: cut } },
+      ],
+    },
+    select: { state: true, claimedAt: true, updatedAt: true },
+    take: REPORT_ID_CAP,
+  });
+  if (stuck.length === 0) return;
+  const oldest = Math.min(
+    ...stuck.map((i) =>
+      (i.state === "CLAIMED" ? i.claimedAt : i.updatedAt).getTime()
+    )
+  );
+  logger.error(
+    { count: stuck.length, oldestAgeHours: ageHours(new Date(oldest), now) },
+    "[Data deletion] items have been CLAIMED or FAILED for over 24 hours"
+  );
 }
 
 async function runActiveGroup(
@@ -400,19 +478,29 @@ async function runActiveGroup(
   // A pause for repeated item errors ends only when an admin has dealt with the stuck items (retry, release or undo).
   if (settings.pausedReason === "repeated_errors") {
     const open = await prisma.deletionItem.count({
-      where: { scope: { in: GROUP_SCOPES[group] }, state: { in: ["CLAIMED", "FAILED"] } },
+      where: {
+        scope: { in: GROUP_SCOPES[group] },
+        state: { in: ["CLAIMED", "FAILED"] },
+      },
     });
     if (open > 0) {
-      logger.error({ group, open }, "[Data deletion] the group is still paused: items need an admin");
+      logger.error(
+        { group, open },
+        "[Data deletion] the group is still paused: items need an admin"
+      );
       return;
     }
   }
   // A pause because storage could not be reached ends when a storage call works again.
+  // The probe is a real call to every bucket this group uses: a revoked token on one bucket must not look fixed.
   if (settings.pausedReason === "storage_unreachable") {
     try {
-      await bucketProof(ctx, "public_pages");
+      for (const bucket of GROUP_BUCKETS[group]) await probeBucket(bucket);
     } catch (error) {
-      logger.error({ err: error, group }, "[Data deletion] the group is still paused: storage is not reachable");
+      logger.error(
+        { err: error, group },
+        "[Data deletion] the group is still paused: storage is not reachable"
+      );
       return;
     }
   }
@@ -469,9 +557,16 @@ async function runActiveGroup(
       if (!(await stillActive())) return;
       const outcome = await resumeItem(ctx, item);
       if (outcome) summary.attempted += 1;
-      consecutiveErrors = outcome?.kind === "failed" ? consecutiveErrors + 1 : 0;
+      consecutiveErrors =
+        outcome?.kind === "failed" ? consecutiveErrors + 1 : 0;
       if (consecutiveErrors >= MAX_CONSECUTIVE_ITEM_ERRORS) {
-        await pauseGroup(group, "repeated_errors", ctx.deps.now(), false, summary);
+        await pauseGroup(
+          group,
+          "repeated_errors",
+          ctx.deps.now(),
+          false,
+          summary
+        );
         return;
       }
     }
@@ -491,11 +586,22 @@ async function runActiveGroup(
     // 2. New items within dailyMax.
     const remaining =
       settings.dailyMax - (await usedLast24h(group, ctx.deps.now()));
-    if (remaining <= 0) return;
+    if (remaining <= 0) {
+      // The daily maximum is used up: in steady state a due item over 24 hours past due is the backlog.
+      if (settings.approvalExhaustedAt) {
+        const waiting = await selectDue(group, ctx.deps.now(), {
+          limit: 3,
+          blockTtlMs: RAZORPAY_VERDICT_TTL_MS,
+          onlyComicId: ctx.deps.onlyComicId,
+        });
+        logOldDue(group, waiting.candidates, ctx.deps.now());
+      }
+      return;
+    }
     // The first run after OFF to ACTIVE deletes only the approved report's items.
     let restrict: Set<string> | null = null;
     if (!settings.approvalExhaustedAt) {
-      restrict = await approvedPairs(settings);
+      const approved = await approvedPairs(settings);
       const expired =
         settings.approvedAt &&
         ctx.deps.now().getTime() - settings.approvedAt.getTime() >=
@@ -505,7 +611,18 @@ async function runActiveGroup(
           where: { group },
           data: { approvalExhaustedAt: ctx.deps.now() },
         });
-        restrict = null;
+      } else if (!approved) {
+        // The approved report or its list is gone: an empty set would read as "used up" and start steady state.
+        await pauseGroup(
+          group,
+          "approved_report_missing",
+          ctx.deps.now(),
+          true,
+          summary
+        );
+        return;
+      } else {
+        restrict = approved;
       }
     }
     const selection = await selectDue(group, ctx.deps.now(), {
@@ -519,9 +636,27 @@ async function runActiveGroup(
       );
     }
     let due: DeletionCandidate[] = selection.candidates;
+    if (!restrict) logOldDue(group, selection.candidates, ctx.deps.now());
     if (restrict) {
       const approved = restrict;
       due = due.filter((c) => approved.has(pairKey(c)));
+      // Due but outside the approved set for over 2 days: shown on the page and logged (count and oldest age).
+      const outside = selection.candidates.filter(
+        (c) =>
+          !approved.has(pairKey(c)) &&
+          ctx.deps.now().getTime() - c.dueAt.getTime() >
+            OUTSIDE_APPROVAL_ERROR_AFTER_MS
+      );
+      const oldestOutside = oldestDueAt(outside);
+      if (oldestOutside)
+        logger.error(
+          {
+            group,
+            count: outside.length,
+            oldestDueAgeHours: ageHours(oldestOutside, ctx.deps.now()),
+          },
+          "[Data deletion] due items outside the approved report are over 2 days old"
+        );
       const dueKeys = new Set(selection.candidates.map(pairKey));
       const openItems = await prisma.deletionItem.findMany({
         where: { scope: { in: scopes }, state: { in: ["DONE", "FAILED"] } },
@@ -556,7 +691,13 @@ async function runActiveGroup(
       if (outcome.kind === "done" || outcome.kind === "failed") left -= 1;
       failedInARow = outcome.kind === "failed" ? failedInARow + 1 : 0;
       if (failedInARow >= MAX_CONSECUTIVE_ITEM_ERRORS) {
-        await pauseGroup(group, "repeated_errors", ctx.deps.now(), false, summary);
+        await pauseGroup(
+          group,
+          "repeated_errors",
+          ctx.deps.now(),
+          false,
+          summary
+        );
         return;
       }
       if (outcome.kind === "done" && outcome.ghost) {
@@ -826,6 +967,7 @@ export async function sweepDataDeletion(
         });
       }
     }
+    await logStuckItems(deps.now());
     // Leftovers and housekeeping with what is left of the budget.
     const tail = createRunContext(
       deps,
@@ -921,7 +1063,28 @@ export async function setGroupMode(
       },
     });
   }
-  // ACTIVE
+  // ACTIVE: under the run lease, so no report is written and no run starts between the checks and the switch.
+  const owner = await acquireLease(deps);
+  if (!owner)
+    throw new ConflictError(
+      "A deletion run is in progress. Try again in a minute."
+    );
+  try {
+    return await activateGroup(group, input, current, data, adminEmail, now);
+  } finally {
+    await releaseLease(owner);
+  }
+}
+
+/** The checks and the switch of one group to ACTIVE. Runs under the run lease. */
+async function activateGroup(
+  group: DeletionGroup,
+  input: GroupModeInput,
+  current: { mode: DeletionMode; modeChangedAt: Date },
+  data: Prisma.DeletionGroupSettingUpdateInput,
+  adminEmail: string,
+  now: Date
+) {
   if (!input.reportRunId)
     throw new ValidationError(
       "Read the latest report and confirm it to switch deletion on"
@@ -933,6 +1096,12 @@ export async function setGroupMode(
   if (!report || report.id !== input.reportRunId) {
     throw new ConflictError(
       "A newer report exists. Reload the page, read it, and confirm again."
+    );
+  }
+  // The approved id list lives in the report: a report whose list was emptied cannot approve anything.
+  if (!report.lists) {
+    throw new ConflictError(
+      "The lists of this report are no longer stored. Wait for a new report."
     );
   }
   if (now.getTime() - report.startedAt.getTime() > REPORT_VALID_MS) {
@@ -979,8 +1148,9 @@ export async function setGroupMode(
       "Run the storage canary first (it must have passed in the last 36 hours)"
     );
   }
-  return prisma.deletionGroupSetting.update({
-    where: { group },
+  // Compare-and-set on what this function read: a pause or a switch made by someone else meanwhile makes it fail.
+  const switched = await prisma.deletionGroupSetting.updateMany({
+    where: { group, mode: current.mode, modeChangedAt: current.modeChangedAt },
     data: {
       ...data,
       mode: "ACTIVE",
@@ -994,6 +1164,12 @@ export async function setGroupMode(
       pausedAt: null,
     },
   });
+  if (switched.count !== 1) {
+    throw new ConflictError(
+      "This group was changed by someone else. Reload the page and try again."
+    );
+  }
+  return prisma.deletionGroupSetting.findUniqueOrThrow({ where: { group } });
 }
 
 /** The Master's canary button: runs the same check at once. The first pass enables the daily canary. */
@@ -1107,6 +1283,11 @@ async function clearItems(
   const refused: { id: string; reason: string }[] = [];
   try {
     for (const id of ids) {
+      // Each item counts objects in storage: keep the lease fresh so a long request never lets it go stale.
+      if (!(await renewLease(owner, deps))) {
+        refused.push({ id, reason: "lease_lost" });
+        continue;
+      }
       const reason = await clearBlocker(id, deps, mode);
       if (reason) {
         refused.push({ id, reason });
@@ -1151,6 +1332,8 @@ export async function undoGhosts(
   deps: DeletionDeps = defaultDeps
 ): Promise<{
   undone: number;
+  /** The ids of the items that were undone (for the admin log line). */
+  ids: string[];
   refused: { id: string; reason: string }[];
   truncated: boolean;
 }> {
@@ -1177,7 +1360,7 @@ export async function undoGhosts(
     ids = rows.slice(0, UNDO_RANGE_LIMIT).map((row) => row.id);
   }
   const { cleared, refused } = await clearItems(ids, deps, "undo");
-  return { undone: cleared.length, refused, truncated };
+  return { undone: cleared.length, ids: cleared, refused, truncated };
 }
 
 async function clearMarkerAndItem(id: string): Promise<void> {
@@ -1188,10 +1371,14 @@ async function clearMarkerAndItem(id: string): Promise<void> {
     if (item.scope === "PDF") {
       await tx.$queryRaw`SELECT "id" FROM "orders" WHERE "id" = ${item.subjectId} FOR UPDATE`;
     } else {
-      const orders = await tx.$queryRaw<{ paidAfterDeletionAt: Date | null }[]>`SELECT "paidAfterDeletionAt" FROM "orders" WHERE "orderSessionId" = ${item.subjectId} FOR UPDATE`;
+      const orders = await tx.$queryRaw<
+        { paidAfterDeletionAt: Date | null }[]
+      >`SELECT "paidAfterDeletionAt" FROM "orders" WHERE "orderSessionId" = ${item.subjectId} FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "order_sessions" WHERE "id" = ${item.subjectId} FOR UPDATE`;
       if (orders[0]?.paidAfterDeletionAt) {
-        throw new ConflictError("A payment arrived after deletion: this item cannot be released.");
+        throw new ConflictError(
+          "A payment arrived after deletion: this item cannot be released."
+        );
       }
     }
     if (item.scope === "SESSION") {
@@ -1271,16 +1458,20 @@ export async function getDeletionOverview(deps: DeletionDeps = defaultDeps) {
       },
     });
     let dueNotApproved: number | null = null;
-    if (g.mode === "ACTIVE" && !g.approvalExhaustedAt) {
-      const approved = await approvedPairs(g);
+    let oldestDue: Date | null = null;
+    if (g.mode === "ACTIVE") {
       const selection = await selectDue(g.group, now, {
         limit: REPORT_ID_CAP,
         blockTtlMs: RAZORPAY_VERDICT_TTL_MS,
         onlyComicId: deps.onlyComicId,
       });
-      dueNotApproved = selection.candidates.filter(
-        (c) => !approved.has(pairKey(c))
-      ).length;
+      oldestDue = oldestDueAt(selection.candidates);
+      if (!g.approvalExhaustedAt) {
+        const approved = (await approvedPairs(g)) ?? new Set<string>();
+        dueNotApproved = selection.candidates.filter(
+          (c) => !approved.has(pairKey(c))
+        ).length;
+      }
     }
     result.push({
       group: g.group,
@@ -1313,6 +1504,7 @@ export async function getDeletionOverview(deps: DeletionDeps = defaultDeps) {
         ghostPauseMin: GHOST_MIN_COUNT,
       },
       dueNotApproved,
+      oldestDueAt: oldestDue,
       attention,
     });
   }

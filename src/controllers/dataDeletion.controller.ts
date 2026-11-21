@@ -74,6 +74,7 @@ export const undoGhostHandler = asyncHandler(
       {
         actor: req.user!.id,
         undone: result.undone,
+        ids: result.ids,
         refused: result.refused.length,
       },
       "[Data deletion] ghosts undone"

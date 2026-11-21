@@ -13,7 +13,11 @@ export const setDeletionModeSchema = z
     dueCount: z.number().int().min(0).optional(),
     confirmation: z.string().max(40).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (data) => data.mode !== "ACTIVE" || !!data.expectedModeChangedAt,
+    "Reload the page: switching deletion on needs the time the page last saw the mode change"
+  );
 
 /** Retry a FAILED item, or every FAILED item of a group. */
 export const retryDeletionSchema = z

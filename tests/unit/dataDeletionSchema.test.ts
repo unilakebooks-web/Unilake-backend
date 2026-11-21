@@ -48,11 +48,21 @@ describe("the data deletion admin schemas", () => {
     expect(
       setDeletionModeSchema.safeParse({
         mode: "ACTIVE",
+        expectedModeChangedAt: "2031-06-15T12:00:00.000Z",
         reportRunId: uuid,
         dueCount: 3,
         confirmation: "DELETE 3",
       }).success
     ).toBe(true);
+    // The switch to ACTIVE must carry the time the page saw; other modes may leave it out.
+    expect(
+      setDeletionModeSchema.safeParse({
+        mode: "ACTIVE",
+        reportRunId: uuid,
+        dueCount: 3,
+        confirmation: "DELETE 3",
+      }).success
+    ).toBe(false);
     expect(
       setDeletionModeSchema.safeParse({
         mode: "ACTIVE",

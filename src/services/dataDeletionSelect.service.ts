@@ -436,11 +436,22 @@ async function selectAddress(
   }));
 }
 
-/** Report lists that need their own queries: delivered orders with an unusable delivery clock, and kept orders. */
-export async function selectReportLists(now: Date): Promise<{
+/** The lists of the report that need their own read-only queries (ids only, capped). */
+export interface ExtraReportLists {
   failedClock: string[];
   keptOrders: string[];
-}> {
+  /** Orders that are PAID or on their way (never delivered) and older than the book retention: kept, listed (D-079). */
+  paidNotDelivered: string[];
+  /** Orders with an address-change row still PENDING, FAILED or UNVERIFIED after the AWB: no admin action can settle it. */
+  openAddress: string[];
+  /** Orders with an address sync that has been SYNCING for longer than the claim lifetime (a crashed sync). */
+  stuckSync: string[];
+  /** Sessions whose recorded keys lie outside their own folder (a verdict "out_of_prefix" is stored for each). */
+  outOfPrefix: string[];
+}
+
+/** Report lists that need their own queries: unusable delivery clocks, kept orders and the rows the owner reads first. */
+export async function selectReportLists(now: Date): Promise<ExtraReportLists> {
   const futureLimit = new Date(now.getTime() + DELIVERED_FUTURE_TOLERANCE_MS);
   const failed = await prisma.$queryRaw<{ id: string }[]>`
     SELECT "id" FROM "orders"
@@ -453,8 +464,41 @@ export async function selectReportLists(now: Date): Promise<{
     select: { id: true },
     take: REPORT_ID_CAP,
   });
+  const paidNotDelivered = await prisma.order.findMany({
+    where: {
+      status: {
+        in: ["PAID", "GENERATED", "CONFIRMED", "READY_TO_SHIP", "SHIPPED"],
+      },
+      createdAt: { lte: new Date(now.getTime() - BOOK_DELETION_DAYS_MS) },
+    },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+    take: REPORT_ID_CAP,
+  });
+  const openAddress = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT DISTINCT o."id" FROM "orders" o
+    JOIN "order_address_changes" c ON c."orderId" = o."id"
+    WHERE o."awbNumber" IS NOT NULL
+      AND c."syncStatus" IN ('PENDING', 'FAILED', 'UNVERIFIED')
+    LIMIT ${REPORT_ID_CAP}
+  `;
+  const stuckSync = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT DISTINCT c."orderId" AS "id" FROM "order_address_changes" c
+    WHERE c."syncStatus" = 'SYNCING'
+      AND (c."syncStartedAt" IS NULL OR c."syncStartedAt" <= ${new Date(now.getTime() - ADDRESS_SYNC_CLAIM_STALE_MS)})
+    LIMIT ${REPORT_ID_CAP}
+  `;
+  const outOfPrefix = await prisma.deletionBlock.findMany({
+    where: { reason: "out_of_prefix" },
+    select: { subjectId: true },
+    take: REPORT_ID_CAP,
+  });
   return {
     failedClock: failed.map((r) => r.id),
     keptOrders: kept.map((r) => r.id),
+    paidNotDelivered: paidNotDelivered.map((r) => r.id),
+    openAddress: openAddress.map((r) => r.id),
+    stuckSync: stuckSync.map((r) => r.id),
+    outOfPrefix: outOfPrefix.map((r) => r.subjectId),
   };
 }
