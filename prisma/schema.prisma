@@ -381,6 +381,7 @@ model OrderSession {
   pageVersions PageVersion[]
   sessionPages SessionPage[]
   order        Order?
+  share        SessionShare?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -389,6 +390,22 @@ model OrderSession {
   @@index([isSample, expiresAt])
   @@index([filesDeletedAt, expiresAt])
   @@map("order_sessions")
+}
+
+// The view-only link to a session's book (feature 14). One row per session: the random token in the link is
+// NOT the session id, so sharing it never gives anyone the customer's private link. Revoking keeps the row;
+// sharing again gives the row a new token. The share dies with the session: it is checked on every read.
+model SessionShare {
+  id             String       @id @default(uuid())
+  orderSessionId String       @unique
+  orderSession   OrderSession @relation(fields: [orderSessionId], references: [id], onDelete: Cascade)
+
+  token     String    @unique // 24 random bytes, base64url (32 characters)
+  showName  Boolean   @default(false) // the child's first name in the page title and link preview
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@map("session_shares")
 }
 
 // The pages a session's book is made of, frozen when the session is created.

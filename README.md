@@ -473,6 +473,10 @@ An admin can try a book without paying: `/api/admin/samples` (list, create, `DEL
 
 ---
 
+## Sharing a book
+
+A customer can share a view-only link to their book. `GET/POST/DELETE /api/public/sessions/:id/share` (state, create or return the link, stop sharing) are keyed by the session id like every other session route. The link itself is `GET /api/public/shares/:token` (the pages that can be shown, no personal data) with `.../pages/:n/image` (webp) and `.../pages/:n/card.jpg` (a 1200 px preview card); the token is random and is never the session id. Stored image urls contain the session id, so the images are always served through these routes (bounded memory, `config/share.ts`). A share dies with the session: `isSessionGone` in `services/share.service.ts` is checked on every read.
+
 ## Quality checks
 
 Tests cover the coupon and sample-book features and the sub-admin role guard (vitest). `npm test` runs the unit tests. `npm run test:integration` runs the integration tests against a separate Neon test branch: put that branch's `DATABASE_URL` and `DIRECT_URL` in a git-ignored `.env.test`, with `UNILAKE_TEST_DATABASE=1` and `UNILAKE_TEST_DB_HOST` set to that branch's host. The tests refuse to run if the connection strings do not contain that host, or if `R2_ENDPOINT` is not a local MinIO address (the sample tests delete stored files). Everything else has no automated tests yet. Before opening a PR:

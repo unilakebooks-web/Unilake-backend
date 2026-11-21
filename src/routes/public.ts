@@ -29,6 +29,16 @@ import { getPublicSitePageHandler } from "../controllers/sitePage.controller.js"
 import { getActiveGoogleReviewsHandler } from "../controllers/googleReview.controller.js";
 import { getPublicSiteSettingHandler } from "../controllers/siteSetting.controller.js";
 import {
+  createShareHandler,
+  getShareStateHandler,
+  getSharedBookHandler,
+  getSharedCardHandler,
+  getSharedImageHandler,
+  revokeShareHandler,
+  updateShareHandler,
+} from "../controllers/share.controller.js";
+import { createShareSchema, updateShareSchema } from "../validators/share.schema.js";
+import {
   applyUnsubscribeHandler,
   getUnsubscribeInfoHandler,
 } from "../controllers/emailPreferences.controller.js";
@@ -50,6 +60,15 @@ router.post("/sessions/:sessionId/pages/:pageNumber/regenerate", regeneratePageH
 router.post("/sessions/:sessionId/checkout", initiateCheckoutHandler); // creates Razorpay order + Order row
 router.post("/sessions/:sessionId/coupon-preview", requireLoggedIn, previewCouponHandler); // read-only: what would this coupon code take off
 router.get("/sessions/:sessionId/coupon-offers", requireLoggedIn, listCouponOffersHandler); // read-only: the coupons that fit this order right now
+router.get("/sessions/:sessionId/share", getShareStateHandler); // the Share button: is sharing possible, and is a link live
+router.post("/sessions/:sessionId/share", validateBody(createShareSchema), createShareHandler); // create or return the view-only link
+router.patch("/sessions/:sessionId/share", validateBody(updateShareSchema), updateShareHandler); // change only the name flag of a live link
+router.delete("/sessions/:sessionId/share", revokeShareHandler); // stop sharing
+
+// the view-only shared book: the share token is the only credential, and it is never the session id
+router.get("/shares/:token", getSharedBookHandler);
+router.get("/shares/:token/pages/:pageNumber/image", getSharedImageHandler);
+router.get("/shares/:token/pages/:pageNumber/card.jpg", getSharedCardHandler);
 
 
 
