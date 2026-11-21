@@ -53,21 +53,8 @@ export async function updateReminderSettings(
       "Add the Google review link before switching on the review reminder."
     );
   }
-  const deletionDays =
-    data.previewDeletionDays === undefined
-      ? current.previewDeletionDays
-      : data.previewDeletionDays;
-  const previewOffsets =
-    data.previewOffsetsHours ?? current.previewOffsetsHours;
-  if (
-    deletionDays !== null &&
-    deletionDays * 24 <= Math.max(...previewOffsets)
-  ) {
-    // The last reminder would name a deletion date that has already passed when it arrives.
-    throw new ValidationError(
-      "The deletion days must be longer than the last unfinished-preview send time."
-    );
-  }
+  // The "deletion days" setting is kept and accepted but no longer used (feature 6): a reminder names the
+  // preview's real expiry date, which the A send times already stay inside (MAX_OFFSET_HOURS).
   if (data.reminderCouponCode) {
     // A typo would silently never be shown: refuse a code that does not exist.
     const coupon = await prisma.coupon.findUnique({

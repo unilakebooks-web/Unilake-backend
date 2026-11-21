@@ -418,8 +418,9 @@ describe("A, the unfinished preview", () => {
     expect(sentTo()).toEqual([]);
   });
 
-  it("a deletion date appears in the last reminder only for a PREVIEW_READY session and only when the admin set the days", async () => {
-    await enableA({ previewDeletionDays: 7 });
+  it("a kept-until date appears in the last reminder only for a PREVIEW_READY session and only while deletion of previews is switched on", async () => {
+    await enableA();
+    await prisma.deletionGroupSetting.update({ where: { group: "PREVIEWS" }, data: { mode: "ACTIVE" } });
     const ready = await makeSession({
       createdAt: ago(100),
       email: email("ready"),
@@ -433,17 +434,25 @@ describe("A, the unfinished preview", () => {
     await sweepReminders(NOW);
     const readyMail = callFor(ready.notificationEmail!);
     const awaitMail = callFor(awaiting.notificationEmail!);
-    expect(readyMail.html).toContain("deleted on");
-    expect(readyMail.html).toContain("13 November 2026"); // created 6 Nov 2026 (IST) plus 7 days
-    expect(awaitMail.html).not.toContain("deleted on");
+    expect(readyMail.html).toContain("is kept until");
+    expect(readyMail.html).toContain("13 November 2026"); // created 6 Nov 2026 (IST) plus its 7 days
+    expect(awaitMail.html).not.toContain("is kept until");
 
     fakes.send.mockClear();
     await prisma.reminderSend.deleteMany({
       where: { email: { endsWith: DOMAIN } },
     });
-    await enableA({ previewDeletionDays: null });
+    await prisma.deletionGroupSetting.update({ where: { group: "PREVIEWS" }, data: { mode: "REPORT_ONLY" } });
     await sweepReminders(NOW);
-    expect(callFor(ready.notificationEmail!).html).not.toContain("deleted on");
+    expect(callFor(ready.notificationEmail!).html).not.toContain("is kept until");
+  });
+
+  it("a preview whose files were deleted gets no reminder (feature 6)", async () => {
+    await enableA();
+    const gone = await makeSession({ createdAt: ago(100), email: email("gone") });
+    await prisma.$executeRaw`UPDATE "order_sessions" SET "filesDeletedAt" = ${NOW} WHERE "id" = ${gone.id}`;
+    await sweepReminders(NOW);
+    expect(sentTo()).not.toContain(gone.notificationEmail);
   });
 
   it("a coupon code appears in the last reminder only while the coupon is active, open to everyone and in its dates", async () => {

@@ -605,7 +605,8 @@ export async function getContentHealth() {
     siteSetting,
     activeCountries,
   ] = await Promise.all([
-    prisma.comic.groupBy({ by: ["status"], _count: true }),
+    // A retired comic whose files are gone (feature 6) no longer counts; its paid orders stay in revenue statistics.
+    prisma.comic.groupBy({ by: ["status"], where: { filesDeletedAt: null }, _count: true }),
 
     // --- Pricing completeness, simplified on purpose ------------------------
     //

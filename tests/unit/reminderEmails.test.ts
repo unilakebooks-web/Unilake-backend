@@ -144,7 +144,7 @@ describe("A, the unfinished preview", () => {
     expect(fresh.subject).not.toContain("final reminder");
     expect(fresh.html).not.toContain("final reminder");
     expect(fresh.html).toContain(
-      "will be deleted on <strong>17 November 2026</strong>"
+      "is kept until <strong>17 November 2026</strong>"
     );
     expect(fresh.html).toContain("<strong>WELCOME-10</strong>");
     // after an earlier reminder it is the final one, as before
@@ -187,7 +187,7 @@ describe("A, the unfinished preview", () => {
       couponCode: "WELCOME-10",
     };
     const last = renderReminderEmail(base({ step: 2, ...withBoth })).html;
-    expect(last).toContain("deleted on <strong>17 November 2026</strong>");
+    expect(last).toContain("kept until <strong>17 November 2026</strong>");
     expect(last).toContain("<strong>WELCOME-10</strong>");
     for (const step of [0, 1]) {
       const early = renderReminderEmail(base({ step, ...withBoth })).html;
@@ -195,7 +195,7 @@ describe("A, the unfinished preview", () => {
       expect(early).not.toContain("WELCOME-10");
     }
     const none = renderReminderEmail(base({ step: 2 })).html;
-    expect(none).not.toContain("deleted on");
+    expect(none).not.toContain("kept until");
     expect(none).not.toContain("code");
   });
 

@@ -5,7 +5,10 @@ import { enqueuePaidGenerationJobs } from "./session.service.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { config } from "../config/env.js";
 import { processShiprocketStatusUpdate } from "./shiprocket.service.js";
-import { notifyPaymentReceived } from "./notification.service.js";
+import {
+  notifyPaidAfterDeletion,
+  notifyPaymentReceived,
+} from "./notification.service.js";
 import { assignBillNumber } from "./billOfSupply.service.js";
 import { switchOffUsedUpCouponOfOrder } from "./coupon.service.js";
 import {
@@ -205,6 +208,9 @@ async function handlePaymentCaptured(
 
   // Flip Order + Session in a transaction. Enqueue OUTSIDE.
   let repricedMeanwhile = false;
+  // Automatic data deletion (feature 6): set when this session's files were already deleted.
+  let paidAfterDeletion = false;
+  let paidAfterDeletionFirst = false;
   await prisma.$transaction(async (tx) => {
     const { count: orderFlipped } = await tx.order.updateMany({
       where: { id: order.id, status: "CREATED", razorpayOrderId },
@@ -245,6 +251,22 @@ async function handlePaymentCaptured(
       where: { id: order.orderSessionId, status: "AWAITING_PAYMENT" },
       data: { status: "PAID" },
     });
+
+    // The marker is read here, after the guarded flip, so a deletion claim that committed while this webhook waited
+    // for the order lock is seen (the order lock orders the two). A marked session means its files are gone: the
+    // payment stays recorded but no book can be made. The flag is written in this transaction and only once.
+    const marker = await tx.orderSession.findUnique({
+      where: { id: order.orderSessionId },
+      select: { photoDeletedAt: true, filesDeletedAt: true },
+    });
+    if (marker && (marker.photoDeletedAt || marker.filesDeletedAt)) {
+      paidAfterDeletion = true;
+      // Flag and mail only for the delivery that actually flipped the order: a redelivery only skips the book.
+      if (orderFlipped === 1) {
+        const flagged = await tx.$executeRaw`UPDATE "orders" SET "paidAfterDeletionAt" = ${new Date()} WHERE "id" = ${order.id} AND "paidAfterDeletionAt" IS NULL`;
+        paidAfterDeletionFirst = flagged === 1;
+      }
+    }
   }).catch(async (error) => {
     // The idempotency row was stored before processing. If the status change
     // failed, remove it so Razorpay's retry is processed instead of skipped as a
@@ -276,6 +298,29 @@ async function handlePaymentCaptured(
     },
     "Payment captured — Order + Session flipped to PAID"
   );
+
+  if (paidAfterDeletion) {
+    // No generation, no "creating your book" email: the photo is gone. An admin follows up (refund or a new photo).
+    logger.error(
+      { orderId: order.id, sessionId: order.orderSessionId, razorpayPaymentId },
+      "Payment captured after the files of this preview were deleted — no book can be made, admin follow-up needed"
+    );
+    if (paidAfterDeletionFirst) {
+      notifyPaidAfterDeletion(order.orderSessionId).catch((err) => {
+        logger.error(
+          { orderId: order.id, err },
+          "notifyPaidAfterDeletion failed (swallowed)"
+        );
+      });
+    }
+    await switchOffUsedUpCouponOfOrder(order.id).catch((err) => {
+      logger.warn(
+        { orderId: order.id, err },
+        "Could not switch off a used-up coupon after payment"
+      );
+    });
+    return;
+  }
 
   // Enqueue paid-page generation OUTSIDE the transaction.
   // Never enqueue inside $transaction (Redis doesn't roll back with Prisma).
