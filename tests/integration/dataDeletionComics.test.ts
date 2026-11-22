@@ -230,6 +230,23 @@ describe("the 30-day rule and delete for a comic nobody bought", () => {
       await prisma.comic.findUnique({ where: { id: ready.id } })
     ).toBeNull();
   });
+
+  it("deleting a comic also deletes its share image file", async () => {
+    const share = `comics/og/${RUN}-share.png`;
+    await uploadFile("public", share, Buffer.from("x"), "image/png");
+    keysToDelete.add(share);
+    const comic = await mkComic({
+      status: "DRAFT",
+      unpublishedAt: null,
+      ogImageUrl: `${base()}/${share}`,
+    });
+    expect(await objectExists("public", share)).toBe(true);
+    await deleteComic(comic.id);
+    expect(
+      await prisma.comic.findUnique({ where: { id: comic.id } })
+    ).toBeNull();
+    expect(await objectExists("public", share)).toBe(false);
+  });
 });
 
 describe("retire for a comic that has sessions or orders", () => {

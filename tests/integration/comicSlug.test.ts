@@ -583,6 +583,94 @@ describe("share image and alt text", () => {
   });
 });
 
+describe("alt texts follow their covers", () => {
+  const covers = [`${BASE}/a.webp`, `${BASE}/b.webp`, `${BASE}/c.webp`];
+  async function withAlts(label: string) {
+    const comic = await make(label, {
+      slug: `${PREFIX}-${label.toLowerCase().replace(/ /g, "-")}`,
+      covers,
+    });
+    await updateComic(
+      comic.id,
+      patch({ coverThumbnailAlts: ["Red", "Blue", "Green"] })
+    );
+    return comic;
+  }
+
+  it("a cover dragged to the front takes its alt text with it", async () => {
+    const comic = await withAlts("Alt Reorder");
+    const saved = await updateComic(
+      comic.id,
+      patch({ thumbnailKeys: [covers[2], covers[0], covers[1]] })
+    );
+    expect(saved.coverThumbnailUrls).toEqual([covers[2], covers[0], covers[1]]);
+    expect(saved.coverThumbnailAlts).toEqual(["Green", "Red", "Blue"]);
+  });
+
+  it("deleting the first cover removes its alt text, not the last one", async () => {
+    const comic = await withAlts("Alt Delete First");
+    const saved = await updateComic(
+      comic.id,
+      patch({ thumbnailKeys: [covers[1], covers[2]] })
+    );
+    expect(saved.coverThumbnailAlts).toEqual(["Blue", "Green"]);
+  });
+
+  it("a replaced cover gets no alt text and trailing empty ones are trimmed", async () => {
+    const comic = await withAlts("Alt Replace");
+    const saved = await updateComic(
+      comic.id,
+      patch({ thumbnailKeys: [covers[0], covers[1], "comics/temp/new.png"] })
+    );
+    expect(saved.coverThumbnailUrls).toHaveLength(3);
+    expect(saved.coverThumbnailAlts).toEqual(["Red", "Blue"]);
+    const middle = await updateComic(
+      comic.id,
+      patch({
+        thumbnailKeys: [covers[0], "comics/temp/new2.png", covers[1]],
+      })
+    );
+    expect(middle.coverThumbnailAlts).toEqual(["Red", "", "Blue"]);
+  });
+
+  it("alt texts sent together with a reorder are used as sent", async () => {
+    const comic = await withAlts("Alt Explicit");
+    const saved = await updateComic(
+      comic.id,
+      patch({
+        thumbnailKeys: [covers[1], covers[0]],
+        coverThumbnailAlts: ["First", "Second"],
+      })
+    );
+    expect(saved.coverThumbnailAlts).toEqual(["First", "Second"]);
+    await expect(
+      updateComic(
+        comic.id,
+        patch({
+          thumbnailKeys: [covers[1]],
+          coverThumbnailAlts: ["a", "b"],
+        })
+      )
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+describe("public lookup of hostile input", () => {
+  it("a segment with a NUL or another control character is 404, not a server error", async () => {
+    for (const key of ["a\u0000b", "\u0000", "abc\u001f", "abc\u007f", "a\nb"]) {
+      await expect(getPublicComicDetails(key), JSON.stringify(key)).rejects.toBeInstanceOf(
+        NotFoundError
+      );
+    }
+  });
+
+  it("an upper-case id is looked up as an id", async () => {
+    const comic = await make("Upper Id", { slug: `${PREFIX}-upper-id` });
+    const detail = await getPublicComicDetails(comic.id.toUpperCase());
+    expect(detail.id).toBe(comic.id);
+  });
+});
+
 describe("existing behaviour", () => {
   it("an old-style update payload (no SEO fields) still saves", async () => {
     const comic = await make("Regression", { slug: `${PREFIX}-regression` });

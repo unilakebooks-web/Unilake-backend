@@ -116,6 +116,7 @@ export const IGNORED_URL_COLUMNS: Record<string, string> = {
   "Order.trackingUrl": "the courier's tracking page",
   "Page.artworkFileName": "a file name shown to the admin, not a key",
   "Page.maskFileName": "a file name shown to the admin, not a key",
+  "GoogleReview.imageAlt": "alt text, not a key",
   "TeamMember.linkedinUrl": "a link to another site",
   "TeamMember.instagramUrl": "a link to another site",
   "TeamMember.twitterUrl": "a link to another site",

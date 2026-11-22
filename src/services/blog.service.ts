@@ -270,10 +270,11 @@ export async function updateBlog(
   // differs from what is stored: the admin form resends every field on every
   // save, so "was it sent" would bump it on each save, and updatedAt cannot be
   // used because the publish switch moves it. The cover is compared below,
-  // once its URL is resolved.
+  // once its URL is resolved. The validator trims the title and excerpt, so a stored legacy value
+  // with spaces around it is compared trimmed: only whitespace differing is not a change.
   let contentChanged =
-    (data.title !== undefined && data.title !== existing.title) ||
-    (data.excerpt !== undefined && data.excerpt !== existing.excerpt) ||
+    (data.title !== undefined && data.title !== existing.title.trim()) ||
+    (data.excerpt !== undefined && data.excerpt !== (existing.excerpt?.trim() ?? null)) ||
     (data.body !== undefined && data.body !== existing.body);
 
   // The slug is never touched here - it is frozen at create so that a title

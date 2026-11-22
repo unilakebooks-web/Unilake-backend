@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { altText } from "./seoText.schema.js";
 
 export const getGoogleReviewUploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),
@@ -26,6 +27,7 @@ export const createGoogleReviewSchema = z.object({
   rating: ratingSchema,
   reviewText: z.string().trim().min(1, "Review text is required"),
   imageKey: z.string().min(1, "Image is required"),
+  imageAlt: altText,
 });
 
 export const updateGoogleReviewSchema = z
@@ -42,6 +44,7 @@ export const updateGoogleReviewSchema = z
     // payload Postgres is guaranteed to reject. Omitted = keep the current
     // image; a key = replace it. There is no way to remove it.
     imageKey: z.string().min(1).optional(),
+    imageAlt: altText,
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one field must be provided to update",

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMIC_SLUG_RESERVED,
   generateFreeComicSlug,
+  hasControlCharacter,
   isUuidShaped,
   normalizeSlug,
   slugifyTitle,
@@ -80,6 +81,20 @@ describe("isUuidShaped", () => {
     expect(isUuidShaped(UUID.toUpperCase())).toBe(true);
     expect(isUuidShaped("the-alphabet-train")).toBe(false);
     expect(isUuidShaped(`${UUID}-x`)).toBe(false);
+  });
+});
+
+describe("hasControlCharacter", () => {
+  it("finds NUL and the other control characters", () => {
+    for (const bad of ["a\u0000b", "\u0000", "a\u001fb", "a\u007f", "a\nb", "a\tb"]) {
+      expect(hasControlCharacter(bad), JSON.stringify(bad)).toBe(true);
+    }
+  });
+
+  it("leaves ordinary slugs and ids alone", () => {
+    for (const fine of ["the-alphabet-train", UUID, "Book 2", "\u0905\u092c"]) {
+      expect(hasControlCharacter(fine), fine).toBe(false);
+    }
   });
 });
 

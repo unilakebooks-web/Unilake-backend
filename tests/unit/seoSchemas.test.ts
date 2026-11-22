@@ -8,6 +8,10 @@ import {
   createBlogSchema,
   updateBlogSchema,
 } from "../../src/validators/blog.schema.js";
+import {
+  createGoogleReviewSchema,
+  updateGoogleReviewSchema,
+} from "../../src/validators/googleReview.schema.js";
 import { sitePageSlugParamSchema } from "../../src/validators/sitePage.schema.js";
 import { updateSiteSettingSchema } from "../../src/validators/siteSetting.schema.js";
 import {
@@ -249,6 +253,35 @@ describe("blog author in the site settings", () => {
     ).toBe(false);
   });
 
+  it("accepts only http and https for the author links", () => {
+    for (const field of ["blogAuthorInstagramUrl", "blogAuthorLinkedinUrl"]) {
+      for (const bad of [
+        "javascript:alert(1)",
+        "data:text/html,hi",
+        "ftp://example.com/a",
+        "mailto:a@b.co",
+      ]) {
+        expect(updateSiteSettingSchema.safeParse({ [field]: bad }).success).toBe(
+          false
+        );
+      }
+      expect(
+        updateSiteSettingSchema.parse({ [field]: "  https://example.com/a  " })[
+          field as "blogAuthorInstagramUrl"
+        ]
+      ).toBe("https://example.com/a");
+      expect(
+        updateSiteSettingSchema.safeParse({ [field]: "http://example.com" })
+          .success
+      ).toBe(true);
+      expect(
+        updateSiteSettingSchema.parse({ [field]: "  " })[
+          field as "blogAuthorInstagramUrl"
+        ]
+      ).toBeNull();
+    }
+  });
+
   it("counts an author field as a change on its own, and an old payload still passes", () => {
     expect(
       updateSiteSettingSchema.safeParse({ blogAuthorName: "A" }).success
@@ -260,6 +293,23 @@ describe("blog author in the site settings", () => {
 });
 
 describe("alt text fields", () => {
+  it("google review: optional on create and update, max 200, empty becomes null", () => {
+    const base = { customerName: "A", rating: 5, reviewText: "B", imageKey: "k" };
+    expect(createGoogleReviewSchema.safeParse(base).success).toBe(true);
+    expect(
+      createGoogleReviewSchema.parse({ ...base, imageAlt: " A child " }).imageAlt
+    ).toBe("A child");
+    expect(
+      createGoogleReviewSchema.safeParse({ ...base, imageAlt: "a".repeat(201) })
+        .success
+    ).toBe(false);
+    expect(
+      updateGoogleReviewSchema.parse({ imageAlt: "  " }).imageAlt
+    ).toBeNull();
+    expect(updateGoogleReviewSchema.parse({ imageAlt: null }).imageAlt).toBeNull();
+    expect(updateGoogleReviewSchema.safeParse({}).success).toBe(false);
+  });
+
   it("team member: optional on create and update, max 200, empty becomes null", () => {
     const base = { name: "A", role: "B" };
     expect(createTeamMemberSchema.safeParse(base).success).toBe(true);

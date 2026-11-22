@@ -33,6 +33,7 @@ import { RETIRED_COMIC_MESSAGE, assertComicNotRetired } from "./retiredComicGuar
 import {
   findSlugOwner,
   generateFreeComicSlug,
+  hasControlCharacter,
   isUuidShaped,
   normalizeSlug,
 } from "../lib/comicSlug.js";
@@ -410,6 +411,17 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
           : getPublicUrl(optimisedKeyFor.get(entry) ?? normalizeThumbnailInput(entry))
       );
       updateData.coverThumbnailUrls = newUrls;
+      if (data.coverThumbnailAlts === undefined) {
+        // No alt list was sent, so each alt text follows its picture: a reorder, a delete or a
+        // replaced cover must not leave the old position's text on another image. New uploads get none.
+        const altByUrl = new Map<string, string>();
+        comic.coverThumbnailUrls.forEach((url, i) => {
+          if (!altByUrl.has(url)) altByUrl.set(url, comic.coverThumbnailAlts[i] ?? "");
+        });
+        const followed = newUrls.map((url) => altByUrl.get(url) ?? "");
+        while (followed.length > 0 && followed[followed.length - 1] === "") followed.pop();
+        updateData.coverThumbnailAlts = followed;
+      }
 
       const publicBase = config.r2.publicUrlBase.replace(/\/$/, "");
       const removedUrls = comic.coverThumbnailUrls.filter((u) => !newUrls.includes(u));
@@ -620,6 +632,9 @@ export async function deleteComic(comicId: string) {
   const videoKeys = comic.previewVideoUrl
     ? [comic.previewVideoUrl.replace(`${publicBase}/`, "")]
     : [];
+  const shareImageKeys = comic.ogImageUrl
+    ? [comic.ogImageUrl.replace(`${publicBase}/`, "")]
+    : [];
 
   // DB delete is the moment of truth. If it throws, we haven't touched R2 -
   // caller sees an error and the comic + all its assets stay intact, exactly
@@ -649,6 +664,18 @@ export async function deleteComic(comicId: string) {
       logger.warn(
         { error, comicId, key },
         "Failed to delete page asset from R2 after DB delete, orphaned file"
+      );
+    }
+  }
+
+  for (const key of shareImageKeys) {
+    try {
+      await deleteFile("public", key);
+      logger.info({ comicId, key }, "Deleted comic share image from R2");
+    } catch (error) {
+      logger.warn(
+        { error, comicId, key },
+        "Failed to delete comic share image from R2 after DB delete, orphaned file"
       );
     }
   }
@@ -945,7 +972,9 @@ function withRealPageCount<T extends { _count: { pages: number } }>({
 async function resolvePublicComicWhere(
   idOrSlug: string
 ): Promise<Prisma.ComicWhereInput | null> {
-  if (isUuidShaped(idOrSlug)) return { id: idOrSlug };
+  // A NUL would reach Postgres as text and raise an encoding error (500); no slug or id holds one.
+  if (hasControlCharacter(idOrSlug)) return null;
+  if (isUuidShaped(idOrSlug)) return { id: idOrSlug.toLowerCase() };
 
   const slug = normalizeSlug(idOrSlug);
   const bySlug = await prisma.comic.findUnique({

@@ -24,6 +24,31 @@ const optionalUrl = (label: string) =>
     .optional();
 
 /**
+ * Blog author profile link. Only http:// or https:// addresses: z.string().url() also accepts
+ * javascript: and data:, and these links are rendered as href on every blog post. An empty
+ * string clears the link, the same as null.
+ */
+const optionalWebUrl = (label: string) =>
+  z
+    .string()
+    .trim()
+    .transform((value) => (value === "" ? null : value))
+    .refine(
+      (value) => {
+        if (value === null) return true;
+        try {
+          const { protocol } = new URL(value);
+          return protocol === "http:" || protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      `${label} must be a valid http:// or https:// address`
+    )
+    .nullable()
+    .optional();
+
+/**
  * Hosts allowed to be embedded as the contact-page map.
  *
  * This matters more than it looks: whatever is stored here is rendered inside
@@ -133,11 +158,10 @@ export const updateSiteSettingSchema = z
     linkedinUrl: optionalUrl("LinkedIn URL"),
 
     // ---- Blog author ----
-    // The one author shown on every blog post (D-141). The links
-    // follow the same URL rules as the brand's own social links above.
+    // The one author shown on every blog post. The links are web addresses only (http or https).
     blogAuthorName: optionalText(100, "Blog author name"),
-    blogAuthorInstagramUrl: optionalUrl("Blog author Instagram URL"),
-    blogAuthorLinkedinUrl: optionalUrl("Blog author LinkedIn URL"),
+    blogAuthorInstagramUrl: optionalWebUrl("Blog author Instagram URL"),
+    blogAuthorLinkedinUrl: optionalWebUrl("Blog author LinkedIn URL"),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one field must be provided to update",

@@ -48,6 +48,11 @@ export const COMIC_SLUG_RESERVED: readonly string[] = [
 
 export const isUuidShaped = (value: string): boolean => UUID_SHAPE.test(value);
 
+/** True when the text holds a NUL or another control character (U+0000 to U+001F, U+007F). */
+export const hasControlCharacter = (value: string): boolean =>
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f]/.test(value);
+
 /** Lower-cases and trims. Every slug is normalised before it is checked or compared. */
 export const normalizeSlug = (input: string): string =>
   input.trim().toLowerCase();

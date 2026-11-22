@@ -132,6 +132,25 @@ describe("contentUpdatedAt", () => {
     expect(deleteFile).not.toHaveBeenCalled();
   });
 
+  it("is not set when only the spaces around a stored legacy title or excerpt differ", async () => {
+    const blog = await prisma.blog.create({
+      data: {
+        slug: `${MARK}-${RUN}-padded`,
+        title: `  ${TITLE("padded")}  `,
+        excerpt: "  An excerpt  ",
+        body: "<p>Body</p>",
+      },
+    });
+    blogIds.push(blog.id);
+    const saved = await updateBlog(blog.id, {
+      title: TITLE("padded"),
+      excerpt: "An excerpt",
+    });
+    expect(saved.contentUpdatedAt).toBeNull();
+    const changed = await updateBlog(blog.id, { excerpt: "Another excerpt" });
+    expect(changed.contentUpdatedAt).not.toBeNull();
+  });
+
   it("is not set by a change of tags, meta, share fields or alt", async () => {
     const blog = await makeBlog("nonContent");
     const updated = await updateBlog(blog.id, {

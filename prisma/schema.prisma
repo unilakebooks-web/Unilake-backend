@@ -1106,6 +1106,7 @@ model GoogleReview {
 
   reviewText String @db.Text
   imageUrl   String // required, R2 public URL
+  imageAlt   String?
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

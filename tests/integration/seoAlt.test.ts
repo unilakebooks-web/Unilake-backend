@@ -1,4 +1,4 @@
-// Integration tests for the alt text fields of the SEO work (D-139) on the team member service: set on
+// Integration tests for the alt text fields of the SEO work on the team member service: set on
 // create, changed and cleared on update, left alone when omitted, returned by the admin and the
 // public lists. Hero image and How It Works alt text are covered by the schema tests (hero create
 // converts an uploaded file, and How It Works is a singleton, so they stay off the database). They
@@ -19,6 +19,12 @@ import {
   updateTeamMember,
 } from "../../src/services/teamMember.service.js";
 import { updateHeroImage } from "../../src/services/heroImage.service.js";
+import {
+  createGoogleReview,
+  getActiveGoogleReviews,
+  getAllGoogleReviews,
+  updateGoogleReview,
+} from "../../src/services/googleReview.service.js";
 import { NotFoundError } from "../../src/utils/errors.js";
 
 const MARK = "__vitest_seoalt__";
@@ -28,9 +34,15 @@ const ids: string[] = [];
 
 beforeAll(async () => {
   await prisma.teamMember.deleteMany({ where: { name: { startsWith: MARK } } });
+  await prisma.googleReview.deleteMany({
+    where: { customerName: { startsWith: MARK } },
+  });
 });
 
 afterAll(async () => {
+  await prisma.googleReview.deleteMany({
+    where: { customerName: { startsWith: MARK } },
+  });
   await prisma.teamMember.deleteMany({ where: { id: { in: ids } } });
   await prisma.$disconnect();
 });
@@ -111,5 +123,46 @@ describe("hero image alt update", () => {
     await expect(
       updateHeroImage("00000000-0000-4000-8000-00000000dead", { imageAlt: "x" })
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("google review imageAlt", () => {
+  const review = (label: string, extra: Record<string, unknown> = {}) =>
+    createGoogleReview({
+      customerName: NAME(label),
+      rating: 5,
+      reviewText: "Lovely book",
+      imageKey: `google-reviews/__vitest_seoalt__-${RUN}.webp`,
+      ...extra,
+    });
+
+  it("an old payload without it leaves the column null", async () => {
+    expect((await review("old")).imageAlt).toBeNull();
+  });
+
+  it("is saved on create, changed on update, kept when omitted and cleared with null", async () => {
+    const created = await review("alt", { imageAlt: "A child with the book" });
+    expect(created.imageAlt).toBe("A child with the book");
+
+    const changed = await updateGoogleReview(created.id, {
+      imageAlt: "A smiling child",
+    });
+    expect(changed.imageAlt).toBe("A smiling child");
+
+    const untouched = await updateGoogleReview(created.id, { rating: 4 });
+    expect(untouched.imageAlt).toBe("A smiling child");
+
+    const cleared = await updateGoogleReview(created.id, { imageAlt: null });
+    expect(cleared.imageAlt).toBeNull();
+  });
+
+  it("is returned by the admin list and the public list", async () => {
+    const created = await review("lists", { imageAlt: "In both lists" });
+    const admin = (await getAllGoogleReviews()).find((r) => r.id === created.id);
+    const publicRow = (await getActiveGoogleReviews()).find(
+      (r) => r.id === created.id
+    );
+    expect(admin?.imageAlt).toBe("In both lists");
+    expect(publicRow?.imageAlt).toBe("In both lists");
   });
 });
