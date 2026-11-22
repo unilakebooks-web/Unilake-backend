@@ -1,4 +1,4 @@
-// Integration tests for the comic slug (feature 13): generation on create, rename with history,
+// Integration tests for the comic slug: generation on create, rename with history,
 // the 409 rules, lookup by id, slug and old slug on the public detail, the share and alt fields and
 // the shapes of the public and admin responses. They run against the Neon TEST branch only: the
 // setup import below refuses any other database. R2 is stubbed; nothing reaches it.

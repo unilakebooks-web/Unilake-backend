@@ -133,7 +133,7 @@ export const updateSiteSettingSchema = z
     linkedinUrl: optionalUrl("LinkedIn URL"),
 
     // ---- Blog author ----
-    // The one author shown on every blog post (feature 13, D-141). The links
+    // The one author shown on every blog post (D-141). The links
     // follow the same URL rules as the brand's own social links above.
     blogAuthorName: optionalText(100, "Blog author name"),
     blogAuthorInstagramUrl: optionalUrl("Blog author Instagram URL"),

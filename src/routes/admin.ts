@@ -455,7 +455,7 @@ router.post(
   getComicVideoUploadUrlHandler
 ); // presigned upload URL for the optional carousel promo video
 
-// COMIC SHARE IMAGE (feature 13)
+// COMIC SHARE IMAGE
 // Literal 2nd segment, same reason as the video route above. The saved key travels back through
 // PATCH /comics/:comicId as `ogImageKey`.
 router.post(
@@ -704,7 +704,7 @@ router.put(
 );
 router.patch("/site-pages/:slug/status", toggleSitePageStatusHandler);
 
-// PAGE SEO (feature 13): search and share text for the ten fixed public pages.
+// PAGE SEO: search and share text for the eleven fixed public pages.
 // Same shape as site pages: no create or delete, the PUT upserts. The upload-url
 // route is a POST and /page-seo/:slug is a PUT, so there is no ordering hazard.
 router.post(

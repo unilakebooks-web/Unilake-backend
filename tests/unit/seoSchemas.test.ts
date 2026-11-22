@@ -25,7 +25,7 @@ const UUID = (n: number) =>
 const blogBase = { title: "A post", body: "<p>Hello</p>" };
 
 describe("page SEO slug and body", () => {
-  it("accepts all ten pages and nothing else", () => {
+  it("accepts all eleven pages and nothing else", () => {
     for (const slug of [
       "HOME",
       "COMICS",
@@ -37,6 +37,7 @@ describe("page SEO slug and body", () => {
       "PRIVACY",
       "TERMS",
       "REFUND",
+      "REVIEWS",
     ]) {
       expect(pageSeoSlugParamSchema.safeParse(slug).success).toBe(true);
     }

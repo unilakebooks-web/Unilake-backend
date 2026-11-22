@@ -1,4 +1,4 @@
-// Integration tests for the alt text fields of feature 13 (D-139) on the team member service: set on
+// Integration tests for the alt text fields of the SEO work (D-139) on the team member service: set on
 // create, changed and cleared on update, left alone when omitted, returned by the admin and the
 // public lists. Hero image and How It Works alt text are covered by the schema tests (hero create
 // converts an uploaded file, and How It Works is a singleton, so they stay off the database). They

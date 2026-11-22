@@ -35,7 +35,7 @@ const metaDescriptionSchema = z
   .min(1)
   .max(320, "Meta description is too long");
 
-// Share preview overrides and the books shown at the end of the post (feature 13).
+// Share preview overrides and the books shown at the end of the post.
 // ogImageKey is an R2 key, resolved to ogImageUrl like coverImageKey. Featured
 // books: at most 6, each once, the array order is the display order; whether
 // the ids exist is checked by the service.

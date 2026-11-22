@@ -251,7 +251,7 @@ export const updateComicSchema = z
       .max(320, "Meta description is too long")
       .nullable()
       .optional(),
-    // SEO (feature 13). A changed slug keeps the old address working (comic_slug_history).
+    // SEO. A changed slug keeps the old address working (comic_slug_history).
     slug: slugField.optional(),
     ogTitle: clearableText(120, "Share title is too long"),
     ogDescription: clearableText(320, "Share description is too long"),

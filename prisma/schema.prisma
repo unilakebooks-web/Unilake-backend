@@ -147,7 +147,7 @@ model Comic {
   metaTitle       String?
   metaDescription String?
 
-  // SEO (feature 13). slug: the readable address /comic/<slug>, unique, filled by the service and
+  // SEO. slug: the readable address /comic/<slug>, unique, filled by the service and
   // backfilled by the migration; nullable only so the previous backend can still create comics while
   // a release is half deployed. ogTitle, ogDescription, ogImageUrl: the share preview, falling back
   // to the SEO fields and then the first cover. coverThumbnailAlts: alt text for coverThumbnailUrls,
@@ -958,7 +958,7 @@ model Blog {
   metaTitle       String?
   metaDescription String?
 
-  // SEO and page furniture (feature 13). contentUpdatedAt: set only when the title, excerpt, body
+  // SEO and page furniture. contentUpdatedAt: set only when the title, excerpt, body
   // or cover change (updatedAt also moves on the publish switch). publishedAt: set the first time
   // the post goes live (datePublished). featuredComics: the books shown at the end of the post.
   ogTitle          String?
@@ -1010,7 +1010,7 @@ model SitePage {
   @@map("site_pages")
 }
 
-// SEO text for the fixed public pages (feature 13). A row exists only once the admin saved it;
+// SEO text for the fixed public pages. A row exists only once the admin saved it;
 // empty fields fall back to the text the page has today.
 enum PageSeoSlug {
   HOME
@@ -1023,6 +1023,7 @@ enum PageSeoSlug {
   PRIVACY
   TERMS
   REFUND
+  REVIEWS
 }
 
 model PageSeo {
@@ -1080,7 +1081,7 @@ model SiteSetting {
   metaTitle       String?
   metaDescription String?
 
-  // The one author shown on every blog post (feature 13).
+  // The one author shown on every blog post.
   blogAuthorName         String?
   blogAuthorInstagramUrl String?
   blogAuthorLinkedinUrl  String?

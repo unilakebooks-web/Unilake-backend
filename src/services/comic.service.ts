@@ -441,7 +441,7 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
     if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
     if (data.metaDescription !== undefined)
       updateData.metaDescription = data.metaDescription;
-    // SEO (feature 13). Same rules as the meta fields above: null (or an empty string, turned into
+    // SEO. Same rules as the meta fields above: null (or an empty string, turned into
     // null by the validator) clears the field.
     if (data.ogTitle !== undefined) updateData.ogTitle = data.ogTitle;
     if (data.ogDescription !== undefined)
@@ -891,7 +891,7 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
       // Real page count - see withRealPageCount.
       _count: { select: { pages: true } },
       coverThumbnailUrls: true,
-      // SEO (feature 13): the readable address, the date for the sitemap, and the covers' alt text.
+      // SEO: the readable address, the date for the sitemap, and the covers' alt text.
       slug: true,
       updatedAt: true,
       coverThumbnailAlts: true,
@@ -976,7 +976,7 @@ export const getPublicComicDetails = async (comicIdOrSlug: string) => {
     },
     select: {
       id: true,
-      // SEO (feature 13). `slug` is always the CURRENT slug, even when the request used an old
+      // SEO. `slug` is always the CURRENT slug, even when the request used an old
       // one: the page compares it with the address and redirects when they differ.
       slug: true,
       updatedAt: true,

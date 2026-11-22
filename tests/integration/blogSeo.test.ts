@@ -1,4 +1,4 @@
-// Integration tests for the blog changes of feature 13: contentUpdatedAt moves only when the reader
+// Integration tests for the blog changes for SEO: contentUpdatedAt moves only when the reader
 // sees different content, publishedAt is set the first time a post is live and never again, the
 // featured books (validation, order, replacement, what the public sees), the share fields and the
 // old payloads. They run against the Neon TEST branch only: the setup import refuses any other

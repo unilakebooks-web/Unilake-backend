@@ -1,5 +1,5 @@
-// Integration tests for the page SEO resource (feature 13) and the ABOUT site page: the admin list
-// always has all ten pages, a save creates the row, "" and null clear a field, an omitted field is
+// Integration tests for the page SEO resource and the ABOUT site page: the admin list
+// always has all eleven pages, a save creates the row, "" and null clear a field, an omitted field is
 // left alone, a replaced share image is deleted from storage once and the same key re-sent is not,
 // and the public list only has saved pages. They run against the Neon TEST branch only: the setup
 // import refuses any other database. Page SEO rows and the ABOUT page are shared singletons, so
@@ -47,6 +47,7 @@ const ALL = [
   "PRIVACY",
   "TERMS",
   "REFUND",
+  "REVIEWS",
 ];
 
 let savedSeo: Awaited<ReturnType<typeof prisma.pageSeo.findMany>> = [];
@@ -72,7 +73,7 @@ afterAll(async () => {
 });
 
 describe("admin list", () => {
-  it("returns all ten pages as placeholders when nothing is saved", async () => {
+  it("returns all eleven pages as placeholders when nothing is saved", async () => {
     const list = await listPageSeoAdmin();
     expect(list.map((p) => p.slug).sort()).toEqual([...ALL].sort());
     for (const page of list) {

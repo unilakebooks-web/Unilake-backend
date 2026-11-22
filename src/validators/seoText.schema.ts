@@ -20,5 +20,5 @@ export const seoText = (max: number, label: string) =>
     .nullable()
     .optional();
 
-/** Alt text for an image the admin uploads (feature 13, D-139). Never HTML. */
+/** Alt text for an image the admin uploads (D-139). Never HTML. */
 export const altText = seoText(200, "Alt text");
