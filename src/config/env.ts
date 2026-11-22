@@ -95,6 +95,10 @@ export const config = {
     fromAddress: process.env.EMAIL_FROM_ADDRESS!,
     fromName: process.env.EMAIL_FROM_NAME!,
   },
+  // Optional. "on" also counts failed coupon attempts per IP address (utils/attemptLimiter.ts). Leave it off until
+  // the address the server reads from the proxy has been checked to be the visitor's own; otherwise every visitor
+  // would share one counter. Anything else means off.
+  couponIpLimitEnabled: process.env.COUPON_IP_LIMIT === "on",
   // Development only (optional, comma separated): the only addresses that may receive mail when NODE_ENV is not "production".
   // Empty means no real mail leaves a development or test run. Ignored in production (lib/email.ts).
   devEmailAllowlist: (process.env.DEV_EMAIL_ALLOWLIST ?? "")

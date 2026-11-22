@@ -71,6 +71,10 @@ export const MIN_PAYABLE_MAJOR_UNITS = 1;
 // through (the usage limits themselves never fail open).
 export const MAX_FAILED_COUPON_ATTEMPTS = 10;
 export const FAILED_COUPON_ATTEMPT_WINDOW_SECONDS = 10 * 60;
+// The same window also counts failed attempts per IP address, so one machine cannot get a fresh
+// allowance by switching accounts. Higher than the per-account limit, so a shared address (an
+// office, a mobile network) is not locked out by a few customers' typos.
+export const MAX_FAILED_COUPON_ATTEMPTS_PER_IP = 30;
 
 // With Redis down the client queues commands until it reconnects (the job queue
 // needs that), so a plain await would hang the customer's request. The attempt
@@ -101,3 +105,8 @@ export const COUPON_MESSAGES = {
 // characters) so pasted spaces or typos still reach the "not valid" answer; the
 // checkout page's input uses the same limit.
 export const COUPON_CODE_INPUT_MAX = 64;
+
+// A customer's coupon uses are also matched by the delivery phone number, so a second
+// account cannot reuse a per-customer or first-order-only code. The phone is compared by
+// its last digits (country code and leading zero ignored); a shorter number is not compared.
+export const PHONE_KEY_DIGITS = 10;

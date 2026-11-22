@@ -20,6 +20,7 @@ import {
 import {
   COUPON_MESSAGES,
   COUPON_TRANSACTION_OPTIONS,
+  PHONE_KEY_DIGITS,
 } from "../config/coupon.js";
 import {
   evaluateCoupon,
@@ -34,6 +35,7 @@ import {
   recordFailedCouponAttempt,
 } from "../utils/attemptLimiter.js";
 import { acquireSlot } from "../utils/keyedQueue.js";
+import { phoneKey } from "../utils/phoneKey.js";
 import { assertFilesNotDeleted, assertNotExpired } from "./session.service.js";
 import { REVENUE_STATUSES } from "../config/stats.js";
 
@@ -81,6 +83,8 @@ const tooManyAttemptsError = () =>
 export interface CheckoutCouponOptions {
   couponCode?: string | null;
   callerUserId?: string;
+  /** The caller's IP address, so failed code attempts are also counted per address. */
+  callerIp?: string;
 }
 
 /** A coupon that passed every check for one order, ready to be reserved. */
@@ -99,6 +103,8 @@ export interface PricedCoupon {
   discountAmount: Prisma.Decimal;
   finalAmount: Prisma.Decimal;
   currency: string;
+  /** The delivery phone the code was priced for, so the reservation re-checks the same customer. */
+  phone?: string | null;
 }
 
 /** The coupon fields added to every checkout response. */
@@ -144,16 +150,50 @@ function toRules(row: CouponWithComics): CouponRules {
 }
 
 /**
+ * Ids of the orders delivered to the same phone number, so a customer's second
+ * account is recognised as the same customer. Empty when the number is missing
+ * or too short to compare. Compared by digits only, as phoneKey does; the
+ * query below must keep the same rule (digits only, last PHONE_KEY_DIGITS).
+ */
+async function orderIdsWithSamePhone(db: Db, phone?: string | null) {
+  const key = phoneKey(phone);
+  if (!key) return [];
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    SELECT id FROM orders
+    WHERE LENGTH(regexp_replace("shippingPhone", '[^0-9]', '', 'g')) >= ${PHONE_KEY_DIGITS}
+      AND RIGHT(regexp_replace("shippingPhone", '[^0-9]', '', 'g'), ${PHONE_KEY_DIGITS}) = ${key}`;
+  return rows.map((row) => row.id);
+}
+
+/**
+ * The live uses that are this customer's: on their account, or on an order
+ * delivered to the same phone number (`phoneOrderIds`).
+ */
+function customerUses(
+  live: Prisma.CouponRedemptionWhereInput,
+  userId: string,
+  phoneOrderIds: string[]
+): Prisma.CouponRedemptionWhereInput {
+  if (phoneOrderIds.length === 0) return { ...live, userId };
+  return {
+    AND: [live, { OR: [{ userId }, { orderId: { in: phoneOrderIds } }] }],
+  };
+}
+
+/**
  * Uses that count right now: redeemed ones plus reservations still inside the
  * window. `excludeOrderId` leaves out the order being re-checked, so an unpaid
- * order's own reservation does not count against itself.
+ * order's own reservation does not count against itself. `phoneOrderIds` also
+ * counts the uses on orders delivered to the same phone number as this
+ * customer's.
  */
 async function countUses(
   db: Db,
   couponId: string,
   userId: string,
   now: Date,
-  excludeOrderId?: string
+  excludeOrderId?: string,
+  phoneOrderIds: string[] = []
 ) {
   const live: Prisma.CouponRedemptionWhereInput = {
     couponId,
@@ -165,7 +205,7 @@ async function countUses(
   };
   const totalUses = await db.couponRedemption.count({ where: live });
   const userUses = await db.couponRedemption.count({
-    where: { ...live, userId },
+    where: customerUses(live, userId, phoneOrderIds),
   });
   return { totalUses, userUses };
 }
@@ -175,9 +215,19 @@ async function countUses(
  * not cancelled), which makes any further order not their first. Always read
  * fresh, never cached: a customer can pay another order at any moment.
  */
-async function customerHasPaidOrder(db: Db, userId: string) {
+async function customerHasPaidOrder(
+  db: Db,
+  userId: string,
+  phoneOrderIds: string[] = []
+) {
+  const ownOrder: Prisma.OrderWhereInput = { orderSession: { userId } };
   const order = await db.order.findFirst({
-    where: { orderSession: { userId }, status: { in: REVENUE_STATUSES } },
+    where: {
+      ...(phoneOrderIds.length === 0
+        ? ownOrder
+        : { OR: [ownOrder, { id: { in: phoneOrderIds } }] }),
+      status: { in: REVENUE_STATUSES },
+    },
     select: { id: true },
   });
   return order !== null;
@@ -198,6 +248,10 @@ interface PriceCouponArgs {
   excludeOrderId?: string;
   // The code is the one already on the customer's order, so this is not a guess.
   skipAttemptLimit?: boolean;
+  // The delivery phone, so uses on the customer's other accounts count too.
+  phone?: string | null;
+  // The caller's IP address, so a new account does not reset the failed-attempt count.
+  ip?: string | null;
 }
 
 /**
@@ -208,11 +262,14 @@ interface PriceCouponArgs {
 export async function priceCoupon(
   args: PriceCouponArgs
 ): Promise<PricedCoupon> {
-  if (!args.skipAttemptLimit && (await isCouponAttemptLimited(args.userId)))
+  if (
+    !args.skipAttemptLimit &&
+    (await isCouponAttemptLimited(args.userId, args.ip))
+  )
     throw tooManyAttemptsError();
 
   const refuse = async (reason: CouponRejection): Promise<never> => {
-    await recordFailedCouponAttempt(args.userId);
+    await recordFailedCouponAttempt(args.userId, args.ip);
     logger.info({ reason }, "Coupon refused");
     throw couponError(reason);
   };
@@ -237,16 +294,19 @@ export async function priceCoupon(
     userId: args.userId,
   };
   const now = new Date();
+  const phoneOrderIds = await orderIdsWithSamePhone(prisma, args.phone);
   const counts = await countUses(
     prisma,
     row.id,
     args.userId,
     now,
-    args.excludeOrderId
+    args.excludeOrderId,
+    phoneOrderIds
   );
 
   const hasPaidOrder =
-    rules.firstOrderOnly && (await customerHasPaidOrder(prisma, args.userId));
+    rules.firstOrderOnly &&
+    (await customerHasPaidOrder(prisma, args.userId, phoneOrderIds));
 
   const result = evaluateCoupon(rules, {
     ...baseContext,
@@ -268,6 +328,7 @@ export async function priceCoupon(
     discountAmount: result.discountAmount,
     finalAmount: result.finalAmount,
     currency: args.currency,
+    phone: args.phone ?? null,
   };
 }
 
@@ -343,7 +404,8 @@ async function priceCouponForSession(
   userId: string,
   rawCode: string,
   excludeOrderId?: string,
-  skipAttemptLimit?: boolean
+  skipAttemptLimit?: boolean,
+  ip?: string
 ) {
   const { listPrice, currency, countryCode } = await lookupListPrice(session);
   const priced = await priceCoupon({
@@ -356,6 +418,8 @@ async function priceCouponForSession(
     listPrice,
     excludeOrderId,
     skipAttemptLimit,
+    phone: session.shippingPhone,
+    ip,
   });
   return { priced, listPrice, currency };
 }
@@ -371,7 +435,8 @@ async function priceCouponForSession(
 export async function previewCoupon(
   sessionId: string,
   callerUserId: string | undefined,
-  rawCode: string
+  rawCode: string,
+  callerIp?: string
 ) {
   const session = await prisma.orderSession.findUnique({
     where: { id: sessionId },
@@ -404,7 +469,9 @@ export async function previewCoupon(
     session,
     callerUserId,
     rawCode,
-    session.order?.id
+    session.order?.id,
+    undefined,
+    callerIp
   );
 
   return {
@@ -531,6 +598,12 @@ export async function listCouponOffers(
       { status: "RESERVED", createdAt: { gt: reservationCutoff(now) } },
     ],
   };
+  // The phone lookup is only needed when some candidate limits uses per customer.
+  const phoneOrderIds = candidates.some(
+    (c) => c.perCustomerLimit !== null || c.firstOrderOnly
+  )
+    ? await orderIdsWithSamePhone(prisma, session.shippingPhone)
+    : [];
   const [totals, mine] = await Promise.all([
     prisma.couponRedemption.groupBy({
       by: ["couponId"],
@@ -539,7 +612,7 @@ export async function listCouponOffers(
     }),
     prisma.couponRedemption.groupBy({
       by: ["couponId"],
-      where: { ...live, userId: callerUserId },
+      where: customerUses(live, callerUserId, phoneOrderIds),
       _count: { _all: true },
     }),
   ]);
@@ -549,7 +622,7 @@ export async function listCouponOffers(
   // One query for the caller, shared by every candidate, and only when some
   // candidate is first-order-only.
   const hasPaidOrder = candidates.some((c) => c.firstOrderOnly)
-    ? await customerHasPaidOrder(prisma, callerUserId)
+    ? await customerHasPaidOrder(prisma, callerUserId, phoneOrderIds)
     : false;
 
   const offers = [];
@@ -622,11 +695,20 @@ export async function reserveCouponInTx(
   }
 
   const now = new Date();
-  const counts = await countUses(tx, priced.couponId, userId, now, orderId);
+  const phoneOrderIds = await orderIdsWithSamePhone(tx, priced.phone);
+  const counts = await countUses(
+    tx,
+    priced.couponId,
+    userId,
+    now,
+    orderId,
+    phoneOrderIds
+  );
   // Fresh, on the transaction's connection: the customer may have paid another
   // order since this one was priced.
   const hasPaidOrder =
-    priced.rules.firstOrderOnly && (await customerHasPaidOrder(tx, userId));
+    priced.rules.firstOrderOnly &&
+    (await customerHasPaidOrder(tx, userId, phoneOrderIds));
   const result = evaluateCoupon(priced.rules, {
     ...priced.baseContext,
     ...counts,
@@ -776,8 +858,9 @@ export async function repriceUnpaidOrder(args: {
   session: OrderSession;
   couponCode: string | null;
   callerUserId: string | undefined;
+  callerIp?: string;
 }) {
-  const { order, session, couponCode, callerUserId } = args;
+  const { order, session, couponCode, callerUserId, callerIp } = args;
 
   const requested =
     couponCode === null || couponCode.trim() === ""
@@ -829,7 +912,8 @@ export async function repriceUnpaidOrder(args: {
       order.id,
       // Re-pricing the code the order already carries is not a guess, so a
       // customer who is rate-limited can still pay for what they already applied.
-      requested === existing
+      requested === existing,
+      callerIp
     ));
   }
   const finalAmount = priced ? priced.finalAmount : listPrice;

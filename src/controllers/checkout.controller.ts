@@ -45,6 +45,7 @@ export const initiateCheckoutHandler = asyncHandler(
     const result = await initiateCheckout(parsed.data.sessionId, {
       couponCode: body.data.couponCode,
       callerUserId,
+      callerIp: req.ip,
     });
 
     sendSuccess(res, 200, result, "Checkout initiated");
