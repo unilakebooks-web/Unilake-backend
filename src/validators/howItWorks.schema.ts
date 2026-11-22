@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { altText } from "./seoText.schema.js";
 
 export const howItWorksStepSchema = z.object({
   heading: z.string().trim().min(1, "Step heading is required").max(120, "Step heading is too long"),
@@ -39,6 +40,7 @@ export const updateHowItWorksSchema = z
     // omitted = unchanged, a key = replace (old R2 file deleted), null = clear (old R2 file deleted)
     videoKey: z.string().min(1).nullable().optional(),
     posterKey: z.string().min(1).nullable().optional(),
+    posterAlt: altText,
     steps: z.array(howItWorksStepSchema).optional(),
     isActive: z.boolean().optional(),
   })

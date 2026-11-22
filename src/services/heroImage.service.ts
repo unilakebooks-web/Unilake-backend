@@ -30,7 +30,10 @@ export async function getHeroImageUploadUrl(data: {
   return { uploadUrl, key };
 }
 
-export async function createHeroImage(data: { imageKey: string }) {
+export async function createHeroImage(data: {
+  imageKey: string;
+  imageAlt?: string | null;
+}) {
   // A key a slide already uses is not a new upload: converting it would delete
   // the file that slide shows.
   const inUse = await prisma.heroImage.findFirst({
@@ -55,6 +58,7 @@ export async function createHeroImage(data: { imageKey: string }) {
   const heroImage = await prisma.heroImage.create({
     data: {
       imageUrl,
+      ...(data.imageAlt !== undefined && { imageAlt: data.imageAlt }),
     },
   }).catch(async (error) => {
     // Not saved: remove the optimised file again; the raw upload stays for a retry.
@@ -66,6 +70,29 @@ export async function createHeroImage(data: { imageKey: string }) {
   logger.info({ heroImageId: heroImage.id }, "Hero image created");
 
   return heroImage;
+}
+
+export async function updateHeroImage(
+  id: string,
+  data: { imageAlt?: string | null }
+) {
+  const existing = await prisma.heroImage.findUnique({ where: { id } });
+
+  if (!existing) {
+    throw new NotFoundError("Hero image not found");
+  }
+
+  // `!== undefined`, so an explicit null clears the alt text.
+  const updated = await prisma.heroImage.update({
+    where: { id },
+    data: {
+      ...(data.imageAlt !== undefined && { imageAlt: data.imageAlt }),
+    },
+  });
+
+  logger.info({ heroImageId: id }, "Hero image updated");
+
+  return updated;
 }
 
 export async function toggleHeroImageStatus(id: string) {

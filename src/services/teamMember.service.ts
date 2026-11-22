@@ -56,6 +56,7 @@ export async function createTeamMember(data: {
   role: string;
   description?: string;
   imageKey?: string;
+  imageAlt?: string | null;
   linkedinUrl?: string;
   instagramUrl?: string;
   twitterUrl?: string;
@@ -69,6 +70,7 @@ export async function createTeamMember(data: {
       sortOrder,
       ...(data.description !== undefined && { description: data.description }),
       ...(data.imageKey !== undefined && { imageUrl: getPublicUrl(data.imageKey) }),
+      ...(data.imageAlt !== undefined && { imageAlt: data.imageAlt }),
       ...(data.linkedinUrl !== undefined && { linkedinUrl: data.linkedinUrl }),
       ...(data.instagramUrl !== undefined && { instagramUrl: data.instagramUrl }),
       ...(data.twitterUrl !== undefined && { twitterUrl: data.twitterUrl }),
@@ -89,6 +91,7 @@ export async function updateTeamMember(
     role?: string;
     description?: string | null;
     imageKey?: string | null;
+    imageAlt?: string | null;
     linkedinUrl?: string | null;
     instagramUrl?: string | null;
     twitterUrl?: string | null;
@@ -107,6 +110,7 @@ export async function updateTeamMember(
   if (data.name !== undefined) updateData.name = data.name;
   if (data.role !== undefined) updateData.role = data.role;
   if (data.description !== undefined) updateData.description = data.description;
+  if (data.imageAlt !== undefined) updateData.imageAlt = data.imageAlt;
   if (data.linkedinUrl !== undefined) updateData.linkedinUrl = data.linkedinUrl;
   if (data.instagramUrl !== undefined) updateData.instagramUrl = data.instagramUrl;
   if (data.twitterUrl !== undefined) updateData.twitterUrl = data.twitterUrl;

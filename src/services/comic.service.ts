@@ -31,6 +31,12 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { UpdateComicInput } from "../validators/comic.schema.js";
 import { RETIRED_COMIC_MESSAGE, assertComicNotRetired } from "./retiredComicGuard.js";
 import {
+  findSlugOwner,
+  generateFreeComicSlug,
+  isUuidShaped,
+  normalizeSlug,
+} from "../lib/comicSlug.js";
+import {
   deleteEligibilityForComics,
   monthRuleReason,
   retireComic,
@@ -95,6 +101,12 @@ const normalizeThumbnailInput = (input: string): string => {
 
   return input.startsWith(prefix) ? input.slice(prefix.length) : input;
 };
+
+// One slug writer at a time. A comic slug must be free in two tables (comics.slug and
+// comic_slug_history.oldSlug) and no database constraint spans both, so every write that takes a
+// slug first takes this lock (released at commit), then checks, then writes.
+const COMIC_SLUG_LOCK_KEY = "comic-slug";
+const COMIC_SLUG_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 };
 
 /** Where optimised cover thumbnails are stored, and where their raw uploads are put (see generateThumbnailUploadUrl). */
 const THUMBNAIL_FOLDER = "comics/thumbnails";
@@ -180,6 +192,29 @@ export const generateComicVideoUploadUrl = async (
   return { uploadUrl, key };
 };
 
+/**
+ * Presigned PUT for a comic's share image (the picture shown when its link is shared). Copy of
+ * getBlogUploadUrl: it also returns `publicUrl`, so the admin can preview the image straight away.
+ */
+export const generateComicOgImageUploadUrl = async (data: {
+  fileName: string;
+  contentType: string;
+}) => {
+  const safeFileName = data.fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+  const key = `comics/og/${randomUUID()}-${safeFileName}`;
+
+  const uploadUrl = await getSignedUploadUrl(
+    "public",
+    key,
+    data.contentType,
+    900
+  );
+
+  logger.info({ key }, "Generated comic share image upload URL");
+
+  return { uploadUrl, key, publicUrl: getPublicUrl(key) };
+};
+
 export const createComic = async (data: CreateComicInput) => {
   // Optimised files written for this request; removed again if the comic is not saved.
   let optimisedKeys: string[] = [];
@@ -190,7 +225,8 @@ export const createComic = async (data: CreateComicInput) => {
     );
 
     // themeIds is not a column - it becomes the comic <-> theme links below.
-    const { thumbnailKeys, pricing, loraKey, themeIds, ...restData } = data;
+    // slug is not a plain column either: it is chosen (or generated) inside the transaction.
+    const { thumbnailKeys, pricing, loraKey, themeIds, slug: requestedSlug, ...restData } = data;
     await assertThemesExist(themeIds);
     // Create only ever receives fresh keys today, but normalizing here keeps
     // create and update behaving identically for any future caller.
@@ -206,11 +242,20 @@ export const createComic = async (data: CreateComicInput) => {
     const coverThumbnailUrls = optimised.map((o) => getPublicUrl(o.key));
 
     const newComic = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${COMIC_SLUG_LOCK_KEY}))`;
+      // The admin's slug when sent (taken by a comic or an old address: 409), else made from the title.
+      if (requestedSlug !== undefined && (await findSlugOwner(tx, requestedSlug))) {
+        throw new ConflictError(
+          "This slug is already used by another comic, or was one of its old addresses. Pick another slug."
+        );
+      }
+      const slug = requestedSlug ?? (await generateFreeComicSlug(tx, restData.title));
       const sortOrder = await nextComicSortOrder(tx);
 
       const comic = await tx.comic.create({
         data: {
           ...restData,
+          slug,
           sortOrder,
           coverThumbnailUrls,
           status: "DRAFT",
@@ -230,7 +275,7 @@ export const createComic = async (data: CreateComicInput) => {
         })),
       });
       return comic;
-    });
+    }, COMIC_SLUG_TRANSACTION_OPTIONS);
 
     await deleteUploadedFiles(optimised.map((o) => o.originalKey));
 
@@ -252,6 +297,49 @@ export const createComic = async (data: CreateComicInput) => {
     throw error;
   }
 };
+
+/**
+ * Saves a comic together with a new slug. The slug it had is kept in comic_slug_history, so the old
+ * address keeps working for good (it redirects to the new one). Rules, all under the slug lock:
+ * a slug held by ANOTHER comic, as its slug or as an old address, is a 409 (it would take over that
+ * comic's links); this comic's own old address is allowed and its history row is removed (the
+ * address is current again). No Redis or R2 work in here: that is done before and after.
+ */
+async function updateComicWithNewSlug(
+  comicId: string,
+  newSlug: string,
+  updateData: Prisma.ComicUpdateInput
+) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${COMIC_SLUG_LOCK_KEY}))`;
+
+    const owner = await findSlugOwner(tx, newSlug);
+    if (owner && owner.comicId !== comicId) {
+      throw new ConflictError(
+        "This slug is already used by another comic, or was one of its old addresses. Pick another slug."
+      );
+    }
+    if (owner?.source === "history") {
+      await tx.comicSlugHistory.delete({ where: { oldSlug: newSlug } });
+    }
+
+    // Read again under the lock: the slug the comic has now is the one to remember.
+    const current = await tx.comic.findUnique({
+      where: { id: comicId },
+      select: { slug: true },
+    });
+    if (current?.slug && current.slug !== newSlug) {
+      await tx.comicSlugHistory.create({
+        data: { oldSlug: current.slug, comicId },
+      });
+    }
+
+    return tx.comic.update({
+      where: { id: comicId },
+      data: { ...updateData, slug: newSlug },
+    });
+  }, COMIC_SLUG_TRANSACTION_OPTIONS);
+}
 
 export const updateComic = async (comicId: string, data: UpdateComicInput) => {
   // Retired comics (feature 6) can no longer be changed.
@@ -275,6 +363,20 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
     if (data.freePreviewPages !== undefined) updateData.freePreviewPages = data.freePreviewPages;
     if (data.loraStrength !== undefined) updateData.loraStrength = data.loraStrength;
     if (data.loraKey !== undefined) updateData.loraFileUrl = data.loraKey;
+    // Alt text lines up with the covers by position, so it can never be longer than the covers the
+    // comic will have after this save. Checked before any image work below.
+    const coverCount = data.thumbnailKeys?.length ?? comic.coverThumbnailUrls.length;
+    if (data.coverThumbnailAlts !== undefined) {
+      if (data.coverThumbnailAlts.length > coverCount) {
+        throw new ValidationError(
+          `There are more alt texts (${data.coverThumbnailAlts.length}) than covers (${coverCount}).`
+        );
+      }
+      updateData.coverThumbnailAlts = data.coverThumbnailAlts;
+    } else if (comic.coverThumbnailAlts.length > coverCount) {
+      // Covers were removed and no new alt list was sent: drop the alt texts left without a cover.
+      updateData.coverThumbnailAlts = comic.coverThumbnailAlts.slice(0, coverCount);
+    }
     if (data.thumbnailKeys !== undefined) {
       // Entries may arrive as freshly-uploaded keys OR as URLs the client is
       // re-sending to keep. Normalizing both to keys first means the diff below
@@ -339,6 +441,25 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
     if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
     if (data.metaDescription !== undefined)
       updateData.metaDescription = data.metaDescription;
+    // SEO (feature 13). Same rules as the meta fields above: null (or an empty string, turned into
+    // null by the validator) clears the field.
+    if (data.ogTitle !== undefined) updateData.ogTitle = data.ogTitle;
+    if (data.ogDescription !== undefined)
+      updateData.ogDescription = data.ogDescription;
+    if (data.ogImageKey !== undefined) {
+      // Same contract as Blog.coverImageKey: omitted = unchanged, a key = replace, null = clear.
+      // The old file is deleted after the save, and only when the address really changed, so an
+      // admin form that resends the stored key never deletes the live file.
+      const newOgImageUrl =
+        data.ogImageKey === null ? null : getPublicUrl(data.ogImageKey);
+      updateData.ogImageUrl = newOgImageUrl;
+      if (comic.ogImageUrl && comic.ogImageUrl !== newOgImageUrl) {
+        oldR2KeysToDelete.push(getKeyFromPublicUrl(comic.ogImageUrl));
+      }
+    }
+    // The address changes below, inside one transaction with its history row.
+    const slugChange =
+      data.slug !== undefined && data.slug !== comic.slug ? data.slug : undefined;
     // `set`, not `connect`: the sent list REPLACES the comic's themes, so a
     // theme the admin un-ticked is unlinked rather than kept.
     if (data.themeIds !== undefined) {
@@ -352,7 +473,9 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
     // if (data.generationNegativePrompt !== undefined)
     //   updateData.generationNegativePrompt = data.generationNegativePrompt;
 
-    const updatedComic = await prisma.comic.update({
+    const updatedComic = slugChange !== undefined
+      ? await updateComicWithNewSlug(comicId, slugChange, updateData)
+      : await prisma.comic.update({
       where: { id: comicId },
       data: updateData,
     });
@@ -765,6 +888,10 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
       // Real page count - see withRealPageCount.
       _count: { select: { pages: true } },
       coverThumbnailUrls: true,
+      // SEO (feature 13): the readable address, the date for the sitemap, and the covers' alt text.
+      slug: true,
+      updatedAt: true,
+      coverThumbnailAlts: true,
       themes: THEMES_SELECT,
       pricingRules: {
         select: {
@@ -805,14 +932,55 @@ function withRealPageCount<T extends { _count: { pages: number } }>({
   return { ...comic, pageCount: _count.pages };
 }
 
-export const getPublicComicDetails = async (comicId: string) => {
+/**
+ * Which comic a public address names. A UUID-shaped value is an id; anything else is a slug
+ * (lower-cased, so /comic/My-Book still finds my-book and the page can redirect to the canonical
+ * form) and, when no comic has it, an old slug from comic_slug_history. Null when nothing matches.
+ * The PUBLISHED filter is applied by the caller, so an old address of an unpublished comic is a
+ * 404 exactly like its id is.
+ */
+async function resolvePublicComicWhere(
+  idOrSlug: string
+): Promise<Prisma.ComicWhereInput | null> {
+  if (isUuidShaped(idOrSlug)) return { id: idOrSlug };
+
+  const slug = normalizeSlug(idOrSlug);
+  const bySlug = await prisma.comic.findUnique({
+    where: { slug },
+    select: { id: true },
+  });
+  if (bySlug) return { id: bySlug.id };
+
+  const old = await prisma.comicSlugHistory.findUnique({
+    where: { oldSlug: slug },
+    select: { comicId: true },
+  });
+  return old ? { id: old.comicId } : null;
+}
+
+// The param is a comic id, the current slug or an old slug (see resolvePublicComicWhere). The
+// session code and the tests call this with ids, which behave as before.
+export const getPublicComicDetails = async (comicIdOrSlug: string) => {
+  const idWhere = await resolvePublicComicWhere(comicIdOrSlug);
+  if (!idWhere) {
+    throw new NotFoundError("Comic not found or not available.");
+  }
+
   const comic = await prisma.comic.findFirst({
     where: {
-      id: comicId,
+      ...idWhere,
       status: "PUBLISHED",
     },
     select: {
       id: true,
+      // SEO (feature 13). `slug` is always the CURRENT slug, even when the request used an old
+      // one: the page compares it with the address and redirects when they differ.
+      slug: true,
+      updatedAt: true,
+      ogTitle: true,
+      ogDescription: true,
+      ogImageUrl: true,
+      coverThumbnailAlts: true,
       title: true,
       description: true,
       genderTags: true,

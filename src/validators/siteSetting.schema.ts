@@ -131,6 +131,13 @@ export const updateSiteSettingSchema = z
     twitterUrl: optionalUrl("Twitter URL"),
     youtubeUrl: optionalUrl("YouTube URL"),
     linkedinUrl: optionalUrl("LinkedIn URL"),
+
+    // ---- Blog author ----
+    // The one author shown on every blog post (feature 13, D-141). The links
+    // follow the same URL rules as the brand's own social links above.
+    blogAuthorName: optionalText(100, "Blog author name"),
+    blogAuthorInstagramUrl: optionalUrl("Blog author Instagram URL"),
+    blogAuthorLinkedinUrl: optionalUrl("Blog author LinkedIn URL"),
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one field must be provided to update",

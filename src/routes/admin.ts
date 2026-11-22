@@ -13,6 +13,7 @@ import {
   updateComicStatusHandler,
   getThumbnailUploadUrlsBatchHandler,
   getComicVideoUploadUrlHandler,
+  getComicOgImageUploadUrlHandler,
 } from "../controllers/comic.controller.js";
 import {
   createCountryHandler,
@@ -36,6 +37,7 @@ import {
   createComicSchema,
   reorderComicsSchema,
   getComicVideoUploadUrlSchema,
+  getComicOgImageUploadUrlSchema,
   getLoraUploadUrlSchema,
   updateComicPricingSchema,
   updateComicSchema,
@@ -105,6 +107,7 @@ import {
 import {
   createHeroImageSchema,
   getHeroImageUploadUrlSchema,
+  updateHeroImageSchema,
 } from "../validators/heroImage.schema.js";
 import {
   createHeroImageHandler,
@@ -112,6 +115,7 @@ import {
   getAllHeroImagesHandler,
   getHeroImageUploadUrlHandler,
   toggleHeroImageStatusHandler,
+  updateHeroImageHandler,
 } from "../controllers/heroImage.controller.js";
 import {
   createCustomerReviewSchema,
@@ -199,6 +203,15 @@ import {
   upsertSitePageHandler,
 } from "../controllers/sitePage.controller.js";
 import { upsertSitePageSchema } from "../validators/sitePage.schema.js";
+import {
+  getAdminPageSeoHandler,
+  getPageSeoUploadUrlHandler,
+  upsertPageSeoHandler,
+} from "../controllers/pageSeo.controller.js";
+import {
+  getPageSeoUploadUrlSchema,
+  upsertPageSeoSchema,
+} from "../validators/pageSeo.schema.js";
 import {
   getAdminSiteSettingHandler,
   updateSiteSettingHandler,
@@ -442,6 +455,15 @@ router.post(
   getComicVideoUploadUrlHandler
 ); // presigned upload URL for the optional carousel promo video
 
+// COMIC SHARE IMAGE (feature 13)
+// Literal 2nd segment, same reason as the video route above. The saved key travels back through
+// PATCH /comics/:comicId as `ogImageKey`.
+router.post(
+  "/comics/og-image/upload-url",
+  validateBody(getComicOgImageUploadUrlSchema),
+  getComicOgImageUploadUrlHandler
+); // presigned upload URL for the share image
+
 // LORA
 router.post(
   "/comics/lora/upload-url",
@@ -496,6 +518,11 @@ router.post(
   "/hero-images",
   validateBody(createHeroImageSchema),
   createHeroImageHandler
+);
+router.patch(
+  "/hero-images/:id",
+  validateBody(updateHeroImageSchema),
+  updateHeroImageHandler
 );
 router.patch("/hero-images/:id/status", toggleHeroImageStatusHandler);
 router.get("/hero-images", getAllHeroImagesHandler);
@@ -676,6 +703,21 @@ router.put(
   upsertSitePageHandler
 );
 router.patch("/site-pages/:slug/status", toggleSitePageStatusHandler);
+
+// PAGE SEO (feature 13): search and share text for the ten fixed public pages.
+// Same shape as site pages: no create or delete, the PUT upserts. The upload-url
+// route is a POST and /page-seo/:slug is a PUT, so there is no ordering hazard.
+router.post(
+  "/page-seo/upload-url",
+  validateBody(getPageSeoUploadUrlSchema),
+  getPageSeoUploadUrlHandler
+);
+router.get("/page-seo", getAdminPageSeoHandler);
+router.put(
+  "/page-seo/:slug",
+  validateBody(upsertPageSeoSchema),
+  upsertPageSeoHandler
+);
 
 // SITE SETTINGS (brand + contact details - singleton)
 // PATCH, not PUT: every field is optional and partial updates are the normal

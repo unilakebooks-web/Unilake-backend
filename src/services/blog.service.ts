@@ -7,7 +7,11 @@ import {
 } from "../lib/r2.js";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import { ConflictError, NotFoundError } from "../utils/errors.js";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "../utils/errors.js";
 import type { Prisma } from "../generated/prisma/client.js";
 
 const UPLOAD_EXPIRY_SECONDS = 15 * 60;
@@ -25,7 +29,49 @@ const BLOG_LIST_SELECT = {
   isActive: true,
   createdAt: true,
   updatedAt: true,
+  contentUpdatedAt: true,
+  publishedAt: true,
 } as const;
+
+// The books featured on a post, in the order the admin arranged them.
+const FEATURED_COMIC_IDS_INCLUDE = {
+  featuredComics: {
+    orderBy: { position: "asc" as const },
+    select: { comicId: true },
+  },
+};
+
+/**
+ * The admin form wants the featured books as a plain ordered id list, not the
+ * join rows, so the relation is folded into `featuredComicIds`.
+ */
+function withFeaturedComicIds<T extends { featuredComics: { comicId: string }[] }>(
+  blog: T
+) {
+  const { featuredComics, ...rest } = blog;
+  return { ...rest, featuredComicIds: featuredComics.map((row) => row.comicId) };
+}
+
+/**
+ * Every featured id must be a real comic. Checked before the write (the same
+ * validate-then-replace as a coupon's comic list); a comic deleted in the gap
+ * is caught by the foreign key and answered the same way, see below.
+ */
+async function assertComicsExist(comicIds: string[]) {
+  if (comicIds.length === 0) return;
+  const found = await prisma.comic.count({ where: { id: { in: comicIds } } });
+  if (found !== comicIds.length) {
+    throw new ValidationError("One or more featured comics were not found");
+  }
+}
+
+// The ordered replacement of a post's featured books. As a nested write inside
+// blog.update it is one transaction (old rows removed, new rows inserted with
+// their position), with no external call inside it.
+const featuredComicsWrite = (comicIds: string[]) => ({
+  deleteMany: {},
+  create: comicIds.map((comicId, position) => ({ comicId, position })),
+});
 
 function slugify(title: string): string {
   return title
@@ -106,8 +152,14 @@ export async function createBlog(data: {
   tags?: string[];
   metaTitle?: string;
   metaDescription?: string;
+  ogTitle?: string | null;
+  ogDescription?: string | null;
+  ogImageKey?: string | null;
+  coverImageAlt?: string | null;
+  featuredComicIds?: string[];
 }) {
   const slug = await generateUniqueSlug(data.title);
+  await assertComicsExist(data.featuredComicIds ?? []);
 
   try {
     // isActive is left unset so the DB default (false) applies - a new post is
@@ -128,12 +180,26 @@ export async function createBlog(data: {
         ...(data.coverImageKey !== undefined && {
           coverImageUrl: getPublicUrl(data.coverImageKey),
         }),
+        ...(data.ogTitle != null && { ogTitle: data.ogTitle }),
+        ...(data.ogDescription != null && {
+          ogDescription: data.ogDescription,
+        }),
+        ...(data.ogImageKey != null && {
+          ogImageUrl: getPublicUrl(data.ogImageKey),
+        }),
+        ...(data.coverImageAlt != null && {
+          coverImageAlt: data.coverImageAlt,
+        }),
+        ...(data.featuredComicIds !== undefined && {
+          featuredComics: featuredComicsWrite(data.featuredComicIds),
+        }),
       },
+      include: FEATURED_COMIC_IDS_INCLUDE,
     });
 
     logger.info({ blogId: blog.id, slug: blog.slug }, "Blog created");
 
-    return blog;
+    return withFeaturedComicIds(blog);
   } catch (error: any) {
     // Two concurrent creates with the same title can both clear the uniqueness
     // check above before either writes. The unique constraint catches the loser.
@@ -141,6 +207,11 @@ export async function createBlog(data: {
       throw new ConflictError(
         "A blog with this slug already exists. Please try again."
       );
+    }
+
+    // A featured comic was deleted between assertComicsExist and the insert.
+    if (error.code === "P2003") {
+      throw new ValidationError("One or more featured comics were not found");
     }
 
     throw error;
@@ -157,6 +228,11 @@ export async function updateBlog(
     tags?: string[];
     metaTitle?: string | null;
     metaDescription?: string | null;
+    ogTitle?: string | null;
+    ogDescription?: string | null;
+    ogImageKey?: string | null;
+    coverImageAlt?: string | null;
+    featuredComicIds?: string[];
   }
 ) {
   const existing = await prisma.blog.findUnique({ where: { id } });
@@ -178,6 +254,21 @@ export async function updateBlog(
   if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
   if (data.metaDescription !== undefined)
     updateData.metaDescription = data.metaDescription;
+  if (data.ogTitle !== undefined) updateData.ogTitle = data.ogTitle;
+  if (data.ogDescription !== undefined)
+    updateData.ogDescription = data.ogDescription;
+  if (data.coverImageAlt !== undefined)
+    updateData.coverImageAlt = data.coverImageAlt;
+
+  // contentUpdatedAt moves only when the reader-visible content really
+  // differs from what is stored: the admin form resends every field on every
+  // save, so "was it sent" would bump it on each save, and updatedAt cannot be
+  // used because the publish switch moves it. The cover is compared below,
+  // once its URL is resolved.
+  let contentChanged =
+    (data.title !== undefined && data.title !== existing.title) ||
+    (data.excerpt !== undefined && data.excerpt !== existing.excerpt) ||
+    (data.body !== undefined && data.body !== existing.body);
 
   // The slug is never touched here - it is frozen at create so that a title
   // edit can never 404 a link someone already shared.
@@ -190,16 +281,52 @@ export async function updateBlog(
       data.coverImageKey === null ? null : getPublicUrl(data.coverImageKey);
 
     updateData.coverImageUrl = newCoverUrl;
+    if (newCoverUrl !== existing.coverImageUrl) contentChanged = true;
 
     if (existing.coverImageUrl && existing.coverImageUrl !== newCoverUrl) {
       oldR2Keys.push(getKeyFromPublicUrl(existing.coverImageUrl));
     }
   }
 
-  const updated = await prisma.blog.update({
-    where: { id },
-    data: updateData,
-  });
+  // Share image: same omitted / key / null rule and the same guard as the cover.
+  if (data.ogImageKey !== undefined) {
+    const newOgUrl =
+      data.ogImageKey === null ? null : getPublicUrl(data.ogImageKey);
+
+    updateData.ogImageUrl = newOgUrl;
+
+    if (existing.ogImageUrl && existing.ogImageUrl !== newOgUrl) {
+      oldR2Keys.push(getKeyFromPublicUrl(existing.ogImageUrl));
+    }
+  }
+
+  if (contentChanged) updateData.contentUpdatedAt = new Date();
+
+  // A post that is live but has no publishedAt (written by the previous
+  // backend during a half-finished release) gets it now, once.
+  if (existing.isActive && existing.publishedAt === null) {
+    updateData.publishedAt = new Date();
+  }
+
+  if (data.featuredComicIds !== undefined) {
+    await assertComicsExist(data.featuredComicIds);
+    updateData.featuredComics = featuredComicsWrite(data.featuredComicIds);
+  }
+
+  let updated;
+  try {
+    updated = await prisma.blog.update({
+      where: { id },
+      data: updateData,
+      include: FEATURED_COMIC_IDS_INCLUDE,
+    });
+  } catch (error: any) {
+    // A featured comic was deleted between assertComicsExist and the insert.
+    if (error.code === "P2003") {
+      throw new ValidationError("One or more featured comics were not found");
+    }
+    throw error;
+  }
 
   // Best-effort, after the DB write succeeds. A failed delete leaves an orphan
   // file in R2, not a broken row.
@@ -220,7 +347,7 @@ export async function updateBlog(
     "Blog updated"
   );
 
-  return updated;
+  return withFeaturedComicIds(updated);
 }
 
 export async function listBlogsAdmin(isActive?: boolean) {
@@ -234,13 +361,16 @@ export async function listBlogsAdmin(isActive?: boolean) {
 }
 
 export async function getBlogByIdAdmin(id: string) {
-  const blog = await prisma.blog.findUnique({ where: { id } });
+  const blog = await prisma.blog.findUnique({
+    where: { id },
+    include: FEATURED_COMIC_IDS_INCLUDE,
+  });
 
   if (!blog) {
     throw new NotFoundError("Blog not found");
   }
 
-  return blog;
+  return withFeaturedComicIds(blog);
 }
 
 export async function listBlogsPublic() {
@@ -256,6 +386,25 @@ export async function listBlogsPublic() {
 export async function getBlogBySlugPublic(slug: string) {
   const blog = await prisma.blog.findFirst({
     where: { slug, isActive: true },
+    include: {
+      // Only books a customer can open: published and not retired, the same
+      // filter as the public comic list. The section is simply empty otherwise.
+      featuredComics: {
+        where: { comic: { status: "PUBLISHED", retiredAt: null } },
+        orderBy: { position: "asc" },
+        select: {
+          comic: {
+            select: {
+              id: true,
+              slug: true,
+              title: true,
+              coverThumbnailUrls: true,
+              coverThumbnailAlts: true,
+            },
+          },
+        },
+      },
+    },
   });
 
   // "No such slug" and "exists but unpublished" deliberately return the same
@@ -265,7 +414,8 @@ export async function getBlogBySlugPublic(slug: string) {
     throw new NotFoundError("Blog not found");
   }
 
-  return blog;
+  const { featuredComics, ...rest } = blog;
+  return { ...rest, featuredComics: featuredComics.map((row) => row.comic) };
 }
 
 export async function toggleBlogStatus(id: string) {
@@ -277,7 +427,14 @@ export async function toggleBlogStatus(id: string) {
 
   const updated = await prisma.blog.update({
     where: { id },
-    data: { isActive: !existing.isActive },
+    data: {
+      isActive: !existing.isActive,
+      // The first time the post goes live, and never again: unpublishing and
+      // republishing keeps the original date (it is the datePublished in the
+      // page markup and must not be bumped to look fresh).
+      ...(!existing.isActive &&
+        existing.publishedAt === null && { publishedAt: new Date() }),
+    },
   });
 
   logger.info(
@@ -299,9 +456,24 @@ export async function deleteBlog(id: string) {
     ? getKeyFromPublicUrl(existing.coverImageUrl)
     : null;
 
+  const ogR2Key = existing.ogImageUrl
+    ? getKeyFromPublicUrl(existing.ogImageUrl)
+    : null;
+
   // DB row first, then best-effort R2 cleanup - same ordering as
   // CustomerReview and TeamMember.
   await prisma.blog.delete({ where: { id } });
+
+  if (ogR2Key) {
+    try {
+      await deleteFile("public", ogR2Key);
+    } catch (error) {
+      logger.warn(
+        { error, blogId: id, ogR2Key },
+        "Blog deleted but share image R2 cleanup failed"
+      );
+    }
+  }
 
   if (coverR2Key) {
     try {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeSlug, validateSlug } from "../lib/comicSlug.js";
 
 // ============================================================
 // Gender / age group / theme - each a LIST on the comic.
@@ -60,12 +61,51 @@ const csvListQuery = <T extends z.ZodTypeAny>(item: T) =>
     return parts.length > 0 ? [...new Set(parts)] : undefined;
   }, z.array(item).optional());
 
+// The comic's readable address. Lower-cased first, then checked by the one shared rule
+// (lib/comicSlug.ts). Never nullable: a comic always keeps a slug, so clearing one is a 400.
+const slugField = z
+  .string({ message: "Slug must be text" })
+  .transform(normalizeSlug)
+  .superRefine((slug, ctx) => {
+    const problem = validateSlug(slug);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
+
+// Share and alt text: trimmed, an empty string clears the field (stored null), like null does.
+const clearableText = (max: number, tooLong: string) =>
+  z
+    .string()
+    .trim()
+    .max(max, tooLong)
+    .transform((value) => (value === "" ? null : value))
+    .nullable()
+    .optional();
+
+// Share image: an R2 key from POST /comics/og-image/upload-url. The folder is checked because the
+// key is later used to delete the replaced file: it must never name some other file (a cover).
+export const OG_IMAGE_KEY_PREFIX = "comics/og/";
+const ogImageKeyField = z
+  .string()
+  .trim()
+  .transform((value) => (value === "" ? null : value))
+  .nullable()
+  .optional()
+  .refine(
+    (key) =>
+      key == null ||
+      (key.startsWith(OG_IMAGE_KEY_PREFIX) && !key.includes("..")),
+    { message: "Share image key is not valid. Upload the image again." }
+  );
+
 export const createComicSchema = z
   .object({
     title: z
       .string({ message: "Title is requried" })
       .min(1, "Title cannot be empty")
       .max(255, "Title is too long"),
+
+    // Optional: left out, the service generates one from the title.
+    slug: slugField.optional(),
 
     genderTags: genderTagsField,
 
@@ -211,6 +251,17 @@ export const updateComicSchema = z
       .max(320, "Meta description is too long")
       .nullable()
       .optional(),
+    // SEO (feature 13). A changed slug keeps the old address working (comic_slug_history).
+    slug: slugField.optional(),
+    ogTitle: clearableText(120, "Share title is too long"),
+    ogDescription: clearableText(320, "Share description is too long"),
+    ogImageKey: ogImageKeyField,
+    // Alt text of the covers, same positions as thumbnailKeys. The service checks the count
+    // against the covers the comic will have.
+    coverThumbnailAlts: z
+      .array(z.string().trim().max(200, "Alt text is too long"))
+      .max(10, "Maximum 10 alt texts per comic")
+      .optional(),
     description: z.string().min(1).optional(),
     // Replaces the comic's whole theme set when sent.
     themeIds: themeIdsField.optional(),
@@ -254,6 +305,17 @@ export const getComicVideoUploadUrlSchema = z.object({
     .regex(
       /^video\/(mp4|webm)$/,
       "Only MP4 and WebM videos are allowed. Convert MOV files before uploading."
+    ),
+});
+
+// Copy of getBlogUploadUrlSchema: images only, for the comic's share image.
+export const getComicOgImageUploadUrlSchema = z.object({
+  fileName: z.string().min(1, "File name is required"),
+  contentType: z
+    .string()
+    .regex(
+      /^image\/(png|jpeg|jpg|webp)$/,
+      "Only PNG, JPEG, and WEBP images are allowed"
     ),
 });
 

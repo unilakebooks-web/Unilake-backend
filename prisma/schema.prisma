@@ -147,6 +147,19 @@ model Comic {
   metaTitle       String?
   metaDescription String?
 
+  // SEO (feature 13). slug: the readable address /comic/<slug>, unique, filled by the service and
+  // backfilled by the migration; nullable only so the previous backend can still create comics while
+  // a release is half deployed. ogTitle, ogDescription, ogImageUrl: the share preview, falling back
+  // to the SEO fields and then the first cover. coverThumbnailAlts: alt text for coverThumbnailUrls,
+  // same positions; a missing or empty entry falls back to the title.
+  slug               String?  @unique
+  ogTitle            String?
+  ogDescription      String?
+  ogImageUrl         String?
+  coverThumbnailAlts String[] @default([])
+  slugHistory        ComicSlugHistory[]
+  blogComics         BlogComic[]
+
   isBestseller Boolean @default(false)
 
   // Website order, ascending: the order customers see (home, Our Books, Explore
@@ -170,6 +183,19 @@ model Comic {
   updatedAt DateTime @updatedAt
 
   @@map("comics")
+}
+
+// Every slug a comic has had. An old address keeps working for good: it redirects to the comic's
+// current slug (one hop). A new slug may never equal another comic's old slug.
+model ComicSlugHistory {
+  id        String   @id @default(uuid())
+  oldSlug   String   @unique
+  comicId   String
+  comic     Comic    @relation(fields: [comicId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([comicId])
+  @@map("comic_slug_history")
 }
 
 model Page {
@@ -808,6 +834,7 @@ model AnnouncementBar {
 model HeroImage {
   id        String   @id @default(uuid())
   imageUrl  String
+  imageAlt  String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -833,6 +860,7 @@ model TeamMember {
   role         String
   description  String?  @db.Text
   imageUrl     String?
+  imageAlt     String?
   linkedinUrl  String?
   instagramUrl String?
   twitterUrl   String?
@@ -874,6 +902,7 @@ model HowItWorks {
   id        String  @id @default(uuid())
   videoUrl  String?
   posterUrl String?
+  posterAlt String?
 
   steps Json @default("[]")
 
@@ -929,6 +958,17 @@ model Blog {
   metaTitle       String?
   metaDescription String?
 
+  // SEO and page furniture (feature 13). contentUpdatedAt: set only when the title, excerpt, body
+  // or cover change (updatedAt also moves on the publish switch). publishedAt: set the first time
+  // the post goes live (datePublished). featuredComics: the books shown at the end of the post.
+  ogTitle          String?
+  ogDescription    String?
+  ogImageUrl       String?
+  coverImageAlt    String?
+  contentUpdatedAt DateTime?
+  publishedAt      DateTime?
+  featuredComics   BlogComic[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -936,10 +976,23 @@ model Blog {
   @@map("blogs")
 }
 
+model BlogComic {
+  blogId   String
+  blog     Blog   @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  comicId  String
+  comic    Comic  @relation(fields: [comicId], references: [id], onDelete: Cascade)
+  position Int    @default(0)
+
+  @@id([blogId, comicId])
+  @@index([comicId])
+  @@map("blog_comics")
+}
+
 enum SitePageSlug {
   PRIVACY
   TERMS
   REFUND
+  ABOUT
 }
 
 model SitePage {
@@ -955,6 +1008,36 @@ model SitePage {
   updatedAt DateTime @updatedAt // powers "Last updated: …"
 
   @@map("site_pages")
+}
+
+// SEO text for the fixed public pages (feature 13). A row exists only once the admin saved it;
+// empty fields fall back to the text the page has today.
+enum PageSeoSlug {
+  HOME
+  COMICS
+  HOW_IT_WORKS
+  BLOGS
+  CONTACT
+  TEAM
+  ABOUT
+  PRIVACY
+  TERMS
+  REFUND
+}
+
+model PageSeo {
+  id            String      @id @default(uuid())
+  slug          PageSeoSlug @unique
+  metaTitle     String?
+  metaDescription String?
+  ogTitle       String?
+  ogDescription String?
+  ogImageUrl    String?
+  ogImageAlt    String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("page_seo")
 }
 
 model SiteSetting {
@@ -996,6 +1079,11 @@ model SiteSetting {
 
   metaTitle       String?
   metaDescription String?
+
+  // The one author shown on every blog post (feature 13).
+  blogAuthorName         String?
+  blogAuthorInstagramUrl String?
+  blogAuthorLinkedinUrl  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
