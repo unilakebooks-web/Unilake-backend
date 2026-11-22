@@ -91,6 +91,7 @@ export async function getAdminHowItWorks() {
 export async function updateHowItWorks(data: {
   videoKey?: string | null;
   posterKey?: string | null;
+  posterAlt?: string | null;
   steps?: HowItWorksStep[];
   isActive?: boolean;
 }) {
@@ -105,6 +106,7 @@ export async function updateHowItWorks(data: {
     updateData.steps = data.steps as unknown as Prisma.InputJsonValue;
   }
   if (data.isActive !== undefined) updateData.isActive = data.isActive;
+  if (data.posterAlt !== undefined) updateData.posterAlt = data.posterAlt;
 
   // Asset replace/clear, same guard as updateTeamMember: compare old vs new
   // resolved URL before queuing an R2 delete, so re-submitting the same key

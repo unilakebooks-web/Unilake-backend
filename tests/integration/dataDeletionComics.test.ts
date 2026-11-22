@@ -230,6 +230,23 @@ describe("the 30-day rule and delete for a comic nobody bought", () => {
       await prisma.comic.findUnique({ where: { id: ready.id } })
     ).toBeNull();
   });
+
+  it("deleting a comic also deletes its share image file", async () => {
+    const share = `comics/og/${RUN}-share.png`;
+    await uploadFile("public", share, Buffer.from("x"), "image/png");
+    keysToDelete.add(share);
+    const comic = await mkComic({
+      status: "DRAFT",
+      unpublishedAt: null,
+      ogImageUrl: `${base()}/${share}`,
+    });
+    expect(await objectExists("public", share)).toBe(true);
+    await deleteComic(comic.id);
+    expect(
+      await prisma.comic.findUnique({ where: { id: comic.id } })
+    ).toBeNull();
+    expect(await objectExists("public", share)).toBe(false);
+  });
 });
 
 describe("retire for a comic that has sessions or orders", () => {
@@ -414,6 +431,79 @@ describe("the books sweep deletes a retired comic's own files", () => {
     expect(
       (await getAdminComicsList({} as never)).some((c) => c.id === id)
     ).toBe(false);
+  });
+});
+
+describe("the books sweep keeps a file that a share picture names", () => {
+  it("keeps page art named by another comic's, a post's or a page's share picture, and still deletes an unnamed one", async () => {
+    const comic = await mkComic();
+    const other = await mkComic();
+    const delivered = await mkSession(
+      comic.id,
+      { status: "COMPLETED" },
+      { status: "DELIVERED" }
+    );
+    await prisma.$executeRaw`UPDATE "order_sessions" SET "filesDeletedAt" = ${new Date()} WHERE "id" = ${delivered.id}`;
+    const id = comic.id;
+    const art = [1, 2, 3, 4].map(
+      (n) => `comics/${id}/pages/artwork/${RUN}-og${n}.png`
+    );
+    for (const k of art) {
+      await uploadFile(
+        "public",
+        k,
+        Buffer.from("x"),
+        "application/octet-stream"
+      );
+      keysToDelete.add(k);
+    }
+    for (const [i, k] of art.entries())
+      await prisma.page.create({
+        data: {
+          comicId: id,
+          pageNumber: i + 1,
+          artworkUrl: `${base()}/${k}`,
+        },
+      });
+    const blog = await prisma.blog.create({
+      data: {
+        slug: `og-keep-${RUN}`,
+        title: "Share picture test",
+        body: "<p>x</p>",
+        ogImageUrl: `${base()}/${art[1]}`,
+      },
+    });
+    const hadPageSeo = await prisma.pageSeo.findUnique({
+      where: { slug: "HOME" },
+    });
+    try {
+      await prisma.pageSeo.upsert({
+        where: { slug: "HOME" },
+        create: { slug: "HOME", ogImageUrl: `${base()}/${art[2]}` },
+        update: { ogImageUrl: `${base()}/${art[2]}` },
+      });
+      await prisma.comic.update({
+        where: { id: other.id },
+        data: { ogImageUrl: `${base()}/${art[0]}` },
+      });
+      await setBooks("ACTIVE");
+      await deleteComic(id);
+      await sweepDataDeletion(deps());
+      expect(await objectExists("public", art[0]!)).toBe(true); // named by another comic's share picture
+      expect(await objectExists("public", art[1]!)).toBe(true); // named by a post's share picture
+      expect(await objectExists("public", art[2]!)).toBe(true); // named by a page's share picture
+      expect(await objectExists("public", art[3]!)).toBe(false); // named by nothing
+    } finally {
+      await prisma.blog.delete({ where: { id: blog.id } });
+      if (hadPageSeo) {
+        await prisma.pageSeo.update({
+          where: { slug: "HOME" },
+          data: { ogImageUrl: hadPageSeo.ogImageUrl },
+        });
+      } else {
+        await prisma.pageSeo.deleteMany({ where: { slug: "HOME" } });
+      }
+    }
   });
 });
 

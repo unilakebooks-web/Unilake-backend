@@ -20,6 +20,7 @@ const DEFAULT_TITLES: Record<SitePageSlug, string> = {
   PRIVACY: "Privacy Policy",
   TERMS: "Terms and Conditions",
   REFUND: "Refund Policy",
+  ABOUT: "About Us",
 };
 
 /**

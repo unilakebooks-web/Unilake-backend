@@ -27,6 +27,7 @@ import {
   getPublicBlogsHandler,
 } from "../controllers/blog.controller.js";
 import { getPublicSitePageHandler } from "../controllers/sitePage.controller.js";
+import { getPublicPageSeoHandler } from "../controllers/pageSeo.controller.js";
 import { getActiveGoogleReviewsHandler } from "../controllers/googleReview.controller.js";
 import { getPublicSiteSettingHandler } from "../controllers/siteSetting.controller.js";
 import {
@@ -117,6 +118,11 @@ router.get("/countries", getActiveCountriesHandler);
 
 // site pages - published only; 404 for an unpublished or never-saved page
 router.get("/site-pages/:slug", getPublicSitePageHandler);
+
+
+// page SEO - search and share text for the fixed pages; only pages the admin
+// has saved are returned, the frontend keeps its own text for the rest.
+router.get("/page-seo", getPublicPageSeoHandler);
 
 
 // site settings - brand + contact details. Consumed by /contact AND the

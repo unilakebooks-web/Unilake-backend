@@ -37,6 +37,7 @@ export async function createGoogleReview(data: {
   rating: number;
   reviewText: string;
   imageKey: string;
+  imageAlt?: string | null;
 }) {
   const review = await prisma.googleReview.create({
     data: {
@@ -44,6 +45,7 @@ export async function createGoogleReview(data: {
       rating: data.rating,
       reviewText: data.reviewText,
       imageUrl: getPublicUrl(data.imageKey),
+      ...(data.imageAlt !== undefined && { imageAlt: data.imageAlt }),
     },
   });
 
@@ -62,6 +64,7 @@ export async function updateGoogleReview(
     rating?: number;
     reviewText?: string;
     imageKey?: string;
+    imageAlt?: string | null;
   }
 ) {
   const existing = await prisma.googleReview.findUnique({ where: { id } });
@@ -77,6 +80,7 @@ export async function updateGoogleReview(
   if (data.customerName !== undefined) updateData.customerName = data.customerName;
   if (data.rating !== undefined) updateData.rating = data.rating;
   if (data.reviewText !== undefined) updateData.reviewText = data.reviewText;
+  if (data.imageAlt !== undefined) updateData.imageAlt = data.imageAlt;
 
   // Image: omitted = keep, a key = replace. There is no clear case - the
   // column is NOT NULL, which is why the validator refuses null here.

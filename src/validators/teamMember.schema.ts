@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { altText } from "./seoText.schema.js";
 
 export const getTeamMemberUploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),
@@ -15,6 +16,7 @@ export const createTeamMemberSchema = z.object({
   role: z.string().trim().min(1, "Role is required"),
   description: z.string().trim().min(1).optional(),
   imageKey: z.string().min(1).optional(),
+  imageAlt: altText,
   linkedinUrl: z.string().url("Invalid LinkedIn URL").optional(),
   instagramUrl: z.string().url("Invalid Instagram URL").optional(),
   twitterUrl: z.string().url("Invalid Twitter/X URL").optional(),
@@ -42,6 +44,7 @@ export const updateTeamMemberSchema = z
     // bubble.fontId, page.faceDirection and savedAddress.line2.
     description: z.string().trim().min(1).nullable().optional(),
     imageKey: z.string().min(1).nullable().optional(),
+    imageAlt: altText,
     linkedinUrl: z.string().url("Invalid LinkedIn URL").nullable().optional(),
     instagramUrl: z.string().url("Invalid Instagram URL").nullable().optional(),
     twitterUrl: z.string().url("Invalid Twitter/X URL").nullable().optional(),

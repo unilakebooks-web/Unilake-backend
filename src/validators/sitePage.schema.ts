@@ -8,8 +8,8 @@ import { z } from "zod";
  * SiteSetting, not a rich-text page, and live under the admin's Settings
  * section rather than Pages.
  */
-export const sitePageSlugParamSchema = z.enum(["PRIVACY", "TERMS", "REFUND"], {
-  message: "Invalid page. Must be PRIVACY, TERMS, or REFUND.",
+export const sitePageSlugParamSchema = z.enum(["PRIVACY", "TERMS", "REFUND", "ABOUT"], {
+  message: "Invalid page. Must be PRIVACY, TERMS, REFUND, or ABOUT.",
 });
 
 /**

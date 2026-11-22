@@ -18,7 +18,8 @@ import {
   deleteComic,
   getAdminComicsList,
   getAdminComicDetail,
-  generateComicVideoUploadUrl
+  generateComicVideoUploadUrl,
+  generateComicOgImageUploadUrl
 } from "../services/comic.service.js";
 import {
   adminComicFilterQuerySchema,
@@ -228,6 +229,7 @@ export const getPublicComicsHandler = asyncHandler(
 
 
 export const getPublicComicDetailsHandler = asyncHandler(async (req: Request, res: Response) => {
+  // The segment is a comic id, the current slug or an old slug; the service tells them apart.
   const { comicId } = req.params;
 
   if (!comicId || typeof comicId !== "string") {
@@ -268,6 +270,14 @@ export const getComicVideoUploadUrlHandler = asyncHandler(
   }
 );
 
+
+// req.body is validated by getComicOgImageUploadUrlSchema on the route.
+export const getComicOgImageUploadUrlHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const result = await generateComicOgImageUploadUrl(req.body);
+    sendSuccess(res, 200, result);
+  }
+);
 
 export const getAdminComicsHandler = asyncHandler(
   async (req: Request, res: Response) => {

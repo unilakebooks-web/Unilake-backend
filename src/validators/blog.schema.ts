@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { altText, seoText } from "./seoText.schema.js";
 
 export const getBlogUploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),
@@ -34,6 +35,29 @@ const metaDescriptionSchema = z
   .min(1)
   .max(320, "Meta description is too long");
 
+// Share preview overrides and the books shown at the end of the post.
+// ogImageKey is an R2 key, resolved to ogImageUrl like coverImageKey. Featured
+// books: at most 6, each once, the array order is the display order; whether
+// the ids exist is checked by the service.
+const ogTitleSchema = seoText(120, "Share title");
+const ogDescriptionSchema = seoText(320, "Share description");
+// The folder is checked because the key is later used to delete the replaced
+// file: it must never name some other file (a cover). Same rule as the comic's.
+export const BLOG_OG_IMAGE_KEY_PREFIX = "blogs/";
+const ogImageKeySchema = seoText(500, "Share image key").refine(
+  (key) =>
+    key == null ||
+    (key.startsWith(BLOG_OG_IMAGE_KEY_PREFIX) && !key.includes("..")),
+  { message: "Share image key is not valid. Upload the image again." }
+);
+const featuredComicIdsSchema = z
+  .array(z.string().uuid("Each featured comic must be a valid id"))
+  .max(6, "A blog can feature at most 6 comics")
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "A comic can only be featured once",
+  })
+  .optional();
+
 export const createBlogSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(200, "Title is too long"),
   excerpt: z.string().trim().min(1).max(300, "Excerpt is too long").optional(),
@@ -42,6 +66,11 @@ export const createBlogSchema = z.object({
   tags: tagsSchema,
   metaTitle: metaTitleSchema.optional(),
   metaDescription: metaDescriptionSchema.optional(),
+  ogTitle: ogTitleSchema,
+  ogDescription: ogDescriptionSchema,
+  ogImageKey: ogImageKeySchema,
+  coverImageAlt: altText,
+  featuredComicIds: featuredComicIdsSchema,
 });
 
 export const updateBlogSchema = z
@@ -53,6 +82,11 @@ export const updateBlogSchema = z
     tags: tagsSchema,
     metaTitle: metaTitleSchema.nullable().optional(),
     metaDescription: metaDescriptionSchema.nullable().optional(),
+    ogTitle: ogTitleSchema,
+    ogDescription: ogDescriptionSchema,
+    ogImageKey: ogImageKeySchema,
+    coverImageAlt: altText,
+    featuredComicIds: featuredComicIdsSchema,
     // NOTE: `slug` and `isActive` are deliberately absent.
     // slug is frozen after create so shared links never 404.
     // isActive is owned exclusively by PATCH /blogs/:id/status.

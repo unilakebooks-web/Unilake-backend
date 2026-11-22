@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendSuccess } from "../utils/response.js";
-import { createHeroImage, deleteHeroImage, getActiveHeroImages, getAllHeroImages, getHeroImageUploadUrl, toggleHeroImageStatus } from "../services/heroImage.service.js";
+import { createHeroImage, deleteHeroImage, getActiveHeroImages, getAllHeroImages, getHeroImageUploadUrl, toggleHeroImageStatus, updateHeroImage } from "../services/heroImage.service.js";
 
 export const getHeroImageUploadUrlHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -17,6 +17,13 @@ export const createHeroImageHandler = asyncHandler(
   }
 );
 
+export const updateHeroImageHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const heroImage = await updateHeroImage(id as string, req.body);
+    sendSuccess(res, 200, heroImage);
+  }
+);
 
 export const toggleHeroImageStatusHandler = asyncHandler(
   async (req: Request, res: Response) => {
