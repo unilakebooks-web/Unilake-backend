@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma.js";
 import { verifyWebhookSignature } from "../lib/razorpay.js";
 import { logger } from "../lib/logger.js";
 import { enqueuePaidGenerationJobs } from "./session.service.js";
-import { Prisma } from "../generated/prisma/client.js";
+import { Prisma, type Order, type OrderSession } from "../generated/prisma/client.js";
 import { config } from "../config/env.js";
 import { processShiprocketStatusUpdate } from "./shiprocket.service.js";
 import {
@@ -206,6 +206,30 @@ async function handlePaymentCaptured(
       // Non-fatal — the event row exists, just missing the FK backfill
     });
 
+  await applyCapturedPayment(order, razorpayOrderId, razorpayPaymentId, eventId);
+}
+
+/**
+ * Everything that happens once a captured payment has been matched to its Order:
+ * flip Order and session to PAID, then enqueue the paid pages, then the email.
+ *
+ * Called by the Razorpay webhook (with its event id) and by the customer's own
+ * payment confirmation (paymentConfirmation.service.ts, no event id: there is
+ * no webhook row to remove if a step fails). Every step is guarded, so a repeat
+ * call, or the webhook and the confirmation racing, ends with exactly one flip,
+ * one bill number, one set of jobs and one email.
+ */
+export async function applyCapturedPayment(
+  order: Order & { orderSession: OrderSession },
+  razorpayOrderId: string,
+  razorpayPaymentId: string,
+  eventId: string | null
+): Promise<void> {
+  // The idempotency row exists only for a webhook delivery.
+  const dropWebhookRow = async () => {
+    if (eventId) await prisma.webhookEvent.delete({ where: { eventId } });
+  };
+
   // Flip Order + Session in a transaction. Enqueue OUTSIDE.
   let repricedMeanwhile = false;
   // Automatic data deletion (feature 6): set when this session's files were already deleted.
@@ -271,8 +295,7 @@ async function handlePaymentCaptured(
     // The idempotency row was stored before processing. If the status change
     // failed, remove it so Razorpay's retry is processed instead of skipped as a
     // duplicate (the order would otherwise stay unpaid after the customer paid).
-    await prisma.webhookEvent
-      .delete({ where: { eventId } })
+    await dropWebhookRow()
       .catch(() => {
         logger.error(
           { eventId, orderId: order.id },
@@ -327,8 +350,29 @@ async function handlePaymentCaptured(
   const jobsEnqueued = await enqueuePaidGenerationJobs(
     order.orderSessionId
   ).catch(async (error) => {
-    await prisma.webhookEvent
-      .delete({ where: { eventId } })
+    // The webhook and the customer's own confirmation can reach this point for the same payment at
+    // once: the other caller is creating the same page rows (unique constraint) and queueing them.
+    // This one stops here; the other one flips the session and sends the email.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      logger.warn(
+        { orderId: order.id },
+        "Paid-page enqueue collided with another caller for the same payment — leaving it to that caller"
+      );
+      // The webhook must not answer "done" for work the other caller may still fail at: it drops its row
+      // and reports an error, so Razorpay re-sends it later (skipped as already processed if the other
+      // caller finished, run again if that caller failed). The customer's own confirmation has no row
+      // and no retry to ask for, so it just steps aside.
+      if (eventId) {
+        await dropWebhookRow().catch(() => undefined);
+        throw error;
+      }
+      return null;
+    }
+
+    await dropWebhookRow()
       .catch(() => {
         // If cleanup itself fails, log and press on with the re-throw.
         // Ops will see the stuck row and can clear it manually.
@@ -343,10 +387,12 @@ async function handlePaymentCaptured(
     // which is how a BullMQ priority overflow passed for a vague Redis problem.
     logger.error(
       { orderId: order.id, err: error },
-      "Paid-page enqueue failed — re-throwing so Razorpay retries the webhook"
+      "Paid-page enqueue failed — re-throwing so the caller retries (Razorpay re-sends the webhook; the customer's page asks again)"
     );
     throw error;
   });
+
+  if (jobsEnqueued === null) return;
 
   // Flip session to GENERATING_PAID once jobs are in Redis
   const { count: generationStarted } = await prisma.orderSession.updateMany({

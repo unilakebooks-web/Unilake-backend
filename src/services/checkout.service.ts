@@ -128,7 +128,9 @@ export async function initiateCheckout(
   //
   // The field guards (userId / coverType / shipping) are intentionally NOT
   // re-run on this path. They were validated when the order was created, and
-  // updateOrderSession's post-payment lock has frozen those fields ever since,
+  // updateOrderSession's post-payment lock has frozen those fields ever since
+  // (the delivery address, in the same country, may still change while the
+  // order is unpaid: changeAddressOfUnpaidOrder updates the Order row too),
   // so a resume is effectively a pure read.
   if (session.order) {
     if (session.order.status === "CREATED") {

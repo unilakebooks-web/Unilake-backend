@@ -238,7 +238,7 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
 | Mount | Auth | Purpose |
 |---|---|---|
 | `/api/auth/*` | — | Better Auth (sign-in, sign-up, OAuth callbacks, session) |
-| `/api/public/*` | none | Catalogue, CMS content, and the personalisation flow (sessions, photo upload, generation, checkout) |
+| `/api/public/*` | none | Catalogue, CMS content, and the personalisation flow (sessions, photo upload, generation, checkout, `POST …/confirm-payment`) |
 | `/api/user/*` | logged in | The customer's addresses, orders, tracking, and send-to-print |
 | `/api/admin/*` | `ADMIN` role; `SUB_ADMIN` only the order routes | Comics, pages, speech bubbles, fonts, pricing, CMS, orders and shipping, users, customers, stats (see "Staff roles" below) |
 | `/api/webhooks/*` | signature / token | Razorpay and Shiprocket callbacks (raw body) |
@@ -268,7 +268,7 @@ someone starts personalising a comic, and it moves through:
 ```
 CREATED ─► PHOTO_UPLOADED ─► GENERATING_PREVIEW ─► PREVIEW_READY ─► AWAITING_PAYMENT
                                                                             │ payment captured
-                                                                            ▼ (Razorpay webhook)
+                                                                            ▼ (Razorpay webhook, or confirm-payment)
 COMPLETED ◄─ SHIPMENT_QUEUED ◄─ COMPILING_PDF ◄─ CONFIRMED ◄─ PAID_PAGES_READY ◄─ GENERATING_PAID ◄─ PAID
                   │                  │                  ▲ customer clicks
                   ▼                  ▼                  │ "Send to Print"
@@ -287,8 +287,15 @@ What happens at each stage:
    an `Order` row holding a snapshot of the price and shipping address. The
    session becomes `AWAITING_PAYMENT`.
 3. **Payment.** The Razorpay `payment.captured` webhook flips the order and
-   session to `PAID`, queues every remaining page, and sends email 2. **The
-   webhook — not the browser — is what confirms payment.**
+   session to `PAID`, queues every remaining page, and sends email 2. The
+   customer's page also asks `POST …/confirm-payment`
+   (`paymentConfirmation.service.ts`): the server asks Razorpay for the
+   order's payments and, for a captured, unrefunded payment whose order,
+   currency and amount match the `Order`, runs the same function
+   (`applyCapturedPayment`), so a missing or late webhook cannot strand a
+   paying customer. Nothing the browser sends is trusted. While the session is
+   `AWAITING_PAYMENT` and the order unpaid, the delivery address may still be
+   changed, in the same country only (`updateOrderSession`).
 4. **Selection.** When every paid page settles: `PAID_PAGES_READY`, email 3.
    The customer can regenerate pages (more variants allowed after payment) and
    picks one variant per page.
@@ -446,8 +453,10 @@ directly. To exercise payment locally:
    `https://<tunnel>/api/webhooks/razorpay`, subscribe to `payment.captured`
    and `payment.failed`, and put its secret in `RAZORPAY_WEBHOOK_SECRET`.
 
-Without a webhook, a test payment succeeds in Razorpay but the order stays
-unpaid here, by design. Shiprocket webhooks are set up the same way, with
+Without a webhook, a test payment succeeds in Razorpay and the order is marked
+paid when the customer's page confirms it (`confirm-payment`); a customer who
+closed the page is confirmed when they open the checkout page again.
+Shiprocket webhooks are set up the same way, with
 `SHIPROCKET_WEBHOOK_TOKEN` sent as the `x-api-key` header.
 
 ---

@@ -15,8 +15,12 @@ export const SAMPLE_TTL_MS = SAMPLE_TTL_HOURS * 60 * 60 * 1000;
  */
 export const SAMPLE_CLEANUP_MARGIN_MS = 10 * 60 * 1000;
 
-/** Pages in one sample: the admin chooses them, and each one costs a RunPod run. */
-export const MAX_SAMPLE_PAGES = 12;
+/**
+ * Most pages in one sample. A safety ceiling, not a product limit: the admin may choose the whole
+ * book. Each face page costs a RunPod run (the frontend's COST_PER_FACE_PAGE_USD in sampleConfig.ts
+ * has the figure). The other limits below (live samples, pages in flight, PDF size) still apply.
+ */
+export const MAX_SAMPLE_PAGES = 100;
 
 /** Samples that have not expired yet, per admin and overall. */
 export const MAX_LIVE_SAMPLES_PER_ADMIN = 3;

@@ -300,6 +300,98 @@ export async function getSessionPages(
   return rows.map((row) => ({ ...row.page, isPreviewPage: row.isPreviewPage }));
 }
 
+const ADDRESS_FIELDS = [
+  "shippingName",
+  "shippingLine1",
+  "shippingLine2",
+  "shippingCity",
+  "shippingState",
+  "shippingZip",
+  "shippingCountry",
+  "shippingPhone",
+] as const;
+
+/**
+ * The customer opened the payment window and did not pay (session AWAITING_PAYMENT,
+ * Order CREATED): they may still give another delivery address, in the SAME country.
+ * Nothing about the Razorpay order depends on the address (its price comes from the
+ * book, the country and the cover), so it is left as it is. The address on the
+ * session and on the Order row change together or not at all, and only while the
+ * Order is still unpaid: a payment that lands first wins and the change is refused.
+ * A change of country would change price and currency, so it stays refused.
+ */
+async function changeAddressOfUnpaidOrder(
+  session: OrderSession,
+  input: UpdateSessionInput
+) {
+  const lockedStill = (
+    ["childName", "age", "pronounKey", "coverType"] as const
+  ).filter((field) => input[field] !== undefined);
+  if (lockedStill.length > 0) {
+    throw new ConflictError(
+      `Cannot edit ${lockedStill.join(", ")} — session is at status ${session.status} and these fields are locked at checkout. Only notificationEmail and the delivery address (same country) can be updated.`
+    );
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { orderSessionId: session.id },
+  });
+  if (!order) {
+    throw new ConflictError(
+      `Cannot edit the delivery address — session is at status ${session.status} and the address is locked at checkout.`
+    );
+  }
+  const paidMessage =
+    "Payment has already gone through for this order, so the delivery address can no longer be changed here. Please contact support if it needs to change.";
+  if (order.status === "CANCELLED") {
+    throw new ConflictError(
+      "This order was cancelled, so the delivery address cannot be changed here. Please contact support."
+    );
+  }
+  if (order.status !== "CREATED") {
+    throw new ConflictError(paidMessage);
+  }
+
+  const country = input.shippingCountry?.trim().toUpperCase();
+  if (country !== undefined && country !== order.countryCode.toUpperCase()) {
+    throw new ConflictError(
+      `Once payment has started the delivery country cannot change: this order is for ${order.countryCode}.`
+    );
+  }
+
+  const address: Partial<Record<(typeof ADDRESS_FIELDS)[number], string>> = {};
+  for (const field of ADDRESS_FIELDS) {
+    if (input[field] !== undefined) address[field] = input[field];
+  }
+  if (country !== undefined) address.shippingCountry = country;
+
+  const sessionData: Prisma.OrderSessionUpdateManyMutationInput = { ...address };
+  if (input.notificationEmail !== undefined)
+    sessionData.notificationEmail = input.notificationEmail;
+
+  return prisma.$transaction(async (tx) => {
+    const { count: orderChanged } = await tx.order.updateMany({
+      where: { id: order.id, status: "CREATED" },
+      data: address,
+    });
+    if (orderChanged !== 1) throw new ConflictError(paidMessage);
+
+    const { count: sessionChanged } = await tx.orderSession.updateMany({
+      where: { id: session.id, status: "AWAITING_PAYMENT" },
+      data: sessionData,
+    });
+    // Throwing rolls the Order change back too: both rows change or neither. The session moved on for some
+    // reason that is not necessarily a payment, so the message is neutral.
+    if (sessionChanged !== 1) {
+      throw new ConflictError(
+        "This order changed while the address was being saved. Please reload the page and try again."
+      );
+    }
+
+    return tx.orderSession.findUniqueOrThrow({ where: { id: session.id } });
+  });
+}
+
 export async function updateOrderSession(
   sessionId: string,
   input: UpdateSessionInput
@@ -318,15 +410,25 @@ export async function updateOrderSession(
 
   await assertNotExpired(session);
 
+  if (
+    session.status === "AWAITING_PAYMENT" &&
+    ADDRESS_FIELDS.some((field) => input[field] !== undefined)
+  ) {
+    return changeAddressOfUnpaidOrder(session, input);
+  }
+
   // Post-payment lock: once the customer has paid (or is at the Razorpay modal),
   // these fields are frozen. childName/pronounKey/age are baked into the paid
   // images, coverType was priced at checkout, shipping was snapshotted onto the
   // Order row. notificationEmail stays editable — it's never printed.
+  // At the modal (AWAITING_PAYMENT) only the delivery address may still change, in the
+  // same country: changeAddressOfUnpaidOrder above handles that before this block.
   const isLocked =
     session.status === "AWAITING_PAYMENT" ||
     POST_PAYMENT_STATUSES.includes(session.status);
 
   if (isLocked) {
+    // These names also exist in ADDRESS_FIELDS and in the copy lines further down: keep them in step.
     const lockedFields: (keyof UpdateSessionInput)[] = [
       "childName",
       "age",
