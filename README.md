@@ -469,6 +469,7 @@ Admin: `/api/admin/coupons` (list, create, edit, switch on or off, delete, `POST
 - Checkout reserves a use under a lock on the coupon row. A reservation lapses after 60 minutes (no job needed); payment turns it into a redemption inside the webhook transaction. If a customer pays on a Razorpay order that was replaced, the event is linked to the order (`supersededRazorpayOrderIds`) and the admin order page shows a notice.
 - Dates are read in IST; a date-only end date means the end of that day. A sweeper (`jobs/workers`, every 4 hours) switches expired coupons off.
 - Wrong guesses are limited to 10 per 10 minutes per customer (Redis; fails open if Redis is down).
+- Per-customer and first-order limits also count orders delivered to the same phone number, compared by the last 10 digits (a shorter number is not compared), so a second account does not reset them. When `COUPON_IP_LIMIT=on`, wrong guesses are also limited per IP address (30 per 10 minutes); it is off by default until the server is known to see the real visitor address.
 - Several rules live only in the migration SQL as CHECK constraints (percent between 0 and 100, positive amounts, one discount type); the schema file cannot express them.
 
 ### Sample books

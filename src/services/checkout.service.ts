@@ -168,6 +168,7 @@ export async function initiateCheckout(
           session,
           couponCode: options.couponCode,
           callerUserId: options.callerUserId,
+          callerIp: options.callerIp,
         });
         if (repriced) return repriced;
       }
@@ -307,6 +308,8 @@ export async function initiateCheckout(
       coverType: session.coverType,
       currency: country.currencyCode,
       listPrice: pricingRule.price,
+      phone: session.shippingPhone,
+      ip: options.callerIp,
     });
   }
   const payableAmount = priced ? priced.finalAmount : pricingRule.price;

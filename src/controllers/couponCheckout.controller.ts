@@ -30,7 +30,8 @@ export const previewCouponHandler = asyncHandler(
     const result = await previewCoupon(
       parsed.data.sessionId,
       req.user!.id,
-      body.data.code
+      body.data.code,
+      req.ip
     );
 
     sendSuccess(res, 200, result);
