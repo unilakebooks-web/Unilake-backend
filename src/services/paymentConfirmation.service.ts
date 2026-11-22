@@ -117,7 +117,7 @@ async function reportSupersededPayments(
             orderId: order.id,
             currentRazorpayOrderId: order.razorpayOrderId,
           },
-          "Captured payment found on a SUPERSEDED Razorpay order — the customer paid an earlier amount, admin follow-up needed"
+          "Captured payment found on a SUPERSEDED Razorpay order, the customer paid an earlier amount, admin follow-up needed"
         )
       );
     }
@@ -186,7 +186,7 @@ export async function confirmPaymentWithRazorpay(
       if (!order.razorpayOrderId || !order.razorpayPaymentId) {
         logger.error(
           { sessionId, orderId: order.id },
-          "Paid order has no Razorpay order or payment id — cannot run its paid steps again"
+          "Paid order has no Razorpay order or payment id, cannot run its paid steps again"
         );
         return { status: session.status, confirmed: true };
       }
@@ -203,7 +203,7 @@ export async function confirmPaymentWithRazorpay(
     if (!order.razorpayOrderId) {
       logger.error(
         { sessionId, orderId: order.id },
-        "Order has no razorpayOrderId — cannot confirm its payment"
+        "Order has no razorpayOrderId, cannot confirm its payment"
       );
       return { status: session.status, confirmed: false };
     }
@@ -245,7 +245,7 @@ export async function confirmPaymentWithRazorpay(
               expectedAmount,
               expectedCurrency: order.currency,
             },
-            "Captured payment on this order does not match the Order's amount, currency or refund state — not applied, admin follow-up needed"
+            "Captured payment on this order does not match the Order's amount, currency or refund state, not applied, admin follow-up needed"
           )
         );
       }
@@ -267,7 +267,7 @@ export async function confirmPaymentWithRazorpay(
 
     logger.info(
       { sessionId, orderId: order.id, razorpayPaymentId: payment.id },
-      "Captured payment found at Razorpay — confirming the order from the customer's page"
+      "Captured payment found at Razorpay, confirming the order from the customer's page"
     );
     await applyCapturedPayment(
       { ...order, orderSession },
@@ -280,7 +280,7 @@ export async function confirmPaymentWithRazorpay(
     // `err`, not `error`: see webhook.service.ts. The customer's page asks again.
     logger.error(
       { sessionId, orderId: order.id, err },
-      "Payment confirmation failed — the customer's page will ask again"
+      "Payment confirmation failed, the customer's page will ask again"
     );
     return await latest().catch(() => ({
       status: session.status,

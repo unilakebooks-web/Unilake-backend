@@ -6,7 +6,7 @@ import type { ContactEnquiryStatus } from "../generated/prisma/client.js";
 // Contact enquiries are deliberately a separate domain from Feedback. Feedback
 // is an anonymous suggestion about the books with no reply channel by design;
 // an enquiry is a person asking a question and expecting an answer. Same
-// shape, opposite intent — one inbox for both makes neither triagable.
+// shape, opposite intent - one inbox for both makes neither triagable.
 
 export async function createContactEnquiry(data: {
   name: string;
@@ -23,7 +23,7 @@ export async function createContactEnquiry(data: {
     },
   });
 
-  // Email and phone are deliberately NOT logged — this is the one place in the
+  // Email and phone are deliberately NOT logged - this is the one place in the
   // codebase that collects a visitor's contact details, and pino writes to a
   // shared log sink.
   logger.info({ contactEnquiryId: enquiry.id }, "Contact enquiry submitted");

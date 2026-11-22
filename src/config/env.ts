@@ -58,7 +58,7 @@ export const config = {
   // Public origin of the Next.js frontend, used to build links in customer
   // emails. Trailing slashes are stripped so `${frontendUrl}/path` never
   // doubles them. Local: http://localhost:3000. Production:
-  // https://www.unilakekids.com — never the *.vercel.app domain, where login
+  // https://www.unilakekids.com - never the *.vercel.app domain, where login
   // does not work.
   frontendUrl: (process.env.FRONTEND_URL as string).replace(/\/+$/, ""),
   r2: {

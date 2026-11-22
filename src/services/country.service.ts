@@ -116,7 +116,7 @@ export const getAllCountries = async () => {
         name: "asc",
       },
       // Admin-only. Powers the "this will also delete N pricing rule(s)"
-      // warning in the delete dialog — deleting a country cascades its
+      // warning in the delete dialog - deleting a country cascades its
       // pricing rules away, so the admin is told the blast radius first.
       // Deliberately NOT added to getActiveCountries(): that list is public
       // and carries an explicit select so internals never leak.
@@ -133,12 +133,12 @@ export const getAllCountries = async () => {
 };
 
 /**
- * Public-facing country list — active countries only.
+ * Public-facing country list - active countries only.
  *
  * Separate from getAllCountries() rather than a flag on it: the admin list must
  * always show inactive rows (that is how they get re-activated), and the two
  * callers also need different field sets. Explicit select here so `isActive`
- * itself never leaks — every row in the response is active by definition, and
+ * itself never leaks - every row in the response is active by definition, and
  * exposing the column invites the frontend to filter on it a second time.
  */
 export const getActiveCountries = async () => {
@@ -171,14 +171,14 @@ export const getActiveCountries = async () => {
  * Deletes a country and every pricing rule that references it.
  *
  * The pricing rules go via the DB-level `onDelete: Cascade` on
- * PricingRule.country — this function never deletes them itself. The delete is
+ * PricingRule.country - this function never deletes them itself. The delete is
  * unconditional by design: it used to 409 when any pricing rule referenced the
  * country, which left the admin with no route out short of hand-deleting rules
  * comic by comic.
  *
  * Note this wipes pricing for every comic priced in that country, PUBLISHED
  * ones included, with no undo. The admin-panel confirmation dialog showing the
- * rule count is what guards against an accidental click — hence the count
+ * rule count is what guards against an accidental click - hence the count
  * exposed on getAllCountries() and returned here.
  */
 export const deleteCountry = async (countryId: string) => {
@@ -190,7 +190,7 @@ export const deleteCountry = async (countryId: string) => {
     throw new NotFoundError("Country not found.");
   }
 
-  // NOT a guard — read before the delete purely so we can report how many rows
+  // NOT a guard - read before the delete purely so we can report how many rows
   // the cascade took with it. Must run before country.delete(), or the rules
   // are already gone and this always reads 0.
   const pricingRuleCount = await prisma.pricingRule.count({
@@ -199,7 +199,7 @@ export const deleteCountry = async (countryId: string) => {
 
   await prisma.country.delete({ where: { id: countryId } });
 
-  // DB first, R2 second, best-effort — same ordering as deleteHeroImage. The
+  // DB first, R2 second, best-effort - same ordering as deleteHeroImage. The
   // cascade has already committed by this point, so a failed cleanup must
   // never fail the request; it just leaves an orphaned flag in the bucket.
   const r2Key = getKeyFromPublicUrl(country.flagUrl);

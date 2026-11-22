@@ -8,7 +8,7 @@ import { getSystemConfig, setSystemConfig } from "./systemConfig.js";
 // ============================================================
 //
 // Sole entry point for talking to Shiprocket. Workers, webhook handler, and
-// admin endpoints import from here — no other file makes raw fetch calls to
+// admin endpoints import from here - no other file makes raw fetch calls to
 // Shiprocket. Same pattern as runpodClient.ts.
 //
 // Structure of the file:
@@ -29,7 +29,7 @@ const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 
 // Retry settings for transient failures on any Shiprocket call.
 // 3 attempts total (1 real try + 2 retries) with progressive backoff.
-// Retries apply to network errors and HTTP 5xx / 429 only — permanent 4xx
+// Retries apply to network errors and HTTP 5xx / 429 only - permanent 4xx
 // failures throw immediately, same policy as runpodClient.
 const MAX_FETCH_ATTEMPTS = 3;
 const FETCH_RETRY_DELAYS_MS = [500, 1500];
@@ -54,17 +54,17 @@ function sleep(ms: number): Promise<void> {
  * Decides whether a Shiprocket failure is worth retrying.
  *
  * Retry:  network failures (fetch threw), HTTP 5xx, HTTP 429 (rate limit).
- * Skip:   HTTP 4xx other than 429 — auth wrong, malformed payload, pickup
+ * Skip:   HTTP 4xx other than 429 - auth wrong, malformed payload, pickup
  *         location inactive. These will never succeed on retry.
  *
  * Same policy as runpodClient's isRetryableError. AppError carries the
  * status embedded in its message; we match with a regex.
  */
 function isRetryableError(err: unknown): boolean {
-  // Network-layer failure — fetch itself threw before we got any response.
+  // Network-layer failure - fetch itself threw before we got any response.
   if (err instanceof TypeError) return true;
 
-  // HTTP-layer failure — we threw AppError with the status in the message.
+  // HTTP-layer failure - we threw AppError with the status in the message.
   if (err instanceof AppError) {
     return /HTTP (5\d{2}|429)/.test(err.message);
   }
@@ -137,7 +137,7 @@ async function shiprocketFetch(
         );
       }
 
-      // 204 No Content — Shiprocket's cancel endpoint returns this on success.
+      // 204 No Content - Shiprocket's cancel endpoint returns this on success.
       // res.json() would throw on an empty body, so short-circuit here.
       if (res.status === 204) {
         return null;
@@ -147,31 +147,31 @@ async function shiprocketFetch(
     } catch (err) {
       lastError = err;
 
-      // Permanent error — no point retrying. Re-throw exactly as thrown.
+      // Permanent error - no point retrying. Re-throw exactly as thrown.
       if (!isRetryableError(err)) {
         throw err;
       }
 
-      // Out of attempts — surface the last error.
+      // Out of attempts - surface the last error.
       if (attempt === MAX_FETCH_ATTEMPTS) {
         logger.error(
           { path, attempt, err },
-          "[Shiprocket] fetch exhausted retries — surfacing"
+          "[Shiprocket] fetch exhausted retries, surfacing"
         );
         throw err;
       }
 
-      // Retryable, and we have attempts left — log and wait.
+      // Retryable, and we have attempts left - log and wait.
       const delayMs = FETCH_RETRY_DELAYS_MS[attempt - 1]!;
       logger.warn(
         { path, attempt, delayMs, err },
-        "[Shiprocket] Transient failure — retrying"
+        "[Shiprocket] Transient failure, retrying"
       );
       await sleep(delayMs);
     }
   }
 
-  // Unreachable — loop above always returns or throws.
+  // Unreachable - loop above always returns or throws.
   throw lastError;
 }
 
@@ -180,10 +180,10 @@ async function shiprocketFetch(
 // ============================================================
 
 /**
- * Response shape from POST /auth/login. Based on Shiprocket docs — the
+ * Response shape from POST /auth/login. Based on Shiprocket docs - the
  * response includes a token string; we treat it as opaque and rely on
  * TOKEN_REFRESH_MARGIN_MS for expiry rather than parsing any expiry field
- * they return (some docs mention `expires_in`, some don't — safer to compute
+ * they return (some docs mention `expires_in`, some don't - safer to compute
  * our own expiry timestamp).
  */
 type LoginResponse = {
@@ -198,7 +198,7 @@ type LoginResponse = {
  * SystemConfig, returns the token.
  *
  * Called by getAuthToken when the cache is missing or stale. Also called on
- * a forced refresh if a downstream call gets a 401 (planned handling — not
+ * a forced refresh if a downstream call gets a 401 (planned handling - not
  * implemented yet; will land in Section 3B if we see it in practice).
  */
 async function loginAndCacheToken(): Promise<string> {
@@ -263,7 +263,7 @@ async function getAuthToken(): Promise<string> {
   if (!Number.isFinite(expiryMs)) {
     logger.warn(
       { cachedExpiry },
-      "Shiprocket: cached expiry unparseable — forcing refresh"
+      "Shiprocket: cached expiry unparseable, forcing refresh"
     );
     return loginAndCacheToken();
   }
@@ -272,7 +272,7 @@ async function getAuthToken(): Promise<string> {
   if (Date.now() >= refreshAtMs) {
     logger.info(
       { expiryMs, refreshAtMs },
-      "Shiprocket: token near expiry — refreshing"
+      "Shiprocket: token near expiry, refreshing"
     );
     return loginAndCacheToken();
   }
@@ -281,13 +281,13 @@ async function getAuthToken(): Promise<string> {
 }
 
 // ============================================================
-// PUBLIC API — CREATE ORDER
+// PUBLIC API - CREATE ORDER
 // ============================================================
 
 /**
  * Raw response shape from POST /orders/create/adhoc.
  * `awb_code`, `courier_company_id`, `courier_name` are always null at this
- * stage — they're populated by a separate call to /courier/assign/awb.
+ * stage - they're populated by a separate call to /courier/assign/awb.
  */
 type CreateOrderRawResponse = {
   order_id?: number;
@@ -317,7 +317,7 @@ type CreateOrderRawResponse = {
 export type CreateOrderParams = {
   /**
    * Our internal Order.id. Used verbatim as Shiprocket's `order_id`. Must be
-   * unique per Shiprocket order and stable across retries — Shiprocket 422s
+   * unique per Shiprocket order and stable across retries - Shiprocket 422s
    * on duplicates and blocks reuse of cancelled-order IDs, so the worker
    * MUST check `Order.shiprocketOrderId` before retrying this call.
    */
@@ -343,7 +343,7 @@ export type CreateOrderParams = {
 
   item: {
     /**
-     * Product name — shows on the shipping label. Built by the service as
+     * Product name - shows on the shipping label. Built by the service as
      * `[Child Name]_[HARDCOVER|SOFTCOVER]_[Book Title]`.
      */
     name: string;
@@ -360,7 +360,7 @@ export type CreateOrderParams = {
 
   /**
    * Order subtotal in INR after discounts, rounded to integer. Shiprocket
-   * does NOT compute this from line items — passing a wrong value causes
+   * does NOT compute this from line items - passing a wrong value causes
    * pricing mismatches. Caller is responsible for correctness.
    */
   subTotal: number;
@@ -382,12 +382,12 @@ export type CreateOrderResult = {
   shiprocketOrderId: string;
   /** Shiprocket's numeric shipment id, stringified for Order.shiprocketShipmentId. */
   shipmentId: string;
-  /** Human status string, e.g. "NEW". Not persisted — kept for logs. */
+  /** Human status string, e.g. "NEW". Not persisted - kept for logs. */
   status: string;
 };
 
 /**
- * Formats a Date as "yyyy-mm-dd HH:MM" in local time — the format Shiprocket
+ * Formats a Date as "yyyy-mm-dd HH:MM" in local time - the format Shiprocket
  * expects for `order_date` on /orders/create/adhoc.
  */
 function formatShiprocketDate(d: Date): string {
@@ -525,19 +525,19 @@ export async function createOrder(
 }
 
 // ============================================================
-// PUBLIC API — UPDATE ORDER
+// PUBLIC API - UPDATE ORDER
 // ============================================================
 
 /**
  * Raw response from POST /orders/update/adhoc.
  *
  * Notable Shiprocket quirks:
- *   - `partially_update: true` is NOT a warning — it's expected. Shiprocket
+ *   - `partially_update: true` is NOT a warning - it's expected. Shiprocket
  *     only mutates order_items and dimensions on this endpoint, ignoring
  *     billing/shipping/etc. even when re-sent. Their response returns
  *     `not_updated_fields` listing what was skipped.
  *   - `awb_code`, `courier_company_id`, `courier_name` come back as empty
- *     strings (not null like on /create/adhoc). We ignore them here — they
+ *     strings (not null like on /create/adhoc). We ignore them here - they
  *     belong to /courier/assign/awb.
  */
 type UpdateOrderRawResponse = {
@@ -554,7 +554,7 @@ type UpdateOrderRawResponse = {
 };
 
 /**
- * Same shape as CreateOrderParams — Shiprocket's update endpoint accepts the
+ * Same shape as CreateOrderParams - Shiprocket's update endpoint accepts the
  * full order payload and silently ignores fields it won't mutate. We reuse
  * the create params so the worker can build the payload identically for both
  * calls (Stage 1 create → Stage 2 update with real dimensions).
@@ -566,7 +566,7 @@ export type UpdateOrderResult = {
   shipmentId: string;
   /**
    * Comma-separated field list Shiprocket refused to update. Always non-empty
-   * on this endpoint — the update API is designed to only mutate items and
+   * on this endpoint - the update API is designed to only mutate items and
    * dimensions. Logged for audit, no action required.
    */
   notUpdatedFields: string;
@@ -577,7 +577,7 @@ export type UpdateOrderResult = {
  *
  * Primary use: pushing real packaging dimensions after admin confirms them,
  * BEFORE the AWB is assigned (Shiprocket rejects updates after AWB). The
- * worker owns the "before AWB" invariant — this function does not enforce it.
+ * worker owns the "before AWB" invariant - this function does not enforce it.
  *
  * The full CreateOrderParams payload is sent because Shiprocket rejects
  * partial payloads with 422. Fields other than dimensions and items are
@@ -644,17 +644,17 @@ export async function updateOrder(
 }
 
 // ============================================================
-// PUBLIC API — ASSIGN AWB
+// PUBLIC API - ASSIGN AWB
 // ============================================================
 
 /**
  * Raw response from POST /courier/assign/awb.
  *
  * The interesting fields sit under `response.data`. Shiprocket returns a LOT
- * of shipper info here that we ignore (rto address, lat/long, etc.) — we only
+ * of shipper info here that we ignore (rto address, lat/long, etc.) - we only
  * type what we actually consume.
  *
- * `assigned_date_time.date` is a Shiprocket-local datetime string, not ISO —
+ * `assigned_date_time.date` is a Shiprocket-local datetime string, not ISO -
  * we parse it with a fallback to Date.now() so a malformed string never
  * blocks AWB assignment on our side.
  */
@@ -696,7 +696,7 @@ export type AssignAwbParams = {
   /**
    * Set to "reassign" to swap the courier on an already-AWB'd shipment.
    * Shiprocket allows this only once per 24 hours per shipment. Not used by
-   * the normal worker path — reserved for the admin "change courier"
+   * the normal worker path - reserved for the admin "change courier"
    * endpoint (Section 7).
    */
   status?: "reassign";
@@ -727,7 +727,7 @@ export type AssignAwbResult = {
  * Shiprocket sends these as Asia/Kolkata local time WITHOUT any offset marker.
  * We interpret them as UTC to avoid the server's local timezone leaking in,
  * which means the resulting Date is off by 5h30m from what the label shows.
- * That's fine for our use — we compare/store these timestamps, we don't
+ * That's fine for our use - we compare/store these timestamps, we don't
  * display them back to users. If UI ever surfaces them, format as IST.
  */
 function parseShiprocketDate(s: string | undefined | null): Date | null {
@@ -839,7 +839,7 @@ export async function assignAwb(
 }
 
 // ============================================================
-// PUBLIC API — GENERATE PICKUP
+// PUBLIC API - GENERATE PICKUP
 // ============================================================
 
 /**
@@ -847,7 +847,7 @@ export async function assignAwb(
  *
  * `others` is a stringified JSON blob of internal Shiprocket telemetry
  * (routing codes, ETD zones, recommendation data). We deliberately do not
- * parse or expose it — it's not part of Shiprocket's public contract and
+ * parse or expose it - it's not part of Shiprocket's public contract and
  * has changed shape between accounts. Callers get what they actually need.
  */
 type GeneratePickupRawResponse = {
@@ -991,15 +991,15 @@ export async function generatePickup(
 }
 
 // ============================================================
-// PUBLIC API — GENERATE LABEL
+// PUBLIC API - GENERATE LABEL
 // ============================================================
 
 /**
  * Raw response from POST /courier/generate/label.
  *
  * Two failure shapes to handle:
- *   1. HTTP 4xx with { message, errors } — caught by shiprocketFetch.
- *   2. HTTP 200 with `label_created: 0` and a `response` message — Shiprocket
+ *   1. HTTP 4xx with { message, errors } - caught by shiprocketFetch.
+ *   2. HTTP 200 with `label_created: 0` and a `response` message - Shiprocket
  *      "succeeded" at the transport layer but refused to make the label.
  *      Usually means the shipment_id doesn't exist or has no AWB yet.
  */
@@ -1013,7 +1013,7 @@ type GenerateLabelRawResponse = {
 export type GenerateLabelParams = {
   /**
    * One or more Shiprocket shipment_ids to include on the label PDF. Passing
-   * multiple ids returns a single PDF with all labels — useful when the admin
+   * multiple ids returns a single PDF with all labels - useful when the admin
    * wants to print a whole batch at once. Single-id is the normal case.
    */
   shipmentIds: string[];
@@ -1022,7 +1022,7 @@ export type GenerateLabelParams = {
 export type GenerateLabelResult = {
   /**
    * Fresh label PDF URL. Shiprocket caches this after first generation, so
-   * repeated calls for the same shipment return the same URL — but we do not
+   * repeated calls for the same shipment return the same URL - but we do not
    * store it on our side (see DECISIONS: label URLs are fetched fresh every
    * time to avoid stale-link risk if Shiprocket rotates storage).
    */
@@ -1070,7 +1070,7 @@ export async function generateLabel(
     );
     throw new AppError(
       raw.response ??
-        "Shiprocket generateLabel returned no label URL — shipments likely missing AWB",
+        "Shiprocket generateLabel returned no label URL, shipments likely missing AWB",
       502,
       "SHIPROCKET_GENERATE_LABEL_REJECTED"
     );
@@ -1088,7 +1088,7 @@ export async function generateLabel(
 }
 
 // ============================================================
-// PUBLIC API — GENERATE MANIFEST
+// PUBLIC API - GENERATE MANIFEST
 // ============================================================
 
 /**
@@ -1097,10 +1097,10 @@ export async function generateLabel(
  * Three response shapes to handle:
  *   1. Success: { status: 1, manifest_url: "https://..." }
  *   2. Empty-URL soft-fail: { status: 1, manifest_url: "" }
- *      — Shiprocket claims success but returned no URL. Treat as failure.
+ *      - Shiprocket claims success but returned no URL. Treat as failure.
  *   3. Already-manifested rejection (HTTP 400):
  *      { message, status_code: 400, already_manifested_shipment_ids: [...] }
- *      — At least one shipment already has a manifest. Surfaced with a
+ *      - At least one shipment already has a manifest. Surfaced with a
  *      dedicated error code so callers can retry with the offending ids
  *      removed, or fall back to /manifests/print for the existing manifest.
  */
@@ -1117,7 +1117,7 @@ export type GenerateManifestParams = {
   /**
    * One or more Shiprocket shipment_ids to include on the manifest. Each
    * shipment must already have an AWB assigned AND a pickup request
-   * generated — Shiprocket rejects the whole call otherwise.
+   * generated - Shiprocket rejects the whole call otherwise.
    */
   shipmentIds: string[];
 };
@@ -1137,14 +1137,14 @@ export type GenerateManifestResult = {
  *   - No shipment in the batch already has a manifest generated
  *     (Shiprocket 400s the entire call if any one does)
  *
- * The URL returned is not cached on our side — same policy as generateLabel.
+ * The URL returned is not cached on our side - same policy as generateLabel.
  * We fetch fresh each time to avoid stale links if Shiprocket rotates storage.
  *
  * Idempotency: NOT safe to retry blindly. Second call on the same shipments
  * returns a 400 with `already_manifested_shipment_ids` listing every shipment
  * from the first successful call. Callers should either handle that error
  * (retry without those ids, or fall back to /manifests/print for the existing
- * manifest — added as a separate function below).
+ * manifest - added as a separate function below).
  */
 export async function generateManifest(
   params: GenerateManifestParams
@@ -1211,17 +1211,17 @@ export async function generateManifest(
 }
 
 // ============================================================
-// PUBLIC API — PRINT MANIFEST
+// PUBLIC API - PRINT MANIFEST
 // ============================================================
 
 /**
  * Raw response from POST /manifests/print.
  *
  * Failure shapes:
- *   1. Empty URL: { manifest_url: "" } — Shiprocket returns 200 OK but
+ *   1. Empty URL: { manifest_url: "" } - Shiprocket returns 200 OK but
  *      couldn't find a generated manifest for the given order ids.
  *   2. HTTP 500: { message: "Invalid argument...", status_code: 500 }
- *      — Caught by shiprocketFetch as a transport failure.
+ *      - Caught by shiprocketFetch as a transport failure.
  */
 type PrintManifestRawResponse = {
   manifest_url?: string;
@@ -1284,7 +1284,7 @@ export async function printManifest(
       "Shiprocket printManifest returned no manifest URL"
     );
     throw new AppError(
-      "Shiprocket printManifest returned no manifest URL — orders likely never manifested",
+      "Shiprocket printManifest returned no manifest URL, orders likely never manifested",
       502,
       "SHIPROCKET_PRINT_MANIFEST_REJECTED"
     );
@@ -1299,7 +1299,7 @@ export async function printManifest(
 }
 
 // ============================================================
-// PUBLIC API — TRACK BY AWB
+// PUBLIC API - TRACK BY AWB
 // ============================================================
 
 /**
@@ -1307,7 +1307,7 @@ export async function printManifest(
  *
  * Two success shapes to handle:
  *   1. Full data: track_status: 1 with shipment_track, activities, etc.
- *   2. No-data-yet: track_status: 0 with an error message — happens right
+ *   2. No-data-yet: track_status: 0 with an error message - happens right
  *      after AWB assignment before the courier has scanned anything. NOT a
  *      permanent failure; we surface it as a soft "pending" state so callers
  *      can distinguish "not tracked yet" from "actually broken".
@@ -1381,7 +1381,7 @@ export type TrackActivity = {
 
 export type TrackByAwbResult = {
   /**
-   * "pending" when Shiprocket returned track_status: 0 (no scans yet — normal
+   * "pending" when Shiprocket returned track_status: 0 (no scans yet - normal
    * right after AWB assignment). "tracked" when full data was returned.
    * Callers should treat "pending" as a soft state, not an error.
    */
@@ -1406,7 +1406,7 @@ export type TrackByAwbResult = {
  * Fetches current tracking status for a shipment via
  * GET /courier/track/awb/{awb_code}.
  *
- * Called only as a fallback path — the primary tracking mechanism is the
+ * Called only as a fallback path - the primary tracking mechanism is the
  * Shiprocket webhook (Section 5), which pushes status updates as they happen.
  * This function exists for three specific cases:
  *   1. Webhook was missed/delayed; admin or cron refreshes on demand
@@ -1583,7 +1583,7 @@ export type UpdateOrderAddressParams = {
   /** Shiprocket's own order id (Order.shiprocketOrderId), not our Order.id. */
   shiprocketOrderId: string;
   name: string;
-  /** Digits only, exactly 10 — Shiprocket answers 422 for anything else. */
+  /** Digits only, exactly 10 - Shiprocket answers 422 for anything else. */
   phone: string;
   line1: string;
   line2?: string | null;
@@ -1689,13 +1689,13 @@ export async function getOrderAddress(
 }
 
 // ============================================================
-// PUBLIC API — CANCEL ORDER
+// PUBLIC API - CANCEL ORDER
 // ============================================================
 
 export type CancelOrderParams = {
   /**
    * Shiprocket order_ids (NOT shipment_ids) to cancel. Pass what we stored
-   * on `Order.shiprocketOrderId`. Multiple ids can be cancelled in one call —
+   * on `Order.shiprocketOrderId`. Multiple ids can be cancelled in one call -
    * useful for admin bulk-cancel actions if they ever exist.
    */
   shiprocketOrderIds: string[];
@@ -1709,7 +1709,7 @@ export type CancelOrderResult = {
 /**
  * Cancels one or more Shiprocket orders via POST /orders/cancel.
  *
- * Shiprocket returns 204 No Content on success — no per-id status is
+ * Shiprocket returns 204 No Content on success - no per-id status is
  * returned, so we cannot tell from the response which ids were actually
  * cancelled versus which were already cancelled or never existed. The API
  * effectively says "we accepted the request" and leaves reconciliation to
@@ -1724,7 +1724,7 @@ export type CancelOrderResult = {
  *   - Stale / abandoned READY_TO_SHIP orders
  *
  * Idempotency: safe to retry. Shiprocket does not error on cancelling
- * already-cancelled orders (based on 204 semantics — no body to indicate
+ * already-cancelled orders (based on 204 semantics - no body to indicate
  * either way).
  */
 export async function cancelOrder(

@@ -1,7 +1,7 @@
 # ============================================================
 # Stage 1: Builder
 # ============================================================
-# This stage installs everything we need to build the app —
+# This stage installs everything we need to build the app -
 # node_modules (including devDependencies like tsx and prisma CLI)
 # and the generated Prisma client. We do all the "install stuff"
 # work here so we can throw it away in the next stage and only
@@ -15,7 +15,7 @@ WORKDIR /app
 # Copy package files first, install, THEN copy source code.
 # Why this order? Docker caches each step. If your source code changes
 # but package.json didn't, Docker reuses the cached node_modules
-# instead of reinstalling everything — saves minutes on every rebuild.
+# instead of reinstalling everything - saves minutes on every rebuild.
 COPY package.json package-lock.json ./
 COPY patches ./patches
 RUN npm ci
@@ -26,7 +26,7 @@ COPY . .
 # Generate the Prisma client.
 # prisma.config.ts reads DIRECT_URL from process.env directly (you already
 # decoupled it from env.ts for this exact reason). But Prisma still requires
-# the env var to *exist* during generation — it doesn't actually connect.
+# the env var to *exist* during generation - it doesn't actually connect.
 # We pass a placeholder so the build works without any real secrets baked in.
 RUN DIRECT_URL="postgresql://placeholder" npx prisma generate
 
@@ -35,7 +35,7 @@ RUN DIRECT_URL="postgresql://placeholder" npx prisma generate
 # Stage 2: Runtime
 # ============================================================
 # Fresh, minimal image. We copy over only what the running app
-# needs — node_modules, source, prisma schema, package.json.
+# needs - node_modules, source, prisma schema, package.json.
 # Everything else (build tools, caches, docs) gets left behind.
 # ============================================================
 FROM node:22-bookworm-slim AS runtime
@@ -61,8 +61,8 @@ ENV NODE_ENV=production
 # ----- Port -----
 # Cloud Run injects a PORT env variable (usually 8080) and expects
 # your app to listen on it. Your env.ts should already be reading
-# process.env.PORT. EXPOSE is documentation-only — doesn't actually
-# open the port — but keeps things clear.
+# process.env.PORT. EXPOSE is documentation-only - doesn't actually
+# open the port - but keeps things clear.
 EXPOSE 8080
 
 # ----- Start the app -----

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // ============================================================
-// Gender / age group / theme — each a LIST on the comic.
+// Gender / age group / theme - each a LIST on the comic.
 // ============================================================
 //
 // Listed in display order. Saved lists are sorted into this order, so a comic
@@ -48,7 +48,7 @@ const themeIdsField = z
  * Comma-separated so the frontend sends one parameter per filter; a single
  * value (`?ageGroup=AGE_3_5`) is just a one-item list, so older links still
  * work. A repeated parameter (`?ageGroup=a&ageGroup=b`, which Express parses
- * as an array) is accepted too. Empty input means "no filter" — undefined.
+ * as an array) is accepted too. Empty input means "no filter" - undefined.
  */
 const csvListQuery = <T extends z.ZodTypeAny>(item: T) =>
   z.preprocess((raw) => {
@@ -99,7 +99,7 @@ export const createComicSchema = z
               message: "Cover type must be HARDCOVER or SOFTCOVER.",
             }),
             // Display-only strike-through price. Nullable in the DB purely to
-            // tolerate rows created before this field existed — every new write
+            // tolerate rows created before this field existed - every new write
             // must supply it, which is what this schema enforces.
             mrp: z
               .number()
@@ -110,7 +110,7 @@ export const createComicSchema = z
           })
           // Refine on the INNER object, not the array, so the error path points
           // at the offending row instead of the whole pricing payload.
-          // `>=` not `>`: a comic sold at full price is legitimate — the UI
+          // `>=` not `>`: a comic sold at full price is legitimate - the UI
           // simply hides the strike-through when the two are equal.
           .refine((rule) => rule.mrp >= rule.price, {
             message: "MRP cannot be lower than the selling price.",
@@ -144,7 +144,7 @@ export const updateComicPricingSchema = z.object({
           mrp: z.number().positive("MRP must be positive."),
           price: z.number().positive("Price must be positive."),
         })
-        // Same rule as createComicSchema — see the comment there.
+        // Same rule as createComicSchema - see the comment there.
         .refine((rule) => rule.mrp >= rule.price, {
           message: "MRP cannot be lower than the selling price.",
           path: ["mrp"],
@@ -175,7 +175,7 @@ export const comicFilterQuerySchema = z.object({
 export const updateComicSchema = z
   .object({
     title: z.string().min(1).optional(),
-    // Optional, but never empty when sent — an edit cannot clear these.
+    // Optional, but never empty when sent - an edit cannot clear these.
     genderTags: genderTagsField.optional(),
     pageCount: z.number().int().positive().optional(),
     freePreviewPages: z.number().int().positive().optional(),
@@ -188,7 +188,7 @@ export const updateComicSchema = z
       .array(z.string().min(1))
       .min(
         1,
-        "A comic must have at least one thumbnail — you cannot remove the last one"
+        "A comic must have at least one thumbnail. You cannot remove the last one"
       )
       .max(10, "Maximum 10 thumbnails per comic")
       .optional(),
@@ -199,7 +199,7 @@ export const updateComicSchema = z
     // updateHowItWorksSchema.videoKey.
     videoKey: z.string().min(1).nullable().optional(),
     // SEO overrides. Null clears them, and a cleared field falls back to the
-    // comic's own `title` / `description` at render time — so the admin only
+    // comic's own `title` / `description` at render time - so the admin only
     // fills these in when they want search results to read differently from
     // the page itself. Limits sit above Google's ~60/~160 display cut-off for
     // the same reason as in siteSetting.schema.ts.
@@ -242,10 +242,10 @@ export const uploadThumbnailsBatchSchema = z.object({
     .max(10, "Maximum 10 thumbnails per request"),
 });
 
-// MP4 and WebM only — deliberately NARROWER than the customerReview/howItWorks
+// MP4 and WebM only - deliberately NARROWER than the customerReview/howItWorks
 // video validators, which also accept mov/quicktime. No browser reliably plays
 // video/quicktime in a <video> tag, so accepting it here would store a file that
-// renders as a dead slide with no error anywhere — the same shape of bug as the
+// renders as a dead slide with no error anywhere - the same shape of bug as the
 // WOFF2 fonts the upload validator accepts but the renderer cannot parse.
 export const getComicVideoUploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),

@@ -89,7 +89,7 @@ router.get("/hero-images", getActiveHeroImagesHandler);
 router.get("/customer-reviews", getActiveCustomerReviewsHandler);
 
 
-// google reviews — active only, newest first
+// google reviews - active only, newest first
 router.get("/google-reviews", getActiveGoogleReviewsHandler);
 
 
@@ -97,39 +97,39 @@ router.get("/google-reviews", getActiveGoogleReviewsHandler);
 router.get("/team-members", getActiveTeamMembersHandler);
 
 
-// how it works — homepage explainer
+// how it works - homepage explainer
 router.get("/how-it-works", getPublicHowItWorksHandler);
 
 
-// faqs — ?placement=HOME|COMIC (required)
+// faqs - ?placement=HOME|COMIC (required)
 router.get("/faqs", getActiveFaqsHandler);
 
 
-// blogs — published only; detail is looked up by slug, not id
+// blogs - published only; detail is looked up by slug, not id
 router.get("/blogs", getPublicBlogsHandler);
 router.get("/blogs/:slug", getPublicBlogBySlugHandler);
 
 
-// countries — active only, for the shipping/pricing country picker
+// countries - active only, for the shipping/pricing country picker
 router.get("/countries", getActiveCountriesHandler);
 
 
 
-// site pages — published only; 404 for an unpublished or never-saved page
+// site pages - published only; 404 for an unpublished or never-saved page
 router.get("/site-pages/:slug", getPublicSitePageHandler);
 
 
-// site settings — brand + contact details. Consumed by /contact AND the
+// site settings - brand + contact details. Consumed by /contact AND the
 // Footer, so this is hit on every page load; returns null until first saved.
 router.get("/site-settings", getPublicSiteSettingHandler);
 
 
-// feedback — anonymous book suggestions from the homepage block. No contact
+// feedback - anonymous book suggestions from the homepage block. No contact
 // details by design; see contact-enquiries below for the /contact form.
 router.post("/feedbacks", validateBody(createFeedbackSchema), createFeedbackHandler);
 
 
-// contact enquiries — the /contact form. Separate endpoint and separate table
+// contact enquiries - the /contact form. Separate endpoint and separate table
 // from feedback: this one carries a reply channel and is expected to be answered.
 router.post(
   "/contact-enquiries",
@@ -137,7 +137,7 @@ router.post(
   createContactEnquiryHandler
 );
 
-// email unsubscribe — the link in a bulk email. GET only describes (so a mail scanner cannot unsubscribe
+// email unsubscribe - the link in a bulk email. GET only describes (so a mail scanner cannot unsubscribe
 // anyone); POST does it, and is also the one-click POST named in the List-Unsubscribe header.
 router.get("/email/unsubscribe/:token", getUnsubscribeInfoHandler);
 router.post("/email/unsubscribe/:token", applyUnsubscribeHandler);

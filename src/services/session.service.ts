@@ -51,7 +51,7 @@ export const POST_PAYMENT_STATUSES: OrderSessionStatus[] = [
  * `OrderSession.expiresAt` by createOrderSession and never extended, so a change
  * here applies to new sessions only.
  *
- * ⚠️ The frontend carries its own copy of this window — the localStorage TTL in
+ * ⚠️ The frontend carries its own copy of this window - the localStorage TTL in
  * `app/lib/session-storage.ts` and the "Previews are kept for…" message on the
  * preview page. Two repos, so change all three together.
  */
@@ -60,7 +60,7 @@ const SESSION_LIFETIME_MS = SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
 
 /**
  * Statuses that are exempt from session expiry.
- * Includes AWAITING_PAYMENT (customer is at the Razorpay modal — don't kill
+ * Includes AWAITING_PAYMENT (customer is at the Razorpay modal - don't kill
  * their session mid-payment) plus every status after payment (per the locked
  * decision: no expiry after payment).
  *
@@ -89,7 +89,7 @@ const MAX_BULLMQ_PRIORITY = 2_097_151;
  *
  * Lower runs first, and BullMQ breaks ties in insertion order (FIFO). So every
  * session's page 1 runs before anyone's page 2, and on the same page number the
- * session that queued first wins — books advance side by side instead of one
+ * session that queued first wins - books advance side by side instead of one
  * customer's whole book blocking the next.
  *
  * Replaces `secondsInDay + pageNumber * 80_000`, which assumed ≤ 24 pages:
@@ -102,7 +102,7 @@ function computeJobPriority(pageNumber: number): number {
   return Math.min(Math.max(pageNumber, 1), MAX_BULLMQ_PRIORITY);
 }
 
-/** States in which a job is still going to run — re-adding it would duplicate work. */
+/** States in which a job is still going to run - re-adding it would duplicate work. */
 const LIVE_JOB_STATES = new Set([
   "active",
   "waiting",
@@ -115,7 +115,7 @@ const LIVE_JOB_STATES = new Set([
  * Of the given reused PageVersion rows, return the ids that still need a job.
  *
  * Every page job uses `jobId = pageVersionId`, so BullMQ ignores a second add of
- * the same page — that is what stops a webhook retry from generating (and paying
+ * the same page - that is what stops a webhook retry from generating (and paying
  * RunPod for) the same page twice. The catch: BullMQ keeps finished jobs around
  * (completed 24h, failed 7 days, see queues.ts), and an add whose jobId matches a
  * finished job is ALSO silently ignored. A row being re-queued after a failure
@@ -152,7 +152,7 @@ async function filterRowsNeedingJobs(rowIds: string[]): Promise<Set<string>> {
  * Add one generation job per row in a SINGLE Redis call.
  *
  * `addBulk` instead of N parallel `add`s: one round trip rather than a burst,
- * and the batch goes in whole or not at all — the parallel version left books
+ * and the batch goes in whole or not at all - the parallel version left books
  * half-queued when some adds threw and others had already landed.
  */
 export async function addPageJobs(
@@ -176,7 +176,7 @@ export async function addPageJobs(
  * are clean. Audit 11.1.
  *
  * Exported and shared with `checkout.service.ts`. It used to be duplicated there,
- * and the copy silently lost the `expiresAt` comparison below — which made
+ * and the copy silently lost the `expiresAt` comparison below - which made
  * `initiateCheckout` flip EVERY non-exempt session to FAILED and report it as
  * expired, however new it was. Do not re-copy this function; import it.
  */
@@ -190,13 +190,13 @@ export async function assertNotExpired(session: {
   if (EXPIRY_EXEMPT_STATUSES.includes(session.status)) return;
   if (session.expiresAt >= new Date()) return;
 
-  // Already terminal — don't rewrite the row, just refuse the mutation.
+  // Already terminal - don't rewrite the row, just refuse the mutation.
   const TERMINAL_STATUSES: OrderSessionStatus[] = ["FAILED", "COMPLETED"];
   if (TERMINAL_STATUSES.includes(session.status)) {
     throw new ConflictError("This session has expired.");
   }
 
-  // Atomic flip via updateMany + status guard — safe against concurrent callers.
+  // Atomic flip via updateMany + status guard - safe against concurrent callers.
   await prisma.orderSession.updateMany({
     where: {
       id: session.id,
@@ -207,7 +207,7 @@ export async function assertNotExpired(session: {
 
   logger.warn(
     { sessionId: session.id, expiredAt: session.expiresAt },
-    "Session expired on mutation attempt — flipped to FAILED"
+    "Session expired on mutation attempt, flipped to FAILED"
   );
 
   throw new ConflictError("This session has expired.");
@@ -227,7 +227,7 @@ export function assertFilesNotDeleted(
   throw new PreviewDeletedError();
 }
 
-/** Hourly sweeper — flips every non-terminal expired session to FAILED. R2 cleanup is not done here (out of scope). */
+/** Hourly sweeper - flips every non-terminal expired session to FAILED. R2 cleanup is not done here (out of scope). */
 export async function sweepExpiredSessions(): Promise<number> {
   const { count } = await prisma.orderSession.updateMany({
     where: {
@@ -261,7 +261,7 @@ export async function createOrderSession(
   const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS);
 
   // Freeze the book's page list now. Pages added to the comic later belong
-  // only to sessions created after them — see the SessionPage model.
+  // only to sessions created after them - see the SessionPage model.
   const pages = await prisma.page.findMany({
     where: { comicId: input.comicId },
     select: { id: true, isPreviewPage: true },
@@ -283,8 +283,8 @@ export async function createOrderSession(
 }
 
 /**
- * The pages of one session's book — its frozen SessionPage list, not the
- * comic's current pages — ordered by page number. `isPreviewPage` is the
+ * The pages of one session's book - its frozen SessionPage list, not the
+ * comic's current pages - ordered by page number. `isPreviewPage` is the
  * frozen value. Optionally narrowed to the free or the paid pages.
  */
 export async function getSessionPages(
@@ -329,7 +329,7 @@ async function changeAddressOfUnpaidOrder(
   ).filter((field) => input[field] !== undefined);
   if (lockedStill.length > 0) {
     throw new ConflictError(
-      `Cannot edit ${lockedStill.join(", ")} — session is at status ${session.status} and these fields are locked at checkout. Only notificationEmail and the delivery address (same country) can be updated.`
+      `Cannot edit ${lockedStill.join(", ")}, session is at status ${session.status} and these fields are locked at checkout. Only notificationEmail and the delivery address (same country) can be updated.`
     );
   }
 
@@ -338,7 +338,7 @@ async function changeAddressOfUnpaidOrder(
   });
   if (!order) {
     throw new ConflictError(
-      `Cannot edit the delivery address — session is at status ${session.status} and the address is locked at checkout.`
+      `Cannot edit the delivery address: session is at status ${session.status} and the address is locked at checkout.`
     );
   }
   const paidMessage =
@@ -420,7 +420,7 @@ export async function updateOrderSession(
   // Post-payment lock: once the customer has paid (or is at the Razorpay modal),
   // these fields are frozen. childName/pronounKey/age are baked into the paid
   // images, coverType was priced at checkout, shipping was snapshotted onto the
-  // Order row. notificationEmail stays editable — it's never printed.
+  // Order row. notificationEmail stays editable - it's never printed.
   // At the modal (AWAITING_PAYMENT) only the delivery address may still change, in the
   // same country: changeAddressOfUnpaidOrder above handles that before this block.
   const isLocked =
@@ -450,7 +450,7 @@ export async function updateOrderSession(
 
     if (attemptedLockedEdits.length > 0) {
       throw new ConflictError(
-        `Cannot edit ${attemptedLockedEdits.join(", ")} — session is at status ${session.status} and these fields are locked at checkout. Only notificationEmail can be updated.`
+        `Cannot edit ${attemptedLockedEdits.join(", ")}: session is at status ${session.status} and these fields are locked at checkout. Only notificationEmail can be updated.`
       );
     }
   }
@@ -518,7 +518,7 @@ export const getOrderSessionId = async (sessionId: string) => {
     throw new NotFoundError("OrderSession not found");
   }
 
-  // Fetch all pages of THIS session's book (not just preview ones) — its frozen
+  // Fetch all pages of THIS session's book (not just preview ones) - its frozen
   // SessionPage list, so a page the admin added after the session started never
   // appears here. Frontend needs the full book structure to render locked pages
   // with a paywall overlay.
@@ -527,7 +527,7 @@ export const getOrderSessionId = async (sessionId: string) => {
   // paywall can show the real page blurred behind it rather than a blank box.
   // That is a deliberate, cosmetic-only paywall: a client can read the URL out
   // of this response and fetch the unblurred art. It rests on the existing
-  // position that blank-bubble artwork — no face swap, no personalisation — is
+  // position that blank-bubble artwork - no face swap, no personalisation - is
   // not the sellable product. Preview-page artwork was already public via
   // GET /api/public/comics/:id; this widens that to the whole book.
   //
@@ -535,7 +535,7 @@ export const getOrderSessionId = async (sessionId: string) => {
   // aspect-ratio box for a locked page instead of guessing at a square.
   const allPages = await getSessionPages(sessionId);
 
-  // Fetch every PageVersion for this session — includes all variants of
+  // Fetch every PageVersion for this session - includes all variants of
   // all pages that have been generated (or attempted) so far.
   const pageVersions = await prisma.pageVersion.findMany({
     where: { orderSessionId: sessionId },
@@ -573,7 +573,7 @@ export const getOrderSessionId = async (sessionId: string) => {
       status: pv.status,
       // finalImageUrl is the print master (multi-MB PNG); displayImageUrl is the
       // web derivative and is what clients should render. Null on rows generated
-      // before the derivative existed, or where building it failed — fall back
+      // before the derivative existed, or where building it failed - fall back
       // to finalImageUrl in that case.
       finalImageUrl: pv.finalImageUrl,
       displayImageUrl: pv.displayImageUrl,
@@ -586,7 +586,7 @@ export const getOrderSessionId = async (sessionId: string) => {
       pageNumber: page.pageNumber,
       isPreviewPage: page.isPreviewPage,
       hasFace: page.hasFace,
-      // Null until the admin attaches artwork — clients must fall back rather
+      // Null until the admin attaches artwork - clients must fall back rather
       // than assume a URL is present.
       artworkUrl: page.artworkUrl,
       artworkWidth: page.artworkWidth,
@@ -651,12 +651,12 @@ const EXTENSION_TO_CONTENT_TYPE: Record<
   webp: "image/webp",
 };
 
-const PHOTO_UPLOAD_EXPIRY_SECONDS = 5 * 60; // 5 minutes — plenty of time for a direct browser upload
+const PHOTO_UPLOAD_EXPIRY_SECONDS = 5 * 60; // 5 minutes - plenty of time for a direct browser upload
 
 // Both photo endpoints gate on this same list: CREATED is the first upload,
 // PHOTO_UPLOADED is the user swapping in a better photo before generation
 // starts. Kept as ONE constant precisely because the two halves drifted apart
-// once — confirm was widened to allow re-uploads while upload-url stayed at
+// once - confirm was widened to allow re-uploads while upload-url stayed at
 // CREATED only, which made re-upload unreachable from the frontend.
 const PHOTO_MUTABLE_STATUSES: OrderSessionStatus[] = [
   "CREATED",
@@ -712,7 +712,7 @@ export async function confirmSessionPhoto(sessionId: string, key: string) {
       `Photo confirm is only allowed before generation starts. Current status: ${session.status}`
     );
   }
-  // Audit 8.2 — key ownership check. Rejects keys from other sessions'
+  // Audit 8.2 - key ownership check. Rejects keys from other sessions'
   // folders (or malformed paths) before writing to the DB.
   const expectedPrefix = `sessions/${sessionId}/`;
   if (!key.startsWith(expectedPrefix)) {
@@ -812,7 +812,7 @@ async function enqueuePreviewGenerationJobs(
   }
 
   // Step 3: Create the missing rows atomically.
-  // If any INSERT fails, none of them persist — user retries cleanly.
+  // If any INSERT fails, none of them persist - user retries cleanly.
   const createdRows =
     pagesNeedingRows.length > 0
       ? await prisma.$transaction(
@@ -831,9 +831,9 @@ async function enqueuePreviewGenerationJobs(
 
   // Step 4: Work out which rows actually need a job.
   //
-  // A reused row that already reached SD_READY is finished — re-queueing it
+  // A reused row that already reached SD_READY is finished - re-queueing it
   // would only make the worker re-emit page:ready for no reason. A reused row
-  // whose job is still live in Redis is already being handled — re-queueing it
+  // whose job is still live in Redis is already being handled - re-queueing it
   // would generate the page twice. Everything else (QUEUED orphans, FAILED
   // rows, rows stranded mid-pipeline) gets reset to QUEUED so the DB reflects
   // that they are waiting again.
@@ -861,7 +861,7 @@ async function enqueuePreviewGenerationJobs(
     });
   }
 
-  // Step 5: Enqueue BullMQ jobs — one per row, with priority, in one call.
+  // Step 5: Enqueue BullMQ jobs - one per row, with priority, in one call.
   // Runs AFTER all DB writes commit, so a Redis failure here can't
   // orphan the DB rows in an inconsistent state.
   //
@@ -908,7 +908,7 @@ export async function triggerGeneration(sessionId: string) {
 
   if (!GENERATABLE_STATUSES.includes(session.status)) {
     throw new ConflictError(
-      `Cannot trigger generation — session status is already '${session.status}'`
+      `Cannot trigger generation: session status is already '${session.status}'`
     );
   }
 
@@ -979,7 +979,7 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
   // A paid session does not expire, whatever state it is in.
   if (!failedAfterPayment) await assertNotExpired(session);
 
-  // Only a page of THIS session's book can be regenerated — a page the admin
+  // Only a page of THIS session's book can be regenerated - a page the admin
   // added after the session started is not part of it.
   const sessionPage = await prisma.sessionPage.findFirst({
     where: { orderSessionId: sessionId, page: { pageNumber } },
@@ -994,7 +994,7 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
 
   if (!REGENERATABLE_STATUSES.includes(session.status)) {
     throw new ConflictError(
-      `Cannot regenerate — session is not in an active generation stage (current status: ${session.status})`
+      `Cannot regenerate: session is not in an active generation stage (current status: ${session.status})`
     );
   }
 
@@ -1037,7 +1037,7 @@ export async function regeneratePage(sessionId: string, pageNumber: number) {
   // picks jobs up immediately, so flipping afterwards would race a fast page
   // finishing, no-opping the guard, and stranding the session the other way.
   //
-  // updateMany + status guard makes concurrent regenerations safe — the second
+  // updateMany + status guard makes concurrent regenerations safe - the second
   // one matches zero rows and no-ops. No rollback if the enqueue below throws:
   // GENERATING_PREVIEW is itself regeneratable, so the user retrying re-enters
   // the normal path, and a rollback would race a sibling regeneration that did
@@ -1110,7 +1110,7 @@ export async function attachUserToSession(sessionId: string, userId: string) {
 async function enqueuePaidGenerationJobs(
   orderSessionId: string
 ): Promise<number> {
-  // Paid pages = every page of this session's book NOT flagged as preview —
+  // Paid pages = every page of this session's book NOT flagged as preview -
   // its frozen SessionPage list, so a page added after the session started is
   // never generated for it.
   const paidPages = await getSessionPages(orderSessionId, {
@@ -1125,7 +1125,7 @@ async function enqueuePaidGenerationJobs(
     return 0;
   }
 
-  // Orphan-row recovery — same reasoning as preview: a Redis outage
+  // Orphan-row recovery - same reasoning as preview: a Redis outage
   // during a previous attempt can leave QUEUED rows the worker never picks up.
   const existingRows = await prisma.pageVersion.findMany({
     where: {
@@ -1167,7 +1167,7 @@ async function enqueuePaidGenerationJobs(
         )
       : [];
 
-  // Same selection as the preview path — see its Step 4 for the reasoning.
+  // Same selection as the preview path - see its Step 4 for the reasoning.
   // On a Razorpay webhook retry this is what stops pages that are still
   // queued from the first attempt being generated a second time.
   const createdIds = new Set(createdRows.map((row) => row.id));
@@ -1224,7 +1224,7 @@ export async function maybeMarkPaidReady(
   orderSessionId: string
 ): Promise<PaidReadyResult> {
   // Paid pages = this session's frozen pages NOT flagged as preview. Same
-  // list enqueuePaidGenerationJobs uses — counting the comic's live pages
+  // list enqueuePaidGenerationJobs uses - counting the comic's live pages
   // instead would stall the session forever the moment the admin added one.
   const paidPageIds = (
     await prisma.sessionPage.findMany({
@@ -1254,7 +1254,7 @@ export async function maybeMarkPaidReady(
   if (stillBeingMade) return "not-done";
 
   // Every terminal PageVersion row for this session's paid pages. Same shape
-  // as the preview helper — deliberately NOT distinct on pageId because a
+  // as the preview helper - deliberately NOT distinct on pageId because a
   // page can hold a failed attempt + a successful regeneration and both
   // matter for the "did ANY variant succeed" question.
   const terminalRows = await prisma.pageVersion.findMany({
@@ -1274,7 +1274,7 @@ export async function maybeMarkPaidReady(
     if (row.status === "SD_READY") succeededPageIds.add(row.pageId);
   }
 
-  // Not every paid page has settled yet — nothing to do.
+  // Not every paid page has settled yet - nothing to do.
   if (terminalPageIds.size < totalPaidPages) return "not-done";
 
   // Success-wins: any single SD_READY page keeps the session recoverable
@@ -1283,7 +1283,7 @@ export async function maybeMarkPaidReady(
   const targetStatus = anySuccess ? "PAID_PAGES_READY" : "FAILED";
 
   // Two rows must move together (Session + Order on success). Wrap in a
-  // transaction so a partial flip is impossible. No Redis enqueues inside —
+  // transaction so a partial flip is impossible. No Redis enqueues inside -
   // per DECISIONS, Redis calls never live inside $transaction.
   const flipped = await prisma.$transaction(async (tx) => {
     const { count } = await tx.orderSession.updateMany({
@@ -1294,7 +1294,7 @@ export async function maybeMarkPaidReady(
       data: { status: targetStatus },
     });
 
-    // Someone else already flipped it — bail out of the transaction with
+    // Someone else already flipped it - bail out of the transaction with
     // no Order flip. Their transaction did (or will do) the Order flip.
     if (count === 0) return false;
 
@@ -1326,7 +1326,7 @@ export async function maybeMarkPaidReady(
  *
  * Flow:
  *  1. Fetch session + guards (exists, owned by user, correct status).
- *  2. If already CONFIRMED — jump to enqueue path (idempotent retry).
+ *  2. If already CONFIRMED - jump to enqueue path (idempotent retry).
  *  3. Validate the selection count against the session's own page count.
  *  4. Fetch every referenced PageVersion + check no in-flight variants exist.
  *  5. Transaction: mark selected variants isSelected=true, flip Session to
@@ -1365,7 +1365,7 @@ export async function sendToPrint(
   }
 
   if (!session.order) {
-    // Should be impossible — session at PAID_PAGES_READY/CONFIRMED must have
+    // Should be impossible - session at PAID_PAGES_READY/CONFIRMED must have
     // an Order row. Log and reject rather than crash.
     logger.error(
       { sessionId, status: session.status },
@@ -1374,13 +1374,13 @@ export async function sendToPrint(
     throw new ConflictError("Session has no associated order");
   }
 
-  // 2. Idempotent retry path — session already CONFIRMED.
+  // 2. Idempotent retry path - session already CONFIRMED.
   // Just re-enqueue the PDF job (BullMQ dedupes on jobId) and return.
 
   if (session.status === "CONFIRMED") {
     logger.info(
       { sessionId, orderId: session.order.id },
-      "sendToPrint called on already-CONFIRMED session — re-enqueuing PDF job"
+      "sendToPrint called on already-CONFIRMED session, re-enqueuing PDF job"
     );
 
     await pdfCompilationQueue.add(
@@ -1396,7 +1396,7 @@ export async function sendToPrint(
     };
   }
 
-  // Status guard — everything else is a hard reject.
+  // Status guard - everything else is a hard reject.
   if (session.status !== "PAID_PAGES_READY") {
     throw new ConflictError(
       `Session must be at PAID_PAGES_READY to send to print. Current: ${session.status}`
@@ -1404,7 +1404,7 @@ export async function sendToPrint(
   }
 
   // 3. One selection per page of THIS session's book. Its frozen page list,
-  // not Comic.pageCount — that is the admin's planned total, and the comic may
+  // not Comic.pageCount - that is the admin's planned total, and the comic may
   // have gained pages since this session started.
   const bookPageCount = session._count.sessionPages;
 
@@ -1475,7 +1475,7 @@ export async function sendToPrint(
     selectedVersionIds.push(pv.id);
   }
 
-  // 5. Transaction — commit selections + flip both status rows atomically.
+  // 5. Transaction - commit selections + flip both status rows atomically.
   // Guards live IN the queries so a concurrent send-to-print can't race us.
   const orderId = session.order.id;
 
@@ -1486,7 +1486,7 @@ export async function sendToPrint(
       data: { isSelected: true },
     });
 
-    // Flip session — guard on PAID_PAGES_READY
+    // Flip session - guard on PAID_PAGES_READY
     const sessionFlip = await tx.orderSession.updateMany({
       where: { id: sessionId, status: "PAID_PAGES_READY" },
       data: { status: "CONFIRMED" },
@@ -1496,33 +1496,33 @@ export async function sendToPrint(
       // Someone else won the race, or status drifted. Roll back with a
       // meaningful error rather than let a partial commit slip through.
       throw new ConflictError(
-        "Session status changed during send-to-print — please refresh and try again"
+        "Session status changed during send-to-print. Please refresh and try again"
       );
     }
 
-    // Flip Order — guard on GENERATED
+    // Flip Order - guard on GENERATED
     const orderFlip = await tx.order.updateMany({
       where: { id: orderId, status: "GENERATED" },
       data: { status: "CONFIRMED" },
     });
 
     if (orderFlip.count === 0) {
-      // Session flipped but Order didn't — data inconsistency. Roll back.
+      // Session flipped but Order didn't - data inconsistency. Roll back.
       throw new ConflictError(
-        "Order status inconsistent — please contact support"
+        "Order status inconsistent. Please contact support"
       );
     }
   });
 
   logger.info(
     { sessionId, orderId, selectionCount: input.selections.length },
-    "Send-to-print committed — session + order flipped to CONFIRMED"
+    "Send-to-print committed, session + order flipped to CONFIRMED"
   );
 
-  // Sent-to-print email — exactly once. Only this fresh-commit path sends it:
+  // Sent-to-print email - exactly once. Only this fresh-commit path sends it:
   // the transaction above refuses a second commit, and every later call takes
   // the CONFIRMED retry branch at the top, which does not email. Sent before
-  // the PDF enqueue on purpose — the commit is the event, and a failed enqueue
+  // the PDF enqueue on purpose - the commit is the event, and a failed enqueue
   // the customer retries must not produce a second email.
   notifySentToPrint(sessionId).catch((err) => {
     logger.error(
@@ -1535,7 +1535,7 @@ export async function sendToPrint(
   // $transaction (Redis doesn't roll back with Prisma).
   //
   // Job ID = sessionId so BullMQ dedupes idempotent retries. If this enqueue
-  // fails, the customer can safely re-hit the endpoint — the idempotent
+  // fails, the customer can safely re-hit the endpoint - the idempotent
   // branch at the top will re-enqueue.
   await pdfCompilationQueue.add(
     "compile-pdf",
@@ -1603,11 +1603,11 @@ export async function compilePdfForSession(
 
   if (!session.order) {
     throw new ConflictError(
-      `Session ${orderSessionId} has no Order — cannot compile PDF`
+      `Session ${orderSessionId} has no Order, cannot compile PDF`
     );
   }
 
-  // Idempotent retry path — worker crashed mid-run and BullMQ re-fired.
+  // Idempotent retry path - worker crashed mid-run and BullMQ re-fired.
   // If session is already past COMPILING_PDF, someone finished it. Return
   // the existing URLs so the worker can still enqueue Shiprocket.
   if (
@@ -1617,7 +1617,7 @@ export async function compilePdfForSession(
   ) {
     logger.info(
       { orderSessionId, status: session.status },
-      "compilePdfForSession called on already-compiled session — returning existing URLs"
+      "compilePdfForSession called on already-compiled session, returning existing URLs"
     );
     return {
       pdfUrl: session.order.pdfUrl ?? "",
@@ -1643,7 +1643,7 @@ export async function compilePdfForSession(
 
   logger.info(
     { orderSessionId },
-    "PDF compilation started — session flipped to COMPILING_PDF"
+    "PDF compilation started, session flipped to COMPILING_PDF"
   );
 
   // 3. Fetch selected page variants, ordered by pageNumber.
@@ -1658,7 +1658,7 @@ export async function compilePdfForSession(
     orderBy: { page: { pageNumber: "asc" } },
   });
 
-  // Checked against the session's own page count — see sendToPrint step 3.
+  // Checked against the session's own page count - see sendToPrint step 3.
   if (selectedVersions.length !== session._count.sessionPages) {
     throw new ConflictError(
       `Expected ${session._count.sessionPages} selected variants for PDF, found ${selectedVersions.length}`
@@ -1672,11 +1672,11 @@ export async function compilePdfForSession(
   for (const pv of selectedVersions) {
     if (!pv.finalImageUrl) {
       throw new ConflictError(
-        `Page ${pv.page.pageNumber} has no finalImageUrl — cannot include in PDF`
+        `Page ${pv.page.pageNumber} has no finalImageUrl, cannot include in PDF`
       );
     }
 
-    // R2 stores finalImageUrl as a full public URL — convert back to a key
+    // R2 stores finalImageUrl as a full public URL - convert back to a key
     // so downloadFileToBuffer knows where to fetch from.
     const imageKey = getKeyFromPublicUrl(pv.finalImageUrl);
     const pngBuffer = await downloadFileToBuffer("public", imageKey);
@@ -1691,7 +1691,7 @@ export async function compilePdfForSession(
 
     // Get pixel dimensions from the JPEG we just produced. These become
     // the PDF page dimensions (1 pixel = 1 PDF point at 72 DPI, but pdf-lib
-    // treats source pixel dimensions as the natural page size — printer's
+    // treats source pixel dimensions as the natural page size - printer's
     // DPI handling is downstream).
     const { width, height } = await sharp(jpegBuffer).metadata();
     if (!width || !height) {
@@ -1724,7 +1724,7 @@ export async function compilePdfForSession(
   );
 
   // 5. Upload to R2 public bucket. Key uses sessionId (UUID) so it's
-  // unguessable — same security model as unlisted YouTube URLs.
+  // unguessable - same security model as unlisted YouTube URLs.
   //
   // The readable name ("Aarav_Hardcover_The_Magic_Treehouse_3f6a1c2e.pdf")
   // travels as Content-Disposition stored on the object, NOT in the key: the
@@ -1751,7 +1751,7 @@ export async function compilePdfForSession(
   );
 
   // 6. Persist URLs on Order + flip session to SHIPMENT_QUEUED in one txn.
-  // pdfDownloadExpiry stays null — public bucket URLs don't expire.
+  // pdfDownloadExpiry stays null - public bucket URLs don't expire.
   const orderId = session.order.id;
 
   await prisma.$transaction(async (tx) => {
@@ -1771,7 +1771,7 @@ export async function compilePdfForSession(
 
     if (flipResult.count === 0) {
       throw new ConflictError(
-        "Session status changed during PDF compilation — rolling back"
+        "Session status changed during PDF compilation, rolling back"
       );
     }
   });

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Admin customer list — GET /api/admin/customers and
+// Admin customer list - GET /api/admin/customers and
 // GET /api/admin/customers/export.
 //
 // A "customer" is an account with at least one PAID order. Always ordered by
@@ -14,7 +14,7 @@ export const listAdminCustomersQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),
 });
 
-// The CSV export takes the same search but is never paginated — it is the
+// The CSV export takes the same search but is never paginated - it is the
 // whole (filtered) list.
 export const exportAdminCustomersQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),

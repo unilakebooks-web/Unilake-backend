@@ -6,10 +6,10 @@ export function emitPageReady(
   payload: {
     pageNumber: number;
     variantIndex: number;
-    /** Print-resolution PNG. Multi-megabyte — do not render this in a browser. */
+    /** Print-resolution PNG. Multi-megabyte - do not render this in a browser. */
     imageUrl: string;
     /**
-     * Web-sized WebP derivative — this is what a client should display.
+     * Web-sized WebP derivative - this is what a client should display.
      * Null when the derivative could not be built, in which case fall back
      * to `imageUrl`.
      */
@@ -43,7 +43,7 @@ export function emitPageError(
     variantIndex: number;
     errorMessage: string;
     /**
-     * False means BullMQ still has retries left for this page — the row is NOT
+     * False means BullMQ still has retries left for this page - the row is NOT
      * terminal and the client must keep showing "generating". Only `true` means
      * every attempt is spent and the page has genuinely given up.
      *

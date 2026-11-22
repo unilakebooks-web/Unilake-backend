@@ -44,7 +44,7 @@ export function buildShiprocketTrackingUrl(awbCode: string): string {
 }
 
 /**
- * Product name sent to Shiprocket as order_items[0].name — shows on the
+ * Product name sent to Shiprocket as order_items[0].name - shows on the
  * shipping label so the packer can match the right box to the right order.
  *
  * Format: `[Child Name]_[HARDCOVER|SOFTCOVER]_[Book Title]`, e.g.
@@ -71,12 +71,12 @@ function buildShiprocketProductName(
 }
 
 // ============================================================
-// SHIPROCKET SERVICE — Phase A & Phase B business logic
+// SHIPROCKET SERVICE - Phase A & Phase B business logic
 // ============================================================
 //
 // Sits between the raw Shiprocket client (src/lib/shiprocket.ts) and the
 // two callers: the BullMQ worker (Phase A) and the admin endpoint
-// (Phase B — Section 7). Neither caller should ever import from
+// (Phase B - Section 7). Neither caller should ever import from
 // src/lib/shiprocket.ts directly.
 //
 // Two-stage flow:
@@ -90,7 +90,7 @@ function buildShiprocketProductName(
 //     Admin packs the book, measures/weighs, submits real dimensions via
 //     the admin endpoint. We push those to Shiprocket via updateOrder,
 //     then assign the AWB, then schedule pickup. Order.status stays at
-//     READY_TO_SHIP — the webhook flips it to SHIPPED when the courier
+//     READY_TO_SHIP - the webhook flips it to SHIPPED when the courier
 //     first scans the AWB.
 
 // ============================================================
@@ -103,7 +103,7 @@ function buildShiprocketProductName(
  * Idempotency:
  *   - If Order.shiprocketOrderId is already set AND Order.status has moved
  *     past CONFIRMED (READY_TO_SHIP / SHIPPED / DELIVERED / SHIPROCKET_FAILED),
- *     this is a no-op — worker retry after a successful prior run.
+ *     this is a no-op - worker retry after a successful prior run.
  *   - If shiprocketOrderId is set but status is still early, someone reset
  *     the status manually. Log and no-op; needs admin attention.
  *   - Otherwise, call Shiprocket createOrder, save IDs, flip status.
@@ -120,7 +120,7 @@ export async function createShipmentForSession(
 > {
   logger.info(
     { orderSessionId },
-    "[Shiprocket Service] Phase A — createShipmentForSession start"
+    "[Shiprocket Service] Phase A: createShipmentForSession start"
   );
 
   // Load session + order + comic (need title for the shipping label).
@@ -139,7 +139,7 @@ export async function createShipmentForSession(
   }
   if (!session.order) {
     throw new ConflictError(
-      `OrderSession ${orderSessionId} has no Order — cannot create shipment`
+      `OrderSession ${orderSessionId} has no Order, cannot create shipment`
     );
   }
 
@@ -159,7 +159,7 @@ export async function createShipmentForSession(
         shiprocketOrderId: order.shiprocketOrderId,
         orderStatus: order.status,
       },
-      "[Shiprocket Service] Shipment already created — skipping"
+      "[Shiprocket Service] Shipment already created, skipping"
     );
     return { skipped: true };
   }
@@ -173,7 +173,7 @@ export async function createShipmentForSession(
         shiprocketOrderId: order.shiprocketOrderId,
         orderStatus: order.status,
       },
-      "[Shiprocket Service] shiprocketOrderId is set but status is inconsistent — no-op, needs admin attention"
+      "[Shiprocket Service] shiprocketOrderId is set but status is inconsistent, no-op, needs admin attention"
     );
     return { skipped: true };
   }
@@ -223,7 +223,7 @@ export async function createShipmentForSession(
       ),
       sku: session.comic.id,
       units: 1,
-      // amount is Decimal; toNumber() is safe here — INR max ~10^4 for a single book.
+      // amount is Decimal; toNumber() is safe here - INR max ~10^4 for a single book.
       sellingPrice: Number(order.amount),
     },
     paymentMethod: "Prepaid",
@@ -238,7 +238,7 @@ export async function createShipmentForSession(
 
   logger.debug(
     { orderSessionId, orderId: order.id, productName: params.item.name },
-    "[Shiprocket Service] Phase A — product name being sent to Shiprocket"
+    "[Shiprocket Service] Phase A: product name being sent to Shiprocket"
   );
 
   const result = await shiprocketCreateOrder(params);
@@ -279,7 +279,7 @@ export async function createShipmentForSession(
       shiprocketOrderId: result.shiprocketOrderId,
       shipmentId: result.shipmentId,
     },
-    "[Shiprocket Service] Phase A complete — order = READY_TO_SHIP, session = COMPLETED"
+    "[Shiprocket Service] Phase A complete, order = READY_TO_SHIP, session = COMPLETED"
   );
 
   return {
@@ -290,24 +290,24 @@ export async function createShipmentForSession(
 
 /**
  * Admin-triggered retry for an order stuck at SHIPROCKET_FAILED.
- * Section 7 — endpoint 4 of 8.
+ * Section 7 - endpoint 4 of 8.
  *
  * Two paths:
  *
  *   CLEAN RETRY (order.shiprocketOrderId is null)
  *     First Phase A attempt failed before Shiprocket accepted the order.
  *     Call createShipmentForSession, then flip Order.status and
- *     OrderSession.status ourselves — createShipmentForSession's internal
+ *     OrderSession.status ourselves - createShipmentForSession's internal
  *     transaction only flips from GENERATED/CONFIRMED, not from
  *     SHIPROCKET_FAILED.
  *
  *   RECOVERY (order.shiprocketOrderId is set)
  *     Shiprocket accepted the order previously; only our DB write failed
- *     after. Do NOT re-call createOrder — Shiprocket would 422 on duplicate
+ *     after. Do NOT re-call createOrder - Shiprocket would 422 on duplicate
  *     order_id. Just reconcile our DB.
  *
  * Only valid when Order.status === "SHIPROCKET_FAILED". Any other status
- * throws 409 — retrying a healthy order would be destructive.
+ * throws 409 - retrying a healthy order would be destructive.
  *
  * Shiprocket-side failures on the clean-retry path propagate as-is; the
  * order stays SHIPROCKET_FAILED and admin can try again once the
@@ -336,11 +336,11 @@ export async function retryPhaseAForFailedOrder(orderId: string): Promise<{
 
   if (order.status !== "SHIPROCKET_FAILED") {
     throw new ConflictError(
-      `Order ${orderId} is ${order.status} — retry is only allowed on SHIPROCKET_FAILED`
+      `Order ${orderId} is ${order.status}, retry is only allowed on SHIPROCKET_FAILED`
     );
   }
 
-  // ── Recovery path ──────────────────────────────────────────
+  // -- Recovery path ------------------------------------------
   // Shiprocket-side call succeeded previously; reconcile DB only.
   if (order.shiprocketOrderId && order.shiprocketShipmentId) {
     logger.info(
@@ -349,7 +349,7 @@ export async function retryPhaseAForFailedOrder(orderId: string): Promise<{
         shiprocketOrderId: order.shiprocketOrderId,
         shiprocketShipmentId: order.shiprocketShipmentId,
       },
-      "[Shiprocket Service] Retry — recovery path (Shiprocket IDs present, DB reconcile only)"
+      "[Shiprocket Service] Retry: recovery path (Shiprocket IDs present, DB reconcile only)"
     );
 
     await prisma.$transaction(async (tx) => {
@@ -371,11 +371,11 @@ export async function retryPhaseAForFailedOrder(orderId: string): Promise<{
     };
   }
 
-  // ── Clean retry path ───────────────────────────────────────
-  // No Shiprocket IDs yet — re-run Phase A.
+  // -- Clean retry path ---------------------------------------
+  // No Shiprocket IDs yet - re-run Phase A.
   logger.info(
     { orderId, orderSessionId: order.orderSessionId },
-    "[Shiprocket Service] Retry — clean path (no Shiprocket IDs, calling createShipmentForSession)"
+    "[Shiprocket Service] Retry: clean path (no Shiprocket IDs, calling createShipmentForSession)"
   );
 
   const result = await createShipmentForSession(order.orderSessionId);
@@ -385,14 +385,14 @@ export async function retryPhaseAForFailedOrder(orderId: string): Promise<{
   // branch would indicate a race we did not design for.
   if ("skipped" in result) {
     throw new AppError(
-      `Retry for order ${orderId} returned skipped unexpectedly — possible race condition`,
+      `Retry for order ${orderId} returned skipped unexpectedly, possible race condition`,
       500,
       "RETRY_INCONSISTENT_STATE"
     );
   }
 
   // createShipmentForSession saved shiprocketOrderId/shipmentId but its
-  // status-flip guard is ["GENERATED", "CONFIRMED"] — SHIPROCKET_FAILED
+  // status-flip guard is ["GENERATED", "CONFIRMED"] - SHIPROCKET_FAILED
   // falls through. Flip both statuses here.
   await prisma.$transaction(async (tx) => {
     await tx.order.update({
@@ -411,7 +411,7 @@ export async function retryPhaseAForFailedOrder(orderId: string): Promise<{
       shiprocketOrderId: result.shiprocketOrderId,
       shipmentId: result.shipmentId,
     },
-    "[Shiprocket Service] Retry complete — order = READY_TO_SHIP"
+    "[Shiprocket Service] Retry complete, order = READY_TO_SHIP"
   );
 
   return {
@@ -458,18 +458,18 @@ function validateFinalDimensions(d: FinalDimensions): void {
  * Runs Phase B for an order: push real dimensions → assign AWB → schedule pickup.
  *
  * Called inline from the admin "confirm dimensions" endpoint (Section 7).
- * NOT idempotent as a whole — but each sub-step guards itself:
+ * NOT idempotent as a whole - but each sub-step guards itself:
  *   - updateOrder is safe to re-send
  *   - assignAwb refuses a second call once AWB exists
  *   - generatePickup refuses if pickup already generated
  *
  * If assignAwb or generatePickup has already run, callers should not invoke
- * this function again — enforced via the awbNumber / pickupGeneratedAt
+ * this function again - enforced via the awbNumber / pickupGeneratedAt
  * checks below.
  *
  * On success, Order gets: finalLength/Breadth/Height/Weight, awbNumber,
  * courierId, courierName, awbGeneratedAt, pickupScheduledDate,
- * pickupGeneratedAt. Order.status stays at READY_TO_SHIP — the Shiprocket
+ * pickupGeneratedAt. Order.status stays at READY_TO_SHIP - the Shiprocket
  * webhook flips it to SHIPPED when the courier first scans.
  */
 export async function pushDimensionsAssignAwbAndSchedulePickup(
@@ -484,7 +484,7 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
 
   logger.info(
     { orderId, dimensions },
-    "[Shiprocket Service] Phase B — pushDimensionsAssignAwbAndSchedulePickup start"
+    "[Shiprocket Service] Phase B: pushDimensionsAssignAwbAndSchedulePickup start"
   );
 
   // An admin may have changed the delivery address. While Shiprocket might still
@@ -515,12 +515,12 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
   }
   if (!order.shiprocketOrderId || !order.shiprocketShipmentId) {
     throw new ConflictError(
-      `Order ${orderId} missing shiprocketOrderId / shipmentId — Phase A did not run`
+      `Order ${orderId} missing shiprocketOrderId / shipmentId, Phase A did not run`
     );
   }
   if (order.awbNumber) {
     throw new ConflictError(
-      `Order ${orderId} already has an AWB (${order.awbNumber}) — Phase B already ran`
+      `Order ${orderId} already has an AWB (${order.awbNumber}), Phase B already ran`
     );
   }
 
@@ -576,11 +576,11 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
 
   logger.debug(
     { orderId, productName: params.item.name },
-    "[Shiprocket Service] Phase B — product name being sent to Shiprocket"
+    "[Shiprocket Service] Phase B: product name being sent to Shiprocket"
   );
 
   await shiprocketUpdateOrder(params);
-  logger.info({ orderId }, "[Shiprocket Service] Phase B — updateOrder done");
+  logger.info({ orderId }, "[Shiprocket Service] Phase B: updateOrder done");
 
   // The address must not have been changed since this function began (see above).
   await assertNoAddressChangeSince(orderId, addressSeqAtStart);
@@ -598,7 +598,7 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
       courierName: awbResult.courierName,
       awbGeneratedAt: awbResult.awbGeneratedAt,
       // Shiprocket's track API returns no URL until the courier's first scan,
-      // so the public link is built from the AWB now — the customer email
+      // so the public link is built from the AWB now - the customer email
       // below and the admin panel then show the same link immediately. A later
       // refresh-tracking overwrites it with Shiprocket's own track_url.
       trackingUrl: buildShiprocketTrackingUrl(awbResult.awbCode),
@@ -607,7 +607,7 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
 
   logger.info(
     { orderId, awbCode: awbResult.awbCode, courierName: awbResult.courierName },
-    "[Shiprocket Service] Phase B — assignAwb done"
+    "[Shiprocket Service] Phase B: assignAwb done"
   );
 
   // An address edit that committed during the assignAwb call above cannot be sent in time:
@@ -619,11 +619,11 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
     );
   });
 
-  // Packed-and-ready email — exactly once: Phase B refuses to run again once
+  // Packed-and-ready email - exactly once: Phase B refuses to run again once
   // awbNumber is set (guard above). Sent here, after the AWB rather than after
   // pickup, because the AWB is the admin action this email announces; a
   // pickup-scheduling failure below is an ops problem and the tracking link is
-  // valid regardless. Fire-and-forget — never blocks the admin response.
+  // valid regardless. Fire-and-forget - never blocks the admin response.
   notifyAwbGenerated(orderId).catch((err) => {
     logger.error(
       { orderId, err },
@@ -650,7 +650,7 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
       pickupScheduledDate:
         pickupResult.pickupScheduledDate?.toISOString() ?? null,
     },
-    "[Shiprocket Service] Phase B — generatePickup done"
+    "[Shiprocket Service] Phase B: generatePickup done"
   );
 
   return {
@@ -682,7 +682,7 @@ export async function pushDimensionsAssignAwbAndSchedulePickup(
  * Which source statuses may transition to a given target on webhook.
  * Anything not listed is a no-op status flip (raw tracking still updates).
  *
- * DELIVERED and CANCELLED are terminal — never overwritten by webhook.
+ * DELIVERED and CANCELLED are terminal - never overwritten by webhook.
  * SHIPPED allows self-transition so timestamps refresh cleanly on repeats.
  */
 const WEBHOOK_ALLOWED_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus[]>> =
@@ -726,7 +726,7 @@ export type ShiprocketWebhookResult =
 export async function processShiprocketStatusUpdate(
   payload: unknown
 ): Promise<ShiprocketWebhookResult> {
-  // Payload is `unknown` — Shiprocket's shape is loose, narrow defensively.
+  // Payload is `unknown` - Shiprocket's shape is loose, narrow defensively.
   const p = payload as {
     awb?: string | number;
     current_status?: string;
@@ -735,14 +735,14 @@ export async function processShiprocketStatusUpdate(
     courier_name?: string;
   };
 
-  // AWB can arrive as string or number — normalise to string for lookup.
+  // AWB can arrive as string or number - normalise to string for lookup.
   const awb =
     typeof p.awb === "number" ? String(p.awb) : p.awb?.toString().trim();
 
   if (!awb) {
     logger.warn(
       { payload: p },
-      "[Shiprocket Webhook] Missing AWB in payload — cannot look up order"
+      "[Shiprocket Webhook] Missing AWB in payload, cannot look up order"
     );
     return { orderId: null, reason: "no_awb" };
   }
@@ -761,7 +761,7 @@ export async function processShiprocketStatusUpdate(
   if (!order) {
     logger.warn(
       { awb, rawStatus, normalized, courierName: p.courier_name },
-      "[Shiprocket Webhook] No Order found for AWB — orphan webhook, needs admin follow-up"
+      "[Shiprocket Webhook] No Order found for AWB, orphan webhook, needs admin follow-up"
     );
     return { orderId: null, reason: "no_order" };
   }
@@ -836,7 +836,7 @@ export async function processShiprocketStatusUpdate(
           });
         }
         if (mappedStatus === "SHIPROCKET_FAILED") {
-          // TODO: notifyAdmin — internal alert for manual recovery
+          // TODO: notifyAdmin - internal alert for manual recovery
           // Not part of Layer 3 scope. Wire when admin-notification path is designed.
         }
       } else {
@@ -847,14 +847,14 @@ export async function processShiprocketStatusUpdate(
             currentStatus: order.status,
             attemptedTarget: mappedStatus,
           },
-          "[Shiprocket Webhook] Status transition not applied — current status not in allowed sources (terminal or already progressed)"
+          "[Shiprocket Webhook] Status transition not applied, current status not in allowed sources (terminal or already progressed)"
         );
       }
     }
   } else {
     logger.debug(
       { awb, rawStatus, normalized },
-      "[Shiprocket Webhook] Raw status has no mapping — trackingStatus updated, Order.status unchanged"
+      "[Shiprocket Webhook] Raw status has no mapping, trackingStatus updated, Order.status unchanged"
     );
   }
 
@@ -862,25 +862,25 @@ export async function processShiprocketStatusUpdate(
 }
 
 // ============================================================
-// LABEL (Section 7 — endpoint 5 of 8)
+// LABEL (Section 7 - endpoint 5 of 8)
 // ============================================================
 //
 // Fetches a fresh label PDF URL from Shiprocket. Per DECISIONS, we never
-// cache the URL on our side — Shiprocket may rotate its storage backing
+// cache the URL on our side - Shiprocket may rotate its storage backing
 // and a stored URL can silently become a dead link. Every admin click
 // hits Shiprocket.
 //
 // The Order.labelGeneratedAt timestamp is an audit signal ("we ever
-// successfully generated a label at least once") — it's set only on the
+// successfully generated a label at least once") - it's set only on the
 // first successful fetch, so reprints don't overwrite the signal.
 //
 // Preconditions (all throw 409 ConflictError):
 //   - Order.status ∈ {READY_TO_SHIP, SHIPPED, DELIVERED}
-//     — earlier states have no Shiprocket shipment yet
-//     — SHIPROCKET_FAILED means Phase A failed, no shipment to label
+//     - earlier states have no Shiprocket shipment yet
+//     - SHIPROCKET_FAILED means Phase A failed, no shipment to label
 //   - Order.shiprocketShipmentId is set
 //   - Order.awbNumber is set (Shiprocket refuses to generate a label
-//     without an AWB — its soft-fail path)
+//     without an AWB - its soft-fail path)
 
 const LABEL_VALID_STATUSES: OrderStatus[] = [
   "READY_TO_SHIP",
@@ -909,20 +909,20 @@ export async function getLabelForOrder(orderId: string): Promise<{
 
   if (!LABEL_VALID_STATUSES.includes(order.status)) {
     throw new ConflictError(
-      `Order ${orderId} is ${order.status} — label can only be generated for ` +
+      `Order ${orderId} is ${order.status}, label can only be generated for ` +
         `orders in ${LABEL_VALID_STATUSES.join(", ")}`
     );
   }
 
   if (!order.shiprocketShipmentId) {
     throw new ConflictError(
-      `Order ${orderId} has no shiprocketShipmentId — Phase A never completed`
+      `Order ${orderId} has no shiprocketShipmentId, Phase A never completed`
     );
   }
 
   if (!order.awbNumber) {
     throw new ConflictError(
-      `Order ${orderId} has no AWB — Phase B (dimensions/AWB assignment) has not run yet`
+      `Order ${orderId} has no AWB, Phase B (dimensions/AWB assignment) has not run yet`
     );
   }
 
@@ -936,7 +936,7 @@ export async function getLabelForOrder(orderId: string): Promise<{
   );
 
   // Raw client throws AppError on Shiprocket-side failures (missing AWB
-  // soft-fail, HTTP errors, etc.). Let those propagate — the global error
+  // soft-fail, HTTP errors, etc.). Let those propagate - the global error
   // handler maps them.
   const result = await shiprocketGenerateLabel({
     shipmentIds: [order.shiprocketShipmentId],
@@ -956,7 +956,7 @@ export async function getLabelForOrder(orderId: string): Promise<{
 }
 
 // ============================================================
-// REFRESH TRACKING (Section 7 — endpoint 6 of 8)
+// REFRESH TRACKING (Section 7 - endpoint 6 of 8)
 // ============================================================
 //
 // Fallback path when a Shiprocket webhook is missed, delayed, or the admin
@@ -968,15 +968,15 @@ export async function getLabelForOrder(orderId: string): Promise<{
 //   - Always updates trackingUpdatedAt (so admin sees "we checked").
 //   - Only updates trackingStatus / courierName if we're in the "tracked"
 //     state (Shiprocket has real data). "Pending" means AWB assigned but
-//     courier hasn't scanned yet — normal early state, no fields to fill.
+//     courier hasn't scanned yet - normal early state, no fields to fill.
 //   - Applies SHIPROCKET_STATUS_MAP to currentStatus (uppercased) and flips
 //     Order.status IF the mapped status is a valid forward transition.
 //     Never regresses from a further state (e.g. Shiprocket saying
-//     IN_TRANSIT while our DB says DELIVERED is noise — ignore).
+//     IN_TRANSIT while our DB says DELIVERED is noise - ignore).
 //   - Writes shippedAt / deliveredAt only if currently null. Webhook is
 //     primary and probably wrote them first with the correct timestamp;
 //     refresh-tracking is fallback and shouldn't overwrite.
-//   - Unmapped Shiprocket statuses log a warning but don't fail — same
+//   - Unmapped Shiprocket statuses log a warning but don't fail - same
 //     safe-default policy as the webhook handler and SHIPROCKET_STATUS_MAP.
 //
 // Preconditions (409):
@@ -1032,13 +1032,13 @@ export async function refreshTrackingForOrder(
 
   if (!order.awbNumber) {
     throw new ConflictError(
-      `Order ${orderId} has no AWB — refresh tracking is only valid after Phase B has run`
+      `Order ${orderId} has no AWB, refresh tracking is only valid after Phase B has run`
     );
   }
 
   logger.info(
     { orderId, awbNumber: order.awbNumber },
-    "[Shiprocket Service] Refresh tracking — calling trackByAwb"
+    "[Shiprocket Service] Refresh tracking: calling trackByAwb"
   );
 
   const shiprocket = await shiprocketTrackByAwb({ awbCode: order.awbNumber });
@@ -1062,7 +1062,7 @@ export async function refreshTrackingForOrder(
 
     logger.info(
       { orderId, awbNumber: order.awbNumber },
-      "[Shiprocket Service] Refresh tracking — pending state, only trackingUpdatedAt updated"
+      "[Shiprocket Service] Refresh tracking: pending state, only trackingUpdatedAt updated"
     );
 
     return { shiprocket, updated };
@@ -1075,7 +1075,7 @@ export async function refreshTrackingForOrder(
   if (rawStatus && mappedStatus === null) {
     logger.warn(
       { orderId, awbNumber: order.awbNumber, rawStatus },
-      "[Shiprocket Service] Refresh tracking — Shiprocket status not in map, Order.status left unchanged"
+      "[Shiprocket Service] Refresh tracking: Shiprocket status not in map, Order.status left unchanged"
     );
   }
 
@@ -1146,7 +1146,7 @@ export async function refreshTrackingForOrder(
       wroteShippedAt: updated.shippedAt !== null,
       wroteDeliveredAt: updated.deliveredAt !== null,
     },
-    "[Shiprocket Service] Refresh tracking — complete"
+    "[Shiprocket Service] Refresh tracking: complete"
   );
 
   return { shiprocket, updated };

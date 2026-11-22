@@ -32,7 +32,7 @@ export const listAdminCustomersHandler = asyncHandler(
 
 // GET /api/admin/customers/export
 // Auth: requireStaff (router mount in app.ts; Master only)
-// The same list as CSV — every matching customer, not one page. A raw file
+// The same list as CSV - every matching customer, not one page. A raw file
 // response, not the JSON envelope.
 
 export const exportAdminCustomersHandler = asyncHandler(
@@ -52,7 +52,7 @@ export const exportAdminCustomersHandler = asyncHandler(
       "Content-Disposition",
       `attachment; filename="unilake-customers-${date}.csv"`
     );
-    // Customer contact details — never let a shared cache keep a copy.
+    // Customer contact details - never let a shared cache keep a copy.
     res.setHeader("Cache-Control", "no-store");
     res.status(200).send(csv);
   }

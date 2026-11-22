@@ -79,13 +79,13 @@ export const updatePageSchema = z.object({
 });
 
 // Position in the array becomes the new pageNumber: index 0 → page 1.
-// IDs, not numbers — the numbers are what's being rewritten, so using them
+// IDs, not numbers - the numbers are what's being rewritten, so using them
 // as the lookup key would be circular.
 /**
  * Body for POST /admin/pages/:pageId/preview-stamp.
  *
  * The bubbles travel in the request rather than being read from the DB because
- * the admin mapper holds unsaved edits in the browser — a preview that rendered
+ * the admin mapper holds unsaved edits in the browser - a preview that rendered
  * the stored rows would show the admin something other than what is on screen,
  * which is the one thing a preview must never do.
  *

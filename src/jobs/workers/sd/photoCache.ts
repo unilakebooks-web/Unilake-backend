@@ -2,7 +2,7 @@ import { downloadFileToBuffer } from "../../../lib/r2.js";
 import { logger } from "../../../lib/logger.js";
 
 // In-memory cache for the child photo bytes during a burst of concurrent
-// worker jobs for the same session. Purely an optimization — avoids
+// worker jobs for the same session. Purely an optimization - avoids
 // re-downloading the same 1-5MB photo from R2 five times when concurrency is 5.
 //
 // Lifecycle:
@@ -58,7 +58,7 @@ export async function acquirePhoto(
   };
   cache.set(sessionId, entry);
 
-  // If the download itself fails, evict immediately — a broken Promise sitting
+  // If the download itself fails, evict immediately - a broken Promise sitting
   // in the cache would poison every future retry for this session.
   bufferPromise.catch((err) => {
     logger.warn(
@@ -121,7 +121,7 @@ function sweepStaleEntries(): void {
 }
 
 // Kick off the sweeper. Node keeps the process alive as long as this timer is
-// active — but since this module is only imported inside the worker process,
+// active - but since this module is only imported inside the worker process,
 // that's exactly what we want. .unref() would let the process exit if this
 // were the only thing keeping it running, but the worker itself holds the
 // process open, so we don't need it.

@@ -4,17 +4,17 @@ import { sendEmail } from "../lib/email.js";
 import { config } from "../config/env.js";
 
 // ============================================================
-// NOTIFICATION SERVICE — Layer 3
+// NOTIFICATION SERVICE - Layer 3
 // ============================================================
 //
 // Six transactional emails to the customer, one per milestone:
 //
-//   1. notifyPreviewReady      — free preview pages finished      → preview link
-//   2. notifyPaymentReceived   — Razorpay payment captured        → preview link
-//   3. notifyBookReady         — every paid page finished         → preview link
-//   4. notifySentToPrint       — customer committed send-to-print (no button)
-//   5. notifyAwbGenerated      — admin packed it, AWB assigned    → tracking link
-//   6. notifyOrderDelivered    — Shiprocket reported delivery     (no button)
+//   1. notifyPreviewReady      - free preview pages finished      → preview link
+//   2. notifyPaymentReceived   - Razorpay payment captured        → preview link
+//   3. notifyBookReady         - every paid page finished         → preview link
+//   4. notifySentToPrint       - customer committed send-to-print (no button)
+//   5. notifyAwbGenerated      - admin packed it, AWB assigned    → tracking link
+//   6. notifyOrderDelivered    - Shiprocket reported delivery     (no button)
 //
 // Wording and layout follow the client's copy for each email (typos fixed).
 //
@@ -23,12 +23,12 @@ import { config } from "../config/env.js";
 //   1. Load the minimum data needed for the email
 //   2. Build subject + HTML via a template function
 //   3. Send via sendEmail (which handles retries)
-//   4. Return { sent: true, messageId } or { sent: false, reason } — never throws
+//   4. Return { sent: true, messageId } or { sent: false, reason } - never throws
 //
 // Callers still attach a .catch() and swallow: email failure MUST NOT block
 // business logic. See Decision D of the notifyUser design.
 //
-// Exactly-once is the CALLER's job — sendEmail is not idempotent. Each call
+// Exactly-once is the CALLER's job - sendEmail is not idempotent. Each call
 // site sits behind a status-guarded flip or webhook dedupe that only one
 // invocation can win; see the comment at each call site.
 //
@@ -60,35 +60,35 @@ function cleanSubject(subject: string): string {
   return subject.replace(/[\r\n]+/g, " ").trim();
 }
 
-// ── Child-name wording ──────────────────────────────────────────────────────
+// -- Child-name wording ------------------------------------------------------
 //
 // Every email names the child. When the session has no name these fall back
 // to "your child", capitalised only at the start of a sentence, so the copy
-// reads naturally either way. All return UNESCAPED text — escape at the point
+// reads naturally either way. All return UNESCAPED text - escape at the point
 // of use in HTML; subjects are plain text and are used as-is.
 
 function nameOf(childName: string | null): string | null {
   return childName?.trim() || null;
 }
 
-/** "Aarav" | "your child" — mid-sentence. */
+/** "Aarav" | "your child" - mid-sentence. */
 function kid(childName: string | null): string {
   return nameOf(childName) ?? "your child";
 }
 
-/** "Aarav's" | "your child's" — mid-sentence. */
+/** "Aarav's" | "your child's" - mid-sentence. */
 function kids(childName: string | null): string {
   const name = nameOf(childName);
   return name ? `${name}'s` : "your child's";
 }
 
-/** "Aarav's" | "Your child's" — start of a sentence. */
+/** "Aarav's" | "Your child's" - start of a sentence. */
 function Kids(childName: string | null): string {
   const name = nameOf(childName);
   return name ? `${name}'s` : "Your child's";
 }
 
-/** The customer's preview page for a session — where the buttons in 1–3 land. */
+/** The customer's preview page for a session - where the buttons in 1–3 land. */
 export function previewUrl(sessionId: string): string {
   return `${config.frontendUrl}/personalize/${encodeURIComponent(sessionId)}/preview`;
 }
@@ -125,12 +125,12 @@ function resolveRecipient(
 
 /**
  * Wraps a per-email body in a consistent header + footer. Keeps all
- * emails visually consistent — brand tweaks land here in one place.
+ * emails visually consistent - brand tweaks land here in one place.
  *
- * Deliberately minimal — no logo, just clean typography — by decision. The
+ * Deliberately minimal - no logo, just clean typography - by decision. The
  * footer carries the client's "automated mail, don't reply" notice and the
- * support contacts. (Replies are still routed to a real inbox — see
- * REPLY_TO_ADDRESS in lib/email.ts — in case someone replies anyway.)
+ * support contacts. (Replies are still routed to a real inbox - see
+ * REPLY_TO_ADDRESS in lib/email.ts - in case someone replies anyway.)
  */
 function renderEmailShell(bodyHtml: string): string {
   return `
@@ -174,7 +174,7 @@ function renderEmailShell(bodyHtml: string): string {
 }
 
 /**
- * The one call-to-action style used by every email. Inline styles only —
+ * The one call-to-action style used by every email. Inline styles only -
  * Gmail strips <style> blocks.
  *
  * The button alone, no raw URL beneath it. Plain-text-only clients still get
@@ -191,7 +191,7 @@ function renderButton(href: string, label: string): string {
 
 /**
  * Common return shape from every notify function. `sent: false` never
- * throws — the caller doesn't need to distinguish "email failed" from
+ * throws - the caller doesn't need to distinguish "email failed" from
  * "email intentionally skipped." Both are swallowed.
  */
 type NotifyResult =
@@ -214,7 +214,7 @@ async function safeSend(
   } catch (err) {
     logger.error(
       { to, subject, err },
-      "[Notification] Email send failed — swallowing to protect caller"
+      "[Notification] Email send failed, swallowing to protect caller"
     );
     return {
       sent: false,
@@ -259,22 +259,22 @@ async function loadOrderContext(orderId: string) {
 // EMAIL TEMPLATES (per-notification body builders)
 // ============================================================
 //
-// Every interpolated value is escaped here, at the point of use — the
+// Every interpolated value is escaped here, at the point of use - the
 // callers pass raw strings.
 
 //
 // Wording is the client's own copy, with only obvious typos fixed. Each email
-// has exactly the content the client specified — no extra lines, no comic
-// title — and a green button only where the client asked for one (1, 2, 3, 5).
+// has exactly the content the client specified - no extra lines, no comic
+// title - and a green button only where the client asked for one (1, 2, 3, 5).
 
 type BodyArgs = { childName: string | null };
 
-/** "Let's make some magic," over "The Unilake Team" — the sign-off block. */
+/** "Let's make some magic," over "The Unilake Team" - the sign-off block. */
 function renderSignOff(closing: string): string {
   return `<p>${escapeHtml(closing)}<br />The Unilake Team</p>`;
 }
 
-/** 1. Preview Created — the sneak peek. */
+/** 1. Preview Created - the sneak peek. */
 function renderPreviewReadyBody(args: BodyArgs & { link: string }): string {
   const name = nameOf(args.childName);
   const buttonLabel = name ? `View ${name}'s Preview` : "View Your Child's Preview";
@@ -289,7 +289,7 @@ function renderPreviewReadyBody(args: BodyArgs & { link: string }): string {
   `.trim();
 }
 
-/** 2. Payment Successful — "The Reassurance". */
+/** 2. Payment Successful - "The Reassurance". */
 function renderPaymentReceivedBody(args: BodyArgs & { link: string }): string {
   return `
     <p>Hi,</p>
@@ -300,7 +300,7 @@ function renderPaymentReceivedBody(args: BodyArgs & { link: string }): string {
   `.trim();
 }
 
-/** 3. Full Book Generated — "The Crucial Action". */
+/** 3. Full Book Generated - "The Crucial Action". */
 function renderBookReadyBody(args: BodyArgs & { link: string }): string {
   return `
     <p>Hi,</p>
@@ -313,7 +313,7 @@ function renderBookReadyBody(args: BodyArgs & { link: string }): string {
   `.trim();
 }
 
-/** 4. Sent for Print — "The Anticipation Builder". No button, by spec. */
+/** 4. Sent for Print - "The Anticipation Builder". No button, by spec. */
 function renderSentToPrintBody(args: BodyArgs): string {
   return `
     <p>Hi,</p>
@@ -324,11 +324,11 @@ function renderSentToPrintBody(args: BodyArgs): string {
   `.trim();
 }
 
-/** 5. Shipped — "The Handoff". */
+/** 5. Shipped - "The Handoff". */
 function renderAwbGeneratedBody(args: BodyArgs & { trackingLink: string }): string {
   return `
     <p>Hi,</p>
-    <p>Great news — ${escapeHtml(kids(args.childName))} personalized book has left the Unilake facility and is in the hands of our delivery partners!</p>
+    <p>Great news, ${escapeHtml(kids(args.childName))} personalized book has left the Unilake facility and is in the hands of our delivery partners!</p>
     <p>You can watch its journey right to your doorstep using the Shiprocket tracking link below:</p>
     ${renderButton(args.trackingLink, "Track My Order")}
     <p>We can't wait for you to see it in person.</p>
@@ -336,7 +336,7 @@ function renderAwbGeneratedBody(args: BodyArgs & { trackingLink: string }): stri
   `.trim();
 }
 
-/** 6. Delivered — "The Peak Experience". No button, by spec. */
+/** 6. Delivered - "The Peak Experience". No button, by spec. */
 function renderOrderDeliveredBody(args: BodyArgs): string {
   return `
     <p>Hi,</p>
@@ -348,11 +348,11 @@ function renderOrderDeliveredBody(args: BodyArgs): string {
 }
 
 // ============================================================
-// PUBLIC API — one function per milestone
+// PUBLIC API - one function per milestone
 // ============================================================
 
 /**
- * 1. Free preview pages finished. Pre-payment, so there is no Order — the
+ * 1. Free preview pages finished. Pre-payment, so there is no Order - the
  * session's address is the only one.
  * Caller: generationWorker, on maybeMarkPreviewComplete → "ready".
  */
@@ -361,7 +361,7 @@ export async function notifyPreviewReady(
 ): Promise<NotifyResult> {
   const session = await loadSessionContext(orderSessionId);
   if (!session) {
-    logger.warn({ orderSessionId }, "[Notification] notifyPreviewReady — session not found, skipping");
+    logger.warn({ orderSessionId }, "[Notification] notifyPreviewReady, session not found, skipping");
     return { sent: false, reason: "session_not_found" };
   }
 
@@ -389,7 +389,7 @@ export async function notifyPaymentReceived(
 ): Promise<NotifyResult> {
   const session = await loadSessionContext(orderSessionId);
   if (!session) {
-    logger.warn({ orderSessionId }, "[Notification] notifyPaymentReceived — session not found, skipping");
+    logger.warn({ orderSessionId }, "[Notification] notifyPaymentReceived, session not found, skipping");
     return { sent: false, reason: "session_not_found" };
   }
 
@@ -402,8 +402,8 @@ export async function notifyPaymentReceived(
     renderEmailShell(
       renderPaymentReceivedBody({
         childName: session.childName,
-        // "Go to My Dashboard" deliberately lands on the book's preview page —
-        // where the paid pages appear as they generate — by decision.
+        // "Go to My Dashboard" deliberately lands on the book's preview page -
+        // where the paid pages appear as they generate - by decision.
         link: previewUrl(session.id),
       })
     )
@@ -411,7 +411,7 @@ export async function notifyPaymentReceived(
 }
 
 /**
- * 3. Every paid page finished — the customer now picks variants.
+ * 3. Every paid page finished - the customer now picks variants.
  * Caller: generationWorker, on maybeMarkPaidReady → "ready" (both the success
  * path and the failure-with-earlier-success edge).
  */
@@ -420,7 +420,7 @@ export async function notifyBookReady(
 ): Promise<NotifyResult> {
   const session = await loadSessionContext(orderSessionId);
   if (!session) {
-    logger.warn({ orderSessionId }, "[Notification] notifyBookReady — session not found, skipping");
+    logger.warn({ orderSessionId }, "[Notification] notifyBookReady, session not found, skipping");
     return { sent: false, reason: "session_not_found" };
   }
 
@@ -448,7 +448,7 @@ export async function notifySentToPrint(
 ): Promise<NotifyResult> {
   const session = await loadSessionContext(orderSessionId);
   if (!session) {
-    logger.warn({ orderSessionId }, "[Notification] notifySentToPrint — session not found, skipping");
+    logger.warn({ orderSessionId }, "[Notification] notifySentToPrint, session not found, skipping");
     return { sent: false, reason: "session_not_found" };
   }
 
@@ -474,7 +474,7 @@ export async function notifySentToPrint(
 export async function notifyAwbGenerated(orderId: string): Promise<NotifyResult> {
   const order = await loadOrderContext(orderId);
   if (!order) {
-    logger.warn({ orderId }, "[Notification] notifyAwbGenerated — order not found, skipping");
+    logger.warn({ orderId }, "[Notification] notifyAwbGenerated, order not found, skipping");
     return { sent: false, reason: "order_not_found" };
   }
 
@@ -488,7 +488,7 @@ export async function notifyAwbGenerated(orderId: string): Promise<NotifyResult>
       renderAwbGeneratedBody({
         childName: order.orderSession.childName,
         // Shiprocket's tracking page when we have it; otherwise the
-        // customer's own order page, which shows tracking — so the button
+        // customer's own order page, which shows tracking - so the button
         // is never missing.
         trackingLink: order.trackingUrl || orderPageUrl(order.id),
       })
@@ -505,7 +505,7 @@ export async function notifyOrderDelivered(
 ): Promise<NotifyResult> {
   const order = await loadOrderContext(orderId);
   if (!order) {
-    logger.warn({ orderId }, "[Notification] notifyOrderDelivered — order not found, skipping");
+    logger.warn({ orderId }, "[Notification] notifyOrderDelivered, order not found, skipping");
     return { sent: false, reason: "order_not_found" };
   }
 
@@ -752,7 +752,7 @@ export function renderReminderEmail(args: ReminderEmailArgs): {
   };
 }
 
-// ── Admin broadcast (email D, feature 5) ────────────────────────────────────
+// -- Admin broadcast (email D, feature 5) ------------------------------------
 
 export type BroadcastEmailArgs = {
   subject: string;
@@ -830,7 +830,7 @@ export async function notifyPaidAfterDeletion(
 ): Promise<NotifyResult> {
   const session = await loadSessionContext(orderSessionId);
   if (!session) {
-    logger.warn({ orderSessionId }, "[Notification] notifyPaidAfterDeletion — session not found, skipping");
+    logger.warn({ orderSessionId }, "[Notification] notifyPaidAfterDeletion, session not found, skipping");
     return { sent: false, reason: "session_not_found" };
   }
 

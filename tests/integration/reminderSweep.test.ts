@@ -1070,7 +1070,7 @@ describe("review round: setup errors, outages, development limits", () => {
       await due(3);
       fakes.send.mockRejectedValue(
         new EmailSendError(
-          `Resend send failed: ${name} — ${text} (HTTP ${status})`,
+          `Resend send failed: ${name}: ${text} (HTTP ${status})`,
           name,
           status
         )
@@ -1085,7 +1085,7 @@ describe("review round: setup errors, outages, development limits", () => {
     await due(2);
     fakes.send.mockRejectedValueOnce(
       new EmailSendError(
-        "Resend send failed: validation_error — Invalid `to` field (HTTP 422)",
+        "Resend send failed: validation_error: Invalid `to` field (HTTP 422)",
         "validation_error",
         422
       )

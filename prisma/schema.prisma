@@ -184,7 +184,7 @@ model Page {
   // Real pixel size of artworkUrl, probed server-side with Sharp at upload time.
   // Null until artwork is attached. Used to (a) reject a mask whose size doesn't
   // match, (b) warn when a replaced artwork changes aspect ratio, (c) show the
-  // size in the admin UI. NOT needed to position bubbles — those are normalized.
+  // size in the admin UI. NOT needed to position bubbles - those are normalized.
   artworkWidth  Int?
   artworkHeight Int?
 
@@ -236,7 +236,7 @@ model Bubble {
   pageId String
   page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
-  // Normalized 0–1 fractions of the artwork's dimensions — NOT pixels.
+  // Normalized 0–1 fractions of the artwork's dimensions - NOT pixels.
   // x/y is the top-left corner. Constraints (enforced in Zod + bubble.service):
   //   0 <= x, y            x + width <= 1        y + height <= 1
   // Resolution-independent by design: artwork can be re-uploaded at any size
@@ -308,7 +308,7 @@ model PricingRule {
 // COMIC-ORDER FLOW
 // Named "OrderSession" (not "Session") specifically to avoid colliding
 // with Better Auth's own Session model in this same schema file.
-// This has nothing to do with login — it's the in-progress
+// This has nothing to do with login - it's the in-progress
 // comic-creation flow for an anonymous parent/user.
 // ============================================================
 
@@ -363,7 +363,7 @@ model OrderSession {
   shippingCity    String?
   shippingState   String?
   shippingZip     String?
-  shippingCountry String? // ISO alpha-2 — drives domestic vs international Shiprocket routing
+  shippingCountry String? // ISO alpha-2 - drives domestic vs international Shiprocket routing
   shippingPhone   String?
 
   wsRoomToken String @unique @default(uuid()) // used to authenticate WS connection
@@ -412,7 +412,7 @@ model SessionShare {
 // Pages the admin adds to the comic later belong only to sessions created after
 // them. `isPreviewPage` is frozen too, so flipping a page between free and paid
 // never changes a book already in progress. Page CONTENT (artwork, bubbles,
-// prompt) is deliberately not frozen — edits reach every session.
+// prompt) is deliberately not frozen - edits reach every session.
 //
 // Deleting a Page removes it from these rows (cascade). deletePage already
 // refuses once any session has generated the page, so only books that never
@@ -457,10 +457,10 @@ model PageVersion {
   variantIndex Int     @default(0) // 0,1,2... up to 3-4 free / 8 paid
   seed         BigInt? // ComfyUI seed used, stored for reproducibility
 
-  textStampedUrl  String? // Sharp output — artwork with text stamped, INPUT to ComfyUI
+  textStampedUrl  String? // Sharp output - artwork with text stamped, INPUT to ComfyUI
   comfyJobId      String? // RunPod job ID for the face-swap job
   displayImageUrl String? // for storing the display URL that ougth to be displayed in the browser
-  finalImageUrl   String? // ComfyUI output — face-swapped + text-stamped, shown to user & used in PDF
+  finalImageUrl   String? // ComfyUI output - face-swapped + text-stamped, shown to user & used in PDF
 
   isSelected   Boolean           @default(false) // chosen by user at confirm step
   status       PageVersionStatus @default(QUEUED)
@@ -512,7 +512,7 @@ model Order {
 
   notificationEmail String?
 
-  // Shipping address — copied from OrderSession at order creation. Changed only by an admin address edit, which keeps every old value in OrderAddressChange.
+  // Shipping address - copied from OrderSession at order creation. Changed only by an admin address edit, which keeps every old value in OrderAddressChange.
   shippingName    String?
   shippingLine1   String?
   shippingLine2   String?
@@ -563,7 +563,7 @@ model Order {
   printVendorOrderId String? // e.g. Gelato order reference
 
   // Bill of Supply. Assigned once, in the payment-captured transaction, to
-  // INR orders only, and never changed — "BOS-26-00001" is serial 1 of FY
+  // INR orders only, and never changed - "BOS-26-00001" is serial 1 of FY
   // 2026-27. billIssuedAt is the payment time, printed as the Date of Issue.
   // The PDF itself is never stored; it is rebuilt from these on download.
   billNumber   String?   @unique
@@ -760,7 +760,7 @@ model WebhookEvent {
   order   Order?  @relation(fields: [orderId], references: [id])
 
   source      String // "razorpay" | "shiprocket"
-  eventId     String   @unique // the PROVIDER's own event id (x-razorpay-event-id) — unique per event, stable across that event's retries. Never the payment id: one payment emits several event types sharing it.
+  eventId     String   @unique // the PROVIDER's own event id (x-razorpay-event-id) - unique per event, stable across that event's retries. Never the payment id: one payment emits several event types sharing it.
   eventType   String
   payloadJson Json
   processedAt DateTime @default(now())
@@ -867,7 +867,7 @@ model Feedback {
 }
 
 // ============================================================
-// HOW IT WORKS (homepage explainer — singleton row)
+// HOW IT WORKS (homepage explainer - singleton row)
 // ============================================================
 
 model HowItWorks {
@@ -944,7 +944,7 @@ enum SitePageSlug {
 
 model SitePage {
   id   String       @id @default(uuid())
-  slug SitePageSlug @unique // fixed set — admin edits, never creates
+  slug SitePageSlug @unique // fixed set - admin edits, never creates
 
   title String // H1 on the page, e.g. "Privacy Policy"
   body  String @db.Text // TipTap HTML, same as Blog.body
@@ -987,7 +987,7 @@ model SiteSetting {
   country      String?
   mapEmbedUrl  String?
 
-  // ---- Socials — also consumed by the Footer ----
+  // ---- Socials - also consumed by the Footer ----
   instagramUrl String?
   facebookUrl  String?
   twitterUrl   String?
@@ -1012,7 +1012,7 @@ model GoogleReview {
   customerName String
 
   // Whole stars only, 1–5. Postgres has no CHECK constraint via Prisma, so the
-  // range is enforced in Zod — do not write to this column outside the service.
+  // range is enforced in Zod - do not write to this column outside the service.
   rating Int
 
   reviewText String @db.Text

@@ -6,7 +6,7 @@ export const howItWorksStepSchema = z.object({
 });
 
 // Single source of truth for the shape stored in HowItWorks.steps (a Json column).
-// Prisma types that column as JsonValue and knows nothing about its shape — this is it.
+// Prisma types that column as JsonValue and knows nothing about its shape - this is it.
 export type HowItWorksStep = z.infer<typeof howItWorksStepSchema>;
 
 // Video and poster accept different MIME types, so this is a discriminated union

@@ -25,7 +25,7 @@ import {
 } from "./couponCheckout.service.js";
 
 /**
- * Matches `@default("singleton")` on SiteSetting.id — the same fixed key
+ * Matches `@default("singleton")` on SiteSetting.id - the same fixed key
  * siteSetting.service.ts uses. Duplicated as a local constant rather than
  * imported so this module does not depend on a CMS service just to read one
  * boolean.
@@ -36,7 +36,7 @@ const SITE_SETTING_SINGLETON_ID = "singleton";
  * Shown to the customer when the store is not accepting orders.
  *
  * This exact string is thrown as the error message, and the frontend's payment
- * handler renders `error.message` directly as a toast — so editing it here
+ * handler renders `error.message` directly as a toast - so editing it here
  * changes what the customer reads, with no client change.
  *
  * ⚠️ The storefront banner in the frontend repo carries its own copy of this
@@ -44,7 +44,7 @@ const SITE_SETTING_SINGLETON_ID = "singleton";
  * change both together.
  */
 const ORDERS_PAUSED_MESSAGE =
-  "We're not accepting orders right now — but feel free to preview any comic you like.";
+  "We're not accepting orders right now, but feel free to preview any comic you like.";
 
 function assertShippingComplete(session: OrderSession): void {
   const required: (keyof OrderSession)[] = [
@@ -73,7 +73,7 @@ function assertShippingComplete(session: OrderSession): void {
  *   2. Idempotency FIRST: if an Order already exists for this session:
  *        - status CREATED: reuse it, return the existing Razorpay order id.
  *        - any other status: 409 (already paid, or past checkout).
- *   3. Status guard — must be PREVIEW_READY.
+ *   3. Status guard - must be PREVIEW_READY.
  *   4. Must have userId attached.
  *   5. Must have coverType.
  *   6. Must have all shipping fields.
@@ -120,7 +120,7 @@ export async function initiateCheckout(
 
   // 2. Idempotency: existing order?
   //
-  // Deliberately ABOVE the status guard — see the flow note on this function.
+  // Deliberately ABOVE the status guard - see the flow note on this function.
   // The Order row is the authoritative record that checkout already happened,
   // so it is the strongest signal available and we return on it early. The
   // guards below then only run on a genuinely fresh checkout, which makes the
@@ -140,7 +140,7 @@ export async function initiateCheckout(
       if (!session.order.razorpayOrderId) {
         logger.error(
           { sessionId, orderId: session.order.id },
-          "Existing CREATED order has no razorpayOrderId — cannot resume checkout"
+          "Existing CREATED order has no razorpayOrderId, cannot resume checkout"
         );
         throw new ConflictError(
           "This order is in an inconsistent state and cannot be resumed. Please contact support."
@@ -157,7 +157,7 @@ export async function initiateCheckout(
 
       logger.info(
         { sessionId, orderId: session.order.id, razorpayOrderId: session.order.razorpayOrderId },
-        "Checkout re-initiated — reusing existing CREATED order"
+        "Checkout re-initiated, reusing existing CREATED order"
       );
 
       // The customer applied, changed or removed a coupon after starting checkout
@@ -187,13 +187,13 @@ export async function initiateCheckout(
         ...couponResponseFields(session.order),
       };
     }
-    // Any other status — user has already paid or moved past checkout
+    // Any other status - user has already paid or moved past checkout
     throw new ConflictError(
       `An order already exists for this session with status ${session.order.status}. Cannot re-initiate checkout.`
     );
   }
 
-  // 2b. STORE STATUS — are we accepting new orders at all?
+  // 2b. STORE STATUS - are we accepting new orders at all?
   //
   // Placement is load-bearing. The block above ALWAYS returns (a resumable
   // CREATED order) or throws (already paid), so everything below it is only
@@ -208,7 +208,7 @@ export async function initiateCheckout(
   // break that for no gain.
   //
   // FAIL OPEN. `findUnique` returns null when no settings row has ever been
-  // saved, and null must mean "allowed" — it matches the column's own
+  // saved, and null must mean "allowed" - it matches the column's own
   // `@default(true)`, and a missing row silently closing the store is a far
   // worse failure than the reverse.
   //
@@ -224,12 +224,12 @@ export async function initiateCheckout(
   if (storeStatus && !storeStatus.acceptingOrders) {
     logger.info(
       { sessionId, comicId: session.comicId },
-      "Checkout blocked — store is not accepting orders"
+      "Checkout blocked, store is not accepting orders"
     );
     throw new ConflictError(ORDERS_PAUSED_MESSAGE);
   }
 
-  // 3. Status guard — only reachable when no Order row exists for this session.
+  // 3. Status guard - only reachable when no Order row exists for this session.
   if (session.status !== "PREVIEW_READY") {
     throw new ConflictError(
       `Session must be in PREVIEW_READY status to checkout. Current: ${session.status}`
@@ -287,7 +287,7 @@ export async function initiateCheckout(
         countryCode: country.code,
         coverType: session.coverType,
       },
-      "Pricing rule missing for checkout — configuration gap"
+      "Pricing rule missing for checkout, configuration gap"
     );
     throw new NotFoundError(
       `Pricing not configured for this comic in ${country.name} (${session.coverType}). Please contact support.`
@@ -315,7 +315,7 @@ export async function initiateCheckout(
   const amountSmallestUnit = toSmallestUnit(priceInMajorUnits, country.currencyCode);
   const isInternational = country.code !== "IN";
 
-  // 9. Create Razorpay order — OUTSIDE transaction (external API)
+  // 9. Create Razorpay order - OUTSIDE transaction (external API)
   let razorpayOrder;
   try {
     razorpayOrder = await razorpay.orders.create({
@@ -337,7 +337,7 @@ export async function initiateCheckout(
     throw new Error("Payment gateway is temporarily unavailable. Please try again.");
   }
 
-  // 10. Persist Order row + flip session status — inside transaction
+  // 10. Persist Order row + flip session status - inside transaction
   //
   // With a coupon, wait for this coupon's turn first, in memory, so queued
   // customers do not each hold a database connection while they wait for the
@@ -410,7 +410,7 @@ export async function initiateCheckout(
         amount: amountSmallestUnit,
         currency: country.currencyCode,
       },
-      "Checkout initiated — Order created and Razorpay order linked"
+      "Checkout initiated, Order created and Razorpay order linked"
     );
 
     return {
@@ -424,7 +424,7 @@ export async function initiateCheckout(
       ...couponResponseFields(order),
     };
   } catch (error: any) {
-    // DB write failed after Razorpay order created — orphan on Razorpay side.
+    // DB write failed after Razorpay order created - orphan on Razorpay side.
     // Razorpay auto-expires unused orders after 15 min. Log so ops can investigate.
     logger.error(
       {
@@ -432,7 +432,7 @@ export async function initiateCheckout(
         razorpayOrderId: razorpayOrder.id,
         error: error?.message || error,
       },
-      "Order row creation failed AFTER Razorpay order created — orphan Razorpay order will auto-expire"
+      "Order row creation failed AFTER Razorpay order created, orphan Razorpay order will auto-expire"
     );
     // A coupon refusal is for the customer, not a failed save: keep its own message.
     if (error instanceof AppError && error.code.startsWith("COUPON_")) throw error;

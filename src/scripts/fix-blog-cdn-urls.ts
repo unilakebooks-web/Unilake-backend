@@ -7,17 +7,17 @@
  * configured. Every such image has therefore 404'd for every visitor since the
  * feature shipped. The editor now embeds the absolute R2 URL returned by
  * `getBlogUploadUrl`, but posts saved before that fix still carry the dead path
- * in their body HTML — no code change reaches them, so this does.
+ * in their body HTML - no code change reaches them, so this does.
  *
  * WHAT IT DOES
  * Rewrites `/cdn/<key>` to `<R2_PUBLIC_URL_BASE>/<key>` in `blogs.body`, and
  * scans `site_pages.body` as well. Site pages pass allowImages={false} to the
- * editor, so a hit there is not expected — but that flag was added later, so
+ * editor, so a hit there is not expected - but that flag was added later, so
  * the scan is cheap insurance rather than dead code.
  *
  * SAFETY
  * Dry-run by default: prints what it would change and writes nothing. Pass
- * --commit to persist. Idempotent — once a row is fixed it contains no `/cdn/`,
+ * --commit to persist. Idempotent - once a row is fixed it contains no `/cdn/`,
  * so a second run is a no-op.
  *
  * USAGE
@@ -73,7 +73,7 @@ async function fixBlogs(): Promise<number> {
     totalReplacements += replacements;
 
     console.log(
-      `blogs:      ${blog.slug} — ${replacements} image src(s)`
+      `blogs:      ${blog.slug}, ${replacements} image src(s)`
     );
 
     if (COMMIT) {
@@ -102,7 +102,7 @@ async function fixSitePages(): Promise<number> {
     totalReplacements += replacements;
 
     console.log(
-      `site_pages: ${page.slug} — ${replacements} image src(s) [UNEXPECTED, but handled]`
+      `site_pages: ${page.slug}, ${replacements} image src(s) [UNEXPECTED, but handled]`
     );
 
     if (COMMIT) {
@@ -116,8 +116,8 @@ async function fixSitePages(): Promise<number> {
 async function main() {
   console.log(
     COMMIT
-      ? "MODE: COMMIT — changes WILL be written\n"
-      : "MODE: DRY RUN — nothing will be written (pass --commit to apply)\n"
+      ? "MODE: COMMIT: changes WILL be written\n"
+      : "MODE: DRY RUN: nothing will be written (pass --commit to apply)\n"
   );
   console.log(`Rewriting /cdn/<key>  ->  ${PUBLIC_BASE}/<key>\n`);
 

@@ -16,7 +16,7 @@ import {
   updateBlog,
 } from "../services/blog.service.js";
 
-// Local copy rather than importing faq.controller's — the two controllers stay
+// Local copy rather than importing faq.controller's - the two controllers stay
 // independent if their query-parsing needs ever diverge. There is no
 // validateQuery middleware; this is the established stand-in.
 function parseQueryOrThrow<T>(

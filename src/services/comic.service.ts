@@ -82,7 +82,7 @@ async function nextComicSortOrder(tx: Prisma.TransactionClient) {
  * requires the client to re-send the entries it wants to KEEP. Those come back
  * from GET as full URLs, so tolerating both forms here lets the frontend send
  * exactly what it received (minus whatever it is deleting) instead of having to
- * know R2_PUBLIC_URL_BASE and reverse the conversion itself — a mismatch there
+ * know R2_PUBLIC_URL_BASE and reverse the conversion itself - a mismatch there
  * would silently produce doubled URLs.
  *
  * Kept local deliberately. r2.getKeyFromPublicUrl() is reserved for the SD
@@ -120,7 +120,7 @@ const assertThemesExist = async (ids: string[]): Promise<void> => {
   }
 };
 
-/** Shape every comic response uses for its themes — alphabetical, id + name. */
+/** Shape every comic response uses for its themes - alphabetical, id + name. */
 const THEMES_SELECT = {
   select: { id: true, name: true },
   orderBy: { name: "asc" },
@@ -189,7 +189,7 @@ export const createComic = async (data: CreateComicInput) => {
       "Attempting to create new comic catalogue item..."
     );
 
-    // themeIds is not a column — it becomes the comic <-> theme links below.
+    // themeIds is not a column - it becomes the comic <-> theme links below.
     const { thumbnailKeys, pricing, loraKey, themeIds, ...restData } = data;
     await assertThemesExist(themeIds);
     // Create only ever receives fresh keys today, but normalizing here keeps
@@ -319,7 +319,7 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
       // Scalar, so the contract is simpler than thumbnailKeys': omitted means
       // unchanged, a key means replace, null means remove. It is never asked to
       // accept a URL the client is re-sending to keep, which is why this skips
-      // normalizeThumbnailInput — that helper exists only for the array's
+      // normalizeThumbnailInput - that helper exists only for the array's
       // send-back-what-you-keep semantics.
       const newVideoUrl =
         data.videoKey === null ? null : getPublicUrl(data.videoKey);
@@ -415,13 +415,13 @@ export async function deleteComic(comicId: string) {
 
   if (liveSamples > 0) {
     throw new ConflictError(
-      `Cannot delete this comic — ${liveSamples} sample book(s) of it are still live. Discard them on the Sample Books page, or wait until they end; their files are cleaned up a few minutes later.`
+      `Cannot delete this comic: ${liveSamples} sample book(s) of it are still live. Discard them on the Sample Books page, or wait until they end; their files are cleaned up a few minutes later.`
     );
   }
 
   if (endedSamples > 0) {
     throw new ConflictError(
-      `Cannot delete this comic — ${endedSamples} sample book(s) of it are being cleaned up. Try again in a few minutes.`
+      `Cannot delete this comic: ${endedSamples} sample book(s) of it are being cleaned up. Try again in a few minutes.`
     );
   }
 
@@ -442,7 +442,7 @@ export async function deleteComic(comicId: string) {
 
   if (activeSessionCount > 0) {
     throw new ConflictError(
-      `Cannot delete this comic — it has ${activeSessionCount} active order session(s). Wait for them to complete or fail first.`
+      `Cannot delete this comic: it has ${activeSessionCount} active order session(s). Wait for them to complete or fail first.`
     );
   }
 
@@ -452,7 +452,7 @@ export async function deleteComic(comicId: string) {
   }
   const monthReason = monthRuleReason(comic, new Date());
   if (monthReason) {
-    throw new ConflictError(`Cannot delete this comic — ${monthReason}.`);
+    throw new ConflictError(`Cannot delete this comic: ${monthReason}.`);
   }
   if (comic._count.orderSessions > 0) {
     const eligibility = (
@@ -470,14 +470,14 @@ export async function deleteComic(comicId: string) {
       )
     ).get(comicId);
     if (!eligibility?.canDelete) {
-      throw new ConflictError(`Cannot delete this comic — ${eligibility?.reason ?? "it is not eligible"}.`);
+      throw new ConflictError(`Cannot delete this comic: ${eligibility?.reason ?? "it is not eligible"}.`);
     }
     await retireComic(comicId, new Date());
     logger.info({ comicId }, "Comic retired; its files are deleted by the books deletion sweep");
     return;
   }
 
-  // Collect ALL R2 keys we'll clean up BEFORE the DB delete — thumbnails plus
+  // Collect ALL R2 keys we'll clean up BEFORE the DB delete - thumbnails plus
   // every page's artwork and mask. Nothing hits R2 yet; this is just planning.
   const publicBase = config.r2.publicUrlBase.replace(/\/$/, "");
   const thumbnailKeys = comic.coverThumbnailUrls.map((url) =>
@@ -495,10 +495,10 @@ export async function deleteComic(comicId: string) {
     ? [comic.previewVideoUrl.replace(`${publicBase}/`, "")]
     : [];
 
-  // DB delete is the moment of truth. If it throws, we haven't touched R2 —
+  // DB delete is the moment of truth. If it throws, we haven't touched R2 -
   // caller sees an error and the comic + all its assets stay intact, exactly
   // recoverable by retrying the delete. Pages cascade-delete in the DB via
-  // the schema's onDelete: Cascade. (Audit 8.15 — DB first, R2 second.)
+  // the schema's onDelete: Cascade. (Audit 8.15 - DB first, R2 second.)
   await prisma.comic.delete({ where: { id: comicId } });
 
   // Best-effort R2 cleanup AFTER the DB delete succeeded. Failures here mean
@@ -510,7 +510,7 @@ export async function deleteComic(comicId: string) {
     } catch (error) {
       logger.warn(
         { error, comicId, key },
-        "Failed to delete comic thumbnail from R2 after DB delete — orphaned file"
+        "Failed to delete comic thumbnail from R2 after DB delete, orphaned file"
       );
     }
   }
@@ -522,7 +522,7 @@ export async function deleteComic(comicId: string) {
     } catch (error) {
       logger.warn(
         { error, comicId, key },
-        "Failed to delete page asset from R2 after DB delete — orphaned file"
+        "Failed to delete page asset from R2 after DB delete, orphaned file"
       );
     }
   }
@@ -534,7 +534,7 @@ export async function deleteComic(comicId: string) {
     } catch (error) {
       logger.warn(
         { error, comicId, key },
-        "Failed to delete comic preview video from R2 after DB delete — orphaned file"
+        "Failed to delete comic preview video from R2 after DB delete, orphaned file"
       );
     }
   }
@@ -762,7 +762,7 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
       genderTags: true,
       ageGroups: true,
       isBestseller: true,
-      // Real page count — see withRealPageCount.
+      // Real page count - see withRealPageCount.
       _count: { select: { pages: true } },
       coverThumbnailUrls: true,
       themes: THEMES_SELECT,
@@ -784,8 +784,8 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
     },
     // The admin's arrangement (Comic.sortOrder). The Bestseller flag is only a
     // badge and does not move a book. This single ordering drives every
-    // storefront listing — the home page grid, /comic, and the "Explore More
-    // Books" picks on a comic page — so they always agree.
+    // storefront listing - the home page grid, /comic, and the "Explore More
+    // Books" picks on a comic page - so they always agree.
     orderBy: COMIC_ORDER_BY,
   });
 
@@ -794,8 +794,8 @@ export const getPublicComicsList = async (filters: ComicFilterQueryInput) => {
 
 /**
  * Storefront `pageCount` is the number of pages the comic actually has.
- * `Comic.pageCount` is the admin's planned total — it drives the admin's
- * "30 of 32 pages created" progress and publish checklist — and can disagree
+ * `Comic.pageCount` is the admin's planned total - it drives the admin's
+ * "30 of 32 pages created" progress and publish checklist - and can disagree
  * with reality, so customers are never shown it.
  */
 function withRealPageCount<T extends { _count: { pages: number } }>({
@@ -818,19 +818,19 @@ export const getPublicComicDetails = async (comicId: string) => {
       genderTags: true,
       ageGroups: true,
       isBestseller: true,
-      // Real page count — see withRealPageCount.
+      // Real page count - see withRealPageCount.
       _count: { select: { pages: true } },
       freePreviewPages: true,
       coverThumbnailUrls: true,
-      // Optional. Null for most comics — the carousel renders images only then.
+      // Optional. Null for most comics - the carousel renders images only then.
       // Deliberately NOT added to getPublicComicsList: the video is a
       // detail-page asset and catalogue payloads should not carry it.
       previewVideoUrl: true,
-      // SEO overrides. Null on most comics — the page then falls back to
+      // SEO overrides. Null on most comics - the page then falls back to
       // `title` / `description`, which are already selected above.
       metaTitle: true,
       metaDescription: true,
-      // Rotating lines for the generation screens. Active only — a fact the
+      // Rotating lines for the generation screens. Active only - a fact the
       // admin switched off must not reach the browser at all, since ordering is
       // decided client-side and anything sent could be displayed.
       //

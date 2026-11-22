@@ -14,7 +14,7 @@ import {
 } from "../services/sitePage.service.js";
 
 /**
- * There is no validateParams middleware in this codebase — blog.controller's
+ * There is no validateParams middleware in this codebase - blog.controller's
  * parseQueryOrThrow is the established stand-in for the same problem on the
  * query string, and this mirrors it for route params.
  *

@@ -17,14 +17,14 @@ export const MIN_WEIGHT_KG = 0.05;
 export const MAX_WEIGHT_KG = 30;
 
 // HSN code for printed books (India customs classification). Not used for
-// domestic shipments — kept here for the international branch that gets added
+// domestic shipments - kept here for the international branch that gets added
 // later. See DECISIONS.md if/when international is enabled.
 export const HSN_CODE_PRINTED_BOOK = "4901";
 
 // Shiprocket status string → internal OrderStatus enum. Shiprocket sends the
 // raw string in webhooks; we store it verbatim in `trackingStatus` (audit trail)
 // AND flip `Order.status` per this mapping. Any status not in this map is stored
-// but does NOT change Order.status — safe default, no accidental state changes.
+// but does NOT change Order.status - safe default, no accidental state changes.
 import type { OrderStatus } from "../generated/prisma/client.js";
 
 export const SHIPROCKET_STATUS_MAP: Record<string, OrderStatus> = {
@@ -43,12 +43,12 @@ export const SHIPROCKET_STATUS_MAP: Record<string, OrderStatus> = {
   LOST: "SHIPROCKET_FAILED",
 };
 
-// ⚠️⚠️ DO NOT IMPORT ANYTHING BELOW THIS LINE — DUPLICATE, AND IT IS THE WRONG
+// ⚠️⚠️ DO NOT IMPORT ANYTHING BELOW THIS LINE - DUPLICATE, AND IT IS THE WRONG
 //        ONE. (flagged Sep 21, 2026)
 //
 // `PublicOrderStatusCode`, `PublicOrderStatus` and `toPublicStatus` are ALSO
 // defined in `src/utils/orderStatusMapping.ts`. That file is the canonical
-// copy — it is what `order.service.ts` imports, and it is what customers
+// copy - it is what `order.service.ts` imports, and it is what customers
 // actually see today.
 //
 // The two copies DISAGREE. Same input, different output:
@@ -61,7 +61,7 @@ export const SHIPROCKET_STATUS_MAP: Record<string, OrderStatus> = {
 //   CONFIRMED   | "Printing"                         | "Getting ready to ship"
 //
 // The GENERATED row is the one that matters. It means every paid page is done
-// and the book is waiting on the CUSTOMER to pick variants and send to print —
+// and the book is waiting on the CUSTOMER to pick variants and send to print -
 // nothing is happening server-side. The canonical copy gives it its own code so
 // the UI can prompt them. This copy collapses it into PREPARING, which tells the
 // customer to sit tight and wait for us. That is the opposite instruction, and
@@ -71,7 +71,7 @@ export const SHIPROCKET_STATUS_MAP: Record<string, OrderStatus> = {
 // it imports the correct copy, so everything below is dead code. The danger is
 // the next call site. Someone working on shipping opens this file, finds
 // `toPublicStatus` sitting right here, and imports it. It typechecks, it boots,
-// it returns a valid-looking object — and customers silently get wrong wording
+// it returns a valid-looking object - and customers silently get wrong wording
 // with nothing anywhere reporting a problem.
 //
 // This is the same failure shape as the `assertNotExpired` duplication that
@@ -83,7 +83,7 @@ export const SHIPROCKET_STATUS_MAP: Record<string, OrderStatus> = {
 // the change that found it.
 //
 // ============================================================
-// PUBLIC ORDER STATUS — internal enum → customer-facing shape
+// PUBLIC ORDER STATUS - internal enum → customer-facing shape
 // ============================================================
 //
 // The customer-facing tracking endpoint (Section 6) never exposes the raw
@@ -93,11 +93,11 @@ export const SHIPROCKET_STATUS_MAP: Record<string, OrderStatus> = {
 //   - `label` is the human string shown to the customer.
 //
 // Deliberate collapses:
-//   - PAID and GENERATED both show "Preparing your book" — the customer
+//   - PAID and GENERATED both show "Preparing your book" - the customer
 //     doesn't care which internal stage we're in.
 //   - CONFIRMED, READY_TO_SHIP, and SHIPROCKET_FAILED all show
 //     "Getting ready to ship". Backend failure is admin's problem, not
-//     the customer's — they see the same neutral message while admin
+//     the customer's - they see the same neutral message while admin
 //     recovers via the SHIPROCKET_FAILED queue (Section 7).
 //
 // The switch is deliberately exhaustive: adding a new OrderStatus value

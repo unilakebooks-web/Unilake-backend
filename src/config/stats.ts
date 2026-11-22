@@ -13,7 +13,7 @@ import type { OrderStatus } from "../generated/prisma/client.js";
 //
 // Every date bucket on the overview chart is cut on IST day boundaries, not
 // UTC. The business and effectively all of its customers are in India, so an
-// order placed at 01:00 IST belongs to that day as a human would count it —
+// order placed at 01:00 IST belongs to that day as a human would count it -
 // under UTC it would silently land on the previous day's bar and the chart
 // would disagree with anything counted by hand.
 //
@@ -22,15 +22,15 @@ import type { OrderStatus } from "../generated/prisma/client.js";
 // in one environment produces numbers that are wrong but never error.
 //
 // Consumed two ways, both of which must agree:
-//   1. Postgres — `AT TIME ZONE` inside the timeseries query.
-//   2. Node — `Intl.DateTimeFormat` when zero-filling empty buckets.
+//   1. Postgres - `AT TIME ZONE` inside the timeseries query.
+//   2. Node - `Intl.DateTimeFormat` when zero-filling empty buckets.
 export const REPORTING_TIMEZONE = "Asia/Kolkata";
 
 // The same offset as a fixed literal, used to resolve IST midnight to a real
 // UTC instant when computing range boundaries.
 //
 // Safe to hardcode ONLY because India observes no daylight saving and has held
-// UTC+05:30 since 1945 — a zone with DST could not be expressed this way.
+// UTC+05:30 since 1945 - a zone with DST could not be expressed this way.
 // If REPORTING_TIMEZONE ever changes, this must change with it.
 export const REPORTING_UTC_OFFSET = "+05:30";
 
@@ -39,7 +39,7 @@ export const REPORTING_UTC_OFFSET = "+05:30";
 // ============================================================
 //
 // An Order row is created at checkout *initiation*, before any money moves, so
-// `CREATED` means "someone opened the Razorpay modal" — counting it would
+// `CREATED` means "someone opened the Razorpay modal" - counting it would
 // inflate revenue with abandoned carts. `CANCELLED` is money that came back.
 //
 // `SHIPROCKET_FAILED` IS included: the customer paid and the payment stands;
@@ -61,7 +61,7 @@ export const REVENUE_STATUSES: OrderStatus[] = [
 // without this seed a status with no orders is simply absent from the response
 // and the frontend reads `undefined` where it expects a number.
 //
-// Order matters — the overview renders the status breakdown in this sequence.
+// Order matters - the overview renders the status breakdown in this sequence.
 export const ALL_ORDER_STATUSES: OrderStatus[] = [
   "CREATED",
   "PAID",
@@ -101,21 +101,21 @@ export const RANGE_DAYS: Record<Exclude<StatsRange, "all">, number> = {
 // Both of these describe an order that is not technically broken but has sat
 // still long enough to be worth a human look.
 
-// A `CREATED` order older than this never got paid — the customer opened
+// A `CREATED` order older than this never got paid - the customer opened
 // Razorpay and walked away. Razorpay itself expires an unused order after 15
 // minutes, so anything past a day is certainly abandoned rather than in flight.
 export const ABANDONED_CHECKOUT_HOURS = 24;
 
 // A `SHIPPED` order whose tracking has not moved in this long is either stuck
 // with the courier or not being polled. An order shipped with tracking that has
-// *never* updated counts as stale too — see the null handling in the service.
+// *never* updated counts as stale too - see the null handling in the service.
 export const STALE_TRACKING_DAYS = 5;
 
 // ============================================================
 // LIST SIZES
 // ============================================================
 //
-// Both lists are glanceable summaries on a dashboard, not browsable tables —
+// Both lists are glanceable summaries on a dashboard, not browsable tables -
 // the full views live at /admin/orders and /admin/comics.
 export const RECENT_ORDERS_LIMIT = 6;
 export const TOP_COMICS_LIMIT = 5;

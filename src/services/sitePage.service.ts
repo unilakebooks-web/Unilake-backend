@@ -6,14 +6,14 @@ import { SitePageSlug } from "../generated/prisma/enums.js";
 /**
  * The canonical list of pages, read straight off the generated Prisma enum
  * rather than written out by hand. Add a value to SitePageSlug in
- * schema.prisma and this module picks it up with no further edits — there is
+ * schema.prisma and this module picks it up with no further edits - there is
  * nothing here that can drift out of sync with the database.
  */
 const ALL_SLUGS = Object.values(SitePageSlug);
 
 /**
  * Pre-filled titles for a page the admin has not saved yet, so the editor
- * opens with something sensible instead of an empty field. Purely a default —
+ * opens with something sensible instead of an empty field. Purely a default -
  * once saved, whatever the admin typed wins.
  */
 const DEFAULT_TITLES: Record<SitePageSlug, string> = {
@@ -54,7 +54,7 @@ function buildPlaceholder(slug: SitePageSlug): SitePageView {
 
 /**
  * Admin list. Always returns exactly one entry per slug, whether or not a row
- * exists — so the Pages screen shows three cards from the very first load and
+ * exists - so the Pages screen shows three cards from the very first load and
  * never an empty list.
  *
  * One query, then an in-memory merge. With three rows the Map is overkill on
@@ -86,7 +86,7 @@ export async function getSitePageAdmin(
 /**
  * Public read.
  *
- * "No such row" and "exists but unpublished" return the same 404 — one code
+ * "No such row" and "exists but unpublished" return the same 404 - one code
  * path, and it matches getBlogBySlugPublic. The frontend must render a proper
  * "not available yet" state for this, because these links sit in the footer of
  * every page on the site.
@@ -102,7 +102,7 @@ export async function getSitePagePublic(slug: SitePageSlug) {
 }
 
 /**
- * Create-or-update. There is no separate create endpoint — the slug set is
+ * Create-or-update. There is no separate create endpoint - the slug set is
  * fixed, so the first save creates the row and every later save updates it.
  *
  * `isActive` is omitted from `create` so the schema default (false) applies:
@@ -136,7 +136,7 @@ export async function upsertSitePage(
  * Publish / unpublish toggle.
  *
  * Refuses on a page that has never been saved rather than creating an empty
- * one — publishing a blank privacy policy is a worse outcome than an error the
+ * one - publishing a blank privacy policy is a worse outcome than an error the
  * admin can act on.
  */
 export async function toggleSitePageStatus(slug: SitePageSlug) {
@@ -144,7 +144,7 @@ export async function toggleSitePageStatus(slug: SitePageSlug) {
 
   if (!existing) {
     throw new ConflictError(
-      "Save this page before publishing it — there is nothing to show yet."
+      "Save this page before publishing it. There is nothing to show yet."
     );
   }
 

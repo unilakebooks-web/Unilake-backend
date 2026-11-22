@@ -126,7 +126,7 @@ export async function getFontFileMeta(fontId: string) {
  * glyph outlines the print renderer uses.
  *
  * A DB row whose file is missing from R2 becomes a 404 with a clear message
- * rather than a bare 500 — the admin has to re-upload, and should be told so.
+ * rather than a bare 500 - the admin has to re-upload, and should be told so.
  */
 export async function getFontFileBytes(fontId: string, fileKey: string) {
   try {
@@ -190,7 +190,7 @@ export async function deleteFont(fontId: string) {
 
   if (bubbleCount > 0) {
     throw new ConflictError(
-      `Cannot delete font "${font.name}" — ${bubbleCount} bubble(s) reference it. Unassign the font from those bubbles first.`
+      `Cannot delete font "${font.name}": ${bubbleCount} bubble(s) reference it. Unassign the font from those bubbles first.`
     );
   }
 

@@ -22,7 +22,7 @@ import {
  * Flow:
  *  1. Verify signature (400 on mismatch → Razorpay stops retrying).
  *  2. Parse payload.
- *  3. Insert WebhookEvent row (unique on eventId — dedupes retries).
+ *  3. Insert WebhookEvent row (unique on eventId - dedupes retries).
  *  4. On `payment.captured`: flip Order + Session to PAID, enqueue paid pages.
  *  5. On `payment.failed`: log for support, no state change.
  *  6. Everything else: log and ignore.
@@ -61,13 +61,13 @@ export async function handleRazorpayWebhook(
   // Idempotency key.
   //
   // `x-razorpay-event-id` is unique per EVENT and stable across Razorpay's
-  // retries of that event — exactly what this needs.
+  // retries of that event - exactly what this needs.
   //
   // It must NOT be the payment id. A single payment emits payment.authorized,
   // order.paid AND payment.captured, all carrying the same payment id. Keying on
   // it meant whichever event landed first claimed the unique constraint, and
-  // every later one — including the only event that mutates state,
-  // payment.captured — was discarded as a duplicate and the order was stranded
+  // every later one - including the only event that mutates state,
+  // payment.captured - was discarded as a duplicate and the order was stranded
   // at CREATED forever.
   //
   // The fallback keeps eventType in the key so that collision cannot return if
@@ -78,14 +78,14 @@ export async function handleRazorpayWebhook(
   if (!eventId) {
     logger.warn(
       { eventType },
-      "Razorpay webhook missing eventId — cannot dedupe, ignoring"
+      "Razorpay webhook missing eventId, cannot dedupe, ignoring"
     );
     return;
   }
 
   const razorpayOrderId: string | undefined = paymentEntity?.order_id;
 
-  // 3. Idempotency — insert WebhookEvent; P2002 = duplicate = already processed
+  // 3. Idempotency - insert WebhookEvent; P2002 = duplicate = already processed
   try {
     await prisma.webhookEvent.create({
       data: {
@@ -103,7 +103,7 @@ export async function handleRazorpayWebhook(
     ) {
       logger.info(
         { eventId, eventType },
-        "Duplicate Razorpay webhook — already processed, skipping"
+        "Duplicate Razorpay webhook, already processed, skipping"
       );
       return;
     }
@@ -124,7 +124,7 @@ export async function handleRazorpayWebhook(
           errorCode: paymentEntity?.error_code,
           errorDescription: paymentEntity?.error_description,
         },
-        "Razorpay payment failed — no state change, user can retry"
+        "Razorpay payment failed, no state change, user can retry"
       );
       break;
 
@@ -141,7 +141,7 @@ async function handlePaymentCaptured(
   if (!razorpayOrderId || !razorpayPaymentId) {
     logger.error(
       { eventId, razorpayOrderId, razorpayPaymentId },
-      "payment.captured missing order_id or payment id — cannot process"
+      "payment.captured missing order_id or payment id, cannot process"
     );
     return;
   }
@@ -164,7 +164,7 @@ async function handlePaymentCaptured(
           orderId: superseded.id,
           currentRazorpayOrderId: superseded.razorpayOrderId,
         },
-        "payment.captured on a SUPERSEDED Razorpay order — the customer paid an earlier amount, admin follow-up needed"
+        "payment.captured on a SUPERSEDED Razorpay order, the customer paid an earlier amount, admin follow-up needed"
       );
       // Attach the event to the order so the admin sees the payment on the order page.
       await prisma.webhookEvent
@@ -177,12 +177,12 @@ async function handlePaymentCaptured(
 
     logger.error(
       { razorpayOrderId, razorpayPaymentId },
-      "payment.captured: no local Order found for Razorpay order — orphan payment, admin follow-up needed"
+      "payment.captured: no local Order found for Razorpay order, orphan payment, admin follow-up needed"
     );
     return;
   }
 
-  // Idempotency at the state level — if Order is already past CREATED,
+  // Idempotency at the state level - if Order is already past CREATED,
   // this webhook is a redelivery we've already handled at business level.
   const enqueueAlreadySucceeded =
     order.orderSession.status !== "PAID" &&
@@ -191,7 +191,7 @@ async function handlePaymentCaptured(
   if (order.status !== "CREATED" && enqueueAlreadySucceeded) {
     logger.info(
       { orderId: order.id, currentStatus: order.status, sessionStatus: order.orderSession.status },
-      "payment.captured on already-processed order — skipping"
+      "payment.captured on already-processed order, skipping"
     );
     return;
   }
@@ -203,7 +203,7 @@ async function handlePaymentCaptured(
       data: { orderId: order.id },
     })
     .catch(() => {
-      // Non-fatal — the event row exists, just missing the FK backfill
+      // Non-fatal - the event row exists, just missing the FK backfill
     });
 
   await applyCapturedPayment(order, razorpayOrderId, razorpayPaymentId, eventId);
@@ -258,7 +258,7 @@ export async function applyCapturedPayment(
       }
     }
 
-    // Bill of Supply number — INR orders only, and only by the call that
+    // Bill of Supply number - INR orders only, and only by the call that
     // actually flipped the order, so a redelivered webhook never takes a
     // second number. In this transaction so a rollback takes none.
     if (orderFlipped === 1 && order.currency === "INR") {
@@ -308,7 +308,7 @@ export async function applyCapturedPayment(
   if (repricedMeanwhile) {
     logger.error(
       { orderId: order.id, razorpayOrderId, razorpayPaymentId, eventId },
-      "Payment captured on a Razorpay order that was superseded a moment ago — order left unpaid for manual follow-up"
+      "Payment captured on a Razorpay order that was superseded a moment ago, order left unpaid for manual follow-up"
     );
     return;
   }
@@ -319,14 +319,14 @@ export async function applyCapturedPayment(
       sessionId: order.orderSessionId,
       razorpayPaymentId,
     },
-    "Payment captured — Order + Session flipped to PAID"
+    "Payment captured, Order + Session flipped to PAID"
   );
 
   if (paidAfterDeletion) {
     // No generation, no "creating your book" email: the photo is gone. An admin follows up (refund or a new photo).
     logger.error(
       { orderId: order.id, sessionId: order.orderSessionId, razorpayPaymentId },
-      "Payment captured after the files of this preview were deleted — no book can be made, admin follow-up needed"
+      "Payment captured after the files of this preview were deleted, no book can be made, admin follow-up needed"
     );
     if (paidAfterDeletionFirst) {
       notifyPaidAfterDeletion(order.orderSessionId).catch((err) => {
@@ -359,7 +359,7 @@ export async function applyCapturedPayment(
     ) {
       logger.warn(
         { orderId: order.id },
-        "Paid-page enqueue collided with another caller for the same payment — leaving it to that caller"
+        "Paid-page enqueue collided with another caller for the same payment, leaving it to that caller"
       );
       // The webhook must not answer "done" for work the other caller may still fail at: it drops its row
       // and reports an error, so Razorpay re-sends it later (skipped as already processed if the other
@@ -383,11 +383,11 @@ export async function applyCapturedPayment(
       });
 
     // `err`, not `error`: pino only runs its Error serializer on the `err` key.
-    // Under any other key an Error has no enumerable fields and logs as `{}` —
+    // Under any other key an Error has no enumerable fields and logs as `{}` -
     // which is how a BullMQ priority overflow passed for a vague Redis problem.
     logger.error(
       { orderId: order.id, err: error },
-      "Paid-page enqueue failed — re-throwing so the caller retries (Razorpay re-sends the webhook; the customer's page asks again)"
+      "Paid-page enqueue failed, re-throwing so the caller retries (Razorpay re-sends the webhook; the customer's page asks again)"
     );
     throw error;
   });
@@ -405,7 +405,7 @@ export async function applyCapturedPayment(
     "Paid-page generation enqueued after payment"
   );
 
-  // Payment-received email — exactly once. Only the delivery whose guarded
+  // Payment-received email - exactly once. Only the delivery whose guarded
   // PAID → GENERATING_PAID flip actually matched sends it: a retry after a
   // failed enqueue never reached this line the first time, and any later
   // duplicate finds the session already past PAID (count 0). Fire-and-forget,
@@ -446,7 +446,7 @@ export class WebhookVerificationError extends Error {
  *
  * Differences from the Razorpay handler:
  *   - Auth: plain token comparison against x-api-key header (no HMAC)
- *   - No provider-supplied event id — we synthesise one from
+ *   - No provider-supplied event id - we synthesise one from
  *     awb + current_status_id + current_timestamp so retries of the SAME
  *     event dedupe correctly but genuinely new events (later scan, new
  *     status) process normally.
@@ -485,7 +485,7 @@ export async function handleShiprocketWebhook(
   // Shiprocket does not send an event id header. Same event redelivered by
   // Shiprocket carries identical awb + status_id + timestamp, so the tuple
   // is a stable dedup key. If any of those three is missing we cannot
-  // dedupe safely — log and drop rather than double-process.
+  // dedupe safely - log and drop rather than double-process.
   if (
     awb === undefined ||
     currentStatusId === undefined ||
@@ -493,14 +493,14 @@ export async function handleShiprocketWebhook(
   ) {
     logger.warn(
       { awb, currentStatusId, currentTimestamp, currentStatus },
-      "Shiprocket webhook missing dedup fields — cannot dedupe, ignoring"
+      "Shiprocket webhook missing dedup fields, cannot dedupe, ignoring"
     );
     return;
   }
   const eventId = `shiprocket:${awb}:${currentStatusId}:${currentTimestamp}`;
   const eventType = currentStatus ?? `status_${currentStatusId}`;
 
-  // 4. Insert WebhookEvent — P2002 = duplicate = already processed.
+  // 4. Insert WebhookEvent - P2002 = duplicate = already processed.
   try {
     await prisma.webhookEvent.create({
       data: {
@@ -518,7 +518,7 @@ export async function handleShiprocketWebhook(
     ) {
       logger.info(
         { eventId, eventType, awb },
-        "Duplicate Shiprocket webhook — already processed, skipping"
+        "Duplicate Shiprocket webhook, already processed, skipping"
       );
       return;
     }
@@ -536,7 +536,7 @@ export async function handleShiprocketWebhook(
         data: { orderId: result.orderId },
       })
       .catch(() => {
-        // Non-fatal — event row exists, just missing FK backfill.
+        // Non-fatal - event row exists, just missing FK backfill.
       });
   }
 

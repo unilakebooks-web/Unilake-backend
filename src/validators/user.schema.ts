@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-// Admin user management — GET /api/admin/users and PATCH /api/admin/users/:userId/role.
+// Admin user management - GET /api/admin/users and PATCH /api/admin/users/:userId/role.
 //
 // Role values match the strings Better Auth stores in User.role (see the
-// `additionalFields.role` config in lib/auth.ts). Uppercase only — "admin"
+// `additionalFields.role` config in lib/auth.ts). Uppercase only - "admin"
 // is rejected rather than silently normalised.
 
 export const UserRoleEnum = z.enum(["ADMIN", "SUB_ADMIN", "USER"]);
@@ -23,7 +23,7 @@ export const updateUserRoleSchema = z.object({
   role: UserRoleEnum,
 });
 
-// Better Auth generates its own random string ids for users — NOT uuids — so
+// Better Auth generates its own random string ids for users - NOT uuids - so
 // this only checks presence, unlike the order/session params schemas.
 export const userIdParamsSchema = z.object({
   userId: z.string().trim().min(1, "User ID is required"),

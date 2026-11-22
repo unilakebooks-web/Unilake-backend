@@ -33,7 +33,7 @@ export const reorderTeamMembersSchema = z.object({
 
 export const updateTeamMemberSchema = z
   .object({
-    // name and role are NOT NULL in the DB — changeable, never clearable.
+    // name and role are NOT NULL in the DB - changeable, never clearable.
     name: z.string().trim().min(1).optional(),
     role: z.string().trim().min(1).optional(),
 

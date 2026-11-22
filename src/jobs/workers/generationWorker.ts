@@ -43,7 +43,7 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
 
 /**
  * Best-effort cleanup on failure. Failures inside this function are logged,
- * never thrown — we're already inside a catch block; a nested throw would mask
+ * never thrown - we're already inside a catch block; a nested throw would mask
  * the original error.
  *
  * `status: FAILED` is written ONLY on the final attempt. While BullMQ still has
@@ -93,7 +93,7 @@ async function markPageVersionFailed(
   } catch (dbErr) {
     logger.error(
       { pageVersionId, isFinal, dbErr },
-      "[SD Worker] Failed to record PageVersion failure — leaving in prior status"
+      "[SD Worker] Failed to record PageVersion failure, leaving in prior status"
     );
   }
 
@@ -142,7 +142,7 @@ async function markPageVersionTerminallyFailed(
   } catch (dbErr) {
     logger.error(
       { pageVersionId, dbErr },
-      "[SD Worker] Failed to record terminal PageVersion failure — leaving in prior status"
+      "[SD Worker] Failed to record terminal PageVersion failure, leaving in prior status"
     );
     return { flipped: false, errorMessage };
   }
@@ -152,7 +152,7 @@ async function markPageVersionTerminallyFailed(
  * Builds the browser-facing derivative of a finished page and uploads it beside
  * the print master, returning its public URL.
  *
- * 🔴 Best-effort on purpose — never throws.
+ * 🔴 Best-effort on purpose - never throws.
  *
  * By the time this runs, the print PNG is already uploaded and the expensive
  * work (a GPU round trip that can take minutes) is done. Failing the whole job
@@ -161,7 +161,7 @@ async function markPageVersionTerminallyFailed(
  *
  * So on failure we log and return null. The API then returns
  * `displayImageUrl: null`, the frontend falls back to `finalImageUrl`, and the
- * user sees their page — just the heavier version. Degraded, not broken.
+ * user sees their page - just the heavier version. Degraded, not broken.
  */
 async function buildAndUploadDisplayImage(
   sessionId: string,
@@ -188,7 +188,7 @@ async function buildAndUploadDisplayImage(
   } catch (err) {
     logger.warn(
       { err, pageVersionId },
-      "[SD Worker] Display image build failed — falling back to the print master"
+      "[SD Worker] Display image build failed, falling back to the print master"
     );
     return null;
   }
@@ -198,11 +198,11 @@ async function buildAndUploadDisplayImage(
  * Called after every terminal PageVersion transition (SD_READY or FAILED).
  * Decides whether the session as a whole is now complete, and if so, flips
  * its status atomically to either PREVIEW_READY (any successes) or FAILED
- * (zero successes — every preview page final-failed).
+ * (zero successes - every preview page final-failed).
  *
  * Concurrency (audit 9.2): the flip uses `updateMany` with the current status
  * as part of the WHERE clause. Postgres guarantees only one such update can
- * match — a second worker's updateMany will report count=0 and become a no-op.
+ * match - a second worker's updateMany will report count=0 and become a no-op.
  * No transactions, no fake row-locks, no duplicate events.
  *
  * Success-wins semantics: if even one preview page reached SD_READY, the
@@ -217,7 +217,7 @@ async function maybeMarkPreviewComplete(
   orderSessionId: string
 ): Promise<PreviewCompleteResult> {
   // The session's frozen preview pages are the only source of truth for which
-  // pages are free — same list enqueuePreviewGenerationJobs uses. Counting the
+  // pages are free - same list enqueuePreviewGenerationJobs uses. Counting the
   // comic's live pages instead would stall the session forever the moment the
   // admin added or re-flagged one; counting Comic.freePreviewPages would
   // desync the moment that counter drifts.
@@ -233,12 +233,12 @@ async function maybeMarkPreviewComplete(
   // No preview pages flagged means nothing was ever enqueued. Never flip.
   if (totalPreviewPages === 0) return "not-done";
 
-  // Every terminal PageVersion row for this session's preview pages —
+  // Every terminal PageVersion row for this session's preview pages -
   // SD_READY (won) or FAILED (final-failed after all BullMQ attempts).
   //
   // Deliberately NOT `distinct: ["pageId"]`: a page can hold several variants
   // (a failed attempt plus a successful regeneration), and collapsing to one
-  // row per page before we inspect them would pick an arbitrary variant —
+  // row per page before we inspect them would pick an arbitrary variant -
   // there is no ordering that makes that choice meaningful for both of the
   // questions below. Bounded by preview pages × the variant cap, so this is a
   // handful of rows.
@@ -252,8 +252,8 @@ async function maybeMarkPreviewComplete(
   });
 
   // Two separate questions, so two sets:
-  //   terminalPageIds  — has this page settled at all?
-  //   succeededPageIds — did ANY variant of it succeed?
+  //   terminalPageIds  - has this page settled at all?
+  //   succeededPageIds - did ANY variant of it succeed?
   // A page with variant 0 FAILED and variant 1 SD_READY belongs in both, which
   // is the point: success-wins is evaluated per page, across its variants.
   const terminalPageIds = new Set<string>();
@@ -264,7 +264,7 @@ async function maybeMarkPreviewComplete(
     if (row.status === "SD_READY") succeededPageIds.add(row.pageId);
   }
 
-  // Not every preview page has reached a terminal state yet — nothing to do.
+  // Not every preview page has reached a terminal state yet - nothing to do.
   if (terminalPageIds.size < totalPreviewPages) return "not-done";
 
   // Success-wins: any single SD_READY page keeps the session recoverable.
@@ -272,7 +272,7 @@ async function maybeMarkPreviewComplete(
   const targetStatus = anySuccess ? "PREVIEW_READY" : "FAILED";
 
   // Atomic flip. `updateMany` with status in the where clause is Postgres-
-  // native single-statement atomicity — a concurrent worker that arrives one
+  // native single-statement atomicity - a concurrent worker that arrives one
   // microsecond later will match zero rows and its own updateMany will no-op.
   // This is the real fix for audit 9.2 (the previous $transaction claim was
   // relying on a lock that findUnique does not actually take).
@@ -315,7 +315,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     },
   });
 
-  // Row deleted between enqueue and pickup. Not retryable — return success
+  // Row deleted between enqueue and pickup. Not retryable - return success
   // so BullMQ drops it cleanly. No page:error emit; the row is gone.
   if (!pageVersion) {
     logger.warn(
@@ -331,7 +331,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
   // === 2. IDEMPOTENCY GUARD ===
   //
   // Already succeeded on a prior attempt. Re-emit for late-joining browsers
-  // and skip. No error handling needed for this branch — nothing acquired
+  // and skip. No error handling needed for this branch - nothing acquired
   // or transitioned.
   if (pageVersion.status === "SD_READY" && pageVersion.finalImageUrl) {
     logger.info(
@@ -386,7 +386,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
       throw new Error(`Page ${page.id} has no artwork or dimensions`);
     }
 
-    // Face-only requirements — mask + prompt for ComfyUI, photo for the swap.
+    // Face-only requirements - mask + prompt for ComfyUI, photo for the swap.
     if (page.hasFace) {
       if (!orderSession.bestPhotoUrl) {
         throw new Error(`Session ${sessionId} has no bestPhotoUrl`);
@@ -402,7 +402,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     // === 4. TEXT STAMP (reuse or fresh) ===
     //
     // Runs for BOTH face and non-face pages. `stampTextOnPage` gracefully
-    // returns the raw artwork when a page has zero bubbles — so a non-face
+    // returns the raw artwork when a page has zero bubbles - so a non-face
     // no-bubble page just downloads the artwork and re-uploads it, which
     // gives every session its own copy under sessions/{id}/.
     let textStampedUrl = pageVersion.textStampedUrl;
@@ -444,12 +444,12 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     //
     // Face pages go through RunPod; non-face pages are done after the
     // stamp step. For non-face pages, we re-upload the stamped buffer
-    // under the /final/ prefix so every session owns a full copy — no
+    // under the /final/ prefix so every session owns a full copy - no
     // shared refs to comic-level artwork that would break if the comic
     // gets deleted.
 
     let finalImageUrl: string;
-    // Null when the derivative could not be built — see buildAndUploadDisplayImage.
+    // Null when the derivative could not be built - see buildAndUploadDisplayImage.
     let displayImageUrl: string | null = null;
     let comfyJobId: string | null = null;
 
@@ -461,7 +461,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
       // face branch below.
       logger.info(
         { pageVersionId, pageNumber: page.pageNumber },
-        "[SD Worker] Non-face page — skipping RunPod"
+        "[SD Worker] Non-face page, skipping RunPod"
       );
 
       const stampedBuffer = await downloadFileToBuffer(
@@ -533,7 +533,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
       // 10 MiB, and a 2000×1455 PNG can hit 8 MB by itself. JPEG at quality
       // 88 gets us to ~400 KB per image with no perceivable quality drop
       // on photorealistic comic art. The face-swap OUTPUT from RunPod is
-      // separate — it comes back at ComfyUI's stitched resolution and gets
+      // separate - it comes back at ComfyUI's stitched resolution and gets
       // stored as PNG in R2 in section 5e. So print quality is preserved.
       //
       // WATCH: masks are strict black/white with sharp edges. JPEG can
@@ -599,12 +599,12 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
 
     /// === 6. MARK SD_READY ===
     //
-    // comfyJobId is nullable — non-face pages don't have one. Both
+    // comfyJobId is nullable - non-face pages don't have one. Both
     // branches converge here so we only have one status write.
     //
     // errorMessage: null explicitly clears any stale error from a previous
     // failed attempt. Without this, a row that fails once and succeeds on
-    // retry keeps the old error message even at SD_READY — misleading in
+    // retry keeps the old error message even at SD_READY - misleading in
     // both the DB and the GET /sessions response.
     await prisma.pageVersion.update({
       where: { id: pageVersionId },
@@ -633,10 +633,10 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     // === 8. CHECK IF THIS WAS THE LAST PREVIEW PAGE ===
     //
     // Race-safe via updateMany with status in the WHERE clause (see the
-    // function's comment). Fires for face and non-face pages alike — a page
+    // function's comment). Fires for face and non-face pages alike - a page
     // is a page as far as preview completion is concerned.
     //
-    // Success path can only ever produce "ready" or "not-done" — reaching
+    // Success path can only ever produce "ready" or "not-done" - reaching
     // this line means at least one page (this one) just went SD_READY, so
     // the anySuccess branch will win if all other pages are terminal too.
     const result = await maybeMarkPreviewComplete(sessionId);
@@ -644,7 +644,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     if (result === "ready") {
       logger.info(
         { sessionId },
-        "[SD Worker] All preview pages done — session marked PREVIEW_READY"
+        "[SD Worker] All preview pages done, session marked PREVIEW_READY"
       );
       emitSessionPreviewReady(sessionId);
       // Exactly once: "ready" is only returned by the one worker whose
@@ -660,7 +660,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     // === 9. CHECK IF THIS WAS THE LAST PAID PAGE ===
     //
     // Same race-safety story as the preview check. Both helpers fire on every
-    // page completion — the one whose filter (isPreviewPage) does not match
+    // page completion - the one whose filter (isPreviewPage) does not match
     // this page's kind returns "not-done" and does nothing. Cleaner than
     // routing at the worker level.
     //
@@ -670,10 +670,10 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     if (paidResult === "ready") {
       logger.info(
         { sessionId },
-        "[SD Worker] All paid pages done — session marked PAID_PAGES_READY, Order marked GENERATED"
+        "[SD Worker] All paid pages done, session marked PAID_PAGES_READY, Order marked GENERATED"
       );
       emitSessionPaidReady(sessionId);
-      // Exactly once — same status-guarded-flip reasoning as the preview email.
+      // Exactly once - same status-guarded-flip reasoning as the preview email.
       notifyBookReady(sessionId).catch((err) => {
         logger.error(
           { sessionId, err },
@@ -707,7 +707,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
       "[SD Worker] Pipeline failed"
     );
 
-    // Inside processJob, `attemptsMade` is the count BEFORE this attempt — 0 on
+    // Inside processJob, `attemptsMade` is the count BEFORE this attempt - 0 on
     // the first run, which is why the log above reads `attemptsMade + 1`. The
     // `failed` handler below compares the un-incremented value instead, because
     // BullMQ has already bumped it by the time that event fires. Both are
@@ -728,7 +728,7 @@ async function processJob(job: Job<GeneratePageJobData>): Promise<void> {
     // === CLEANUP ===
     //
     // Release photo cache slot ONLY if we successfully acquired it. Runs on
-    // both success and failure paths — no leaked refcounts either way.
+    // both success and failure paths - no leaked refcounts either way.
     // Non-face pages never call acquirePhoto so photoAcquired stays false
     // and this correctly skips the release.
     if (photoAcquired) {
@@ -748,7 +748,7 @@ export const generationWorker = new Worker<GeneratePageJobData>(
  * tell the browser, then check whether the session as a whole is now done.
  *
  * Shared by the worker's `failed` handler and the stuck-page sweeper so the two
- * can never drift apart. Safe to run more than once for the same page — the
+ * can never drift apart. Safe to run more than once for the same page - the
  * FAILED write is status-guarded and so are both session flips, so a second
  * call does nothing and emits nothing.
  *
@@ -786,8 +786,8 @@ export async function settleTerminalPageFailure(
 
   // processJob's catch has already written FAILED on an ordinary final
   // attempt, so this is a no-op there (flipped = false, no second event).
-  // It only does work when the page was given up on without our code running —
-  // a stalled job, or a row the sweeper found with no live job — and then it is
+  // It only does work when the page was given up on without our code running -
+  // a stalled job, or a row the sweeper found with no live job - and then it is
   // the only thing that marks the page and tells the browser.
   const { flipped, errorMessage } = await markPageVersionTerminallyFailed(
     pageVersionId,
@@ -798,7 +798,7 @@ export async function settleTerminalPageFailure(
   if (flipped) {
     logger.error(
       { pageVersionId, sessionId, source: opts.source, failedReason: errorMessage },
-      "[SD Worker] Page given up outside processJob — PageVersion marked FAILED"
+      "[SD Worker] Page given up outside processJob, PageVersion marked FAILED"
     );
     emitPageError(sessionId, {
       pageNumber: pageVersion.page.pageNumber,
@@ -813,7 +813,7 @@ export async function settleTerminalPageFailure(
   if (result === "failed") {
     logger.error(
       { sessionId },
-      "[SD Worker] All preview pages final-failed — session marked FAILED"
+      "[SD Worker] All preview pages final-failed, session marked FAILED"
     );
     // Intentionally no WebSocket emit here (Decision 4 skipped).
     // Frontend learns via per-page `page:error` events + GET /sessions/:id.
@@ -835,16 +835,16 @@ export async function settleTerminalPageFailure(
   }
 
   // Mirror check for paid pages. Same rationale as the preview branch
-  // above — the helper whose isPreviewPage filter doesn't match this
+  // above - the helper whose isPreviewPage filter doesn't match this
   // page will no-op.
   const paidResult = await maybeMarkPaidReady(sessionId);
 
   if (paidResult === "failed") {
     logger.error(
       { sessionId },
-      "[SD Worker] All paid pages final-failed — session marked FAILED, Order left at PAID for admin review"
+      "[SD Worker] All paid pages final-failed, session marked FAILED, Order left at PAID for admin review"
     );
-    // No WebSocket emit — matches preview failure handling. Frontend
+    // No WebSocket emit - matches preview failure handling. Frontend
     // picks it up via page:error + GET /sessions/:id.
   } else if (paidResult === "ready") {
     // Same as above but for paid: this page failed, earlier successes
@@ -874,12 +874,12 @@ generationWorker.on("failed", async (job, err) => {
   if (!job) return;
 
   // BullMQ's `failed` event fires on EVERY failed attempt, not just the last.
-  // Only act once the job has really given up — retries in progress must not
+  // Only act once the job has really given up - retries in progress must not
   // be treated as terminal failures.
   //
   // `finishedOn` is BullMQ's own answer: it is set only when the job lands in
   // the failed set, never when a retry is scheduled. Counting attempts is not
-  // enough — a job that stalls past maxStalledCount is failed with an
+  // enough - a job that stalls past maxStalledCount is failed with an
   // UnrecoverableError after a single counted attempt (attemptsMade = 1), and
   // processJob's catch never runs for it. Before this check, such pages were
   // left in GENERATING_SD forever and their session never completed.
@@ -893,7 +893,7 @@ generationWorker.on("failed", async (job, err) => {
     });
   } catch (handlerErr) {
     // A crash inside the terminal-failure handler must not itself crash the
-    // worker. Log it and move on — the stuck-page sweeper picks the row up
+    // worker. Log it and move on - the stuck-page sweeper picks the row up
     // on a later pass.
     logger.error(
       { pageVersionId, handlerErr },

@@ -2,14 +2,14 @@ import { z } from "zod";
 
 /**
  * Optional free-text field. Omitted = unchanged, null = clear the column.
- * Empty strings are rejected — clearing is what null is for, and allowing both
+ * Empty strings are rejected - clearing is what null is for, and allowing both
  * means two ways to express the same state.
  */
 const optionalText = (max: number, label: string) =>
   z
     .string()
     .trim()
-    .min(1, `${label} cannot be empty — omit it or send null to clear it`)
+    .min(1, `${label} cannot be empty: omit it or send null to clear it`)
     .max(max, `${label} is too long`)
     .nullable()
     .optional();
@@ -28,7 +28,7 @@ const optionalUrl = (label: string) =>
  *
  * This matters more than it looks: whatever is stored here is rendered inside
  * an <iframe> on a public page. An unconstrained URL turns the settings form
- * into an admin-side injection vector — anyone who gets into the admin panel
+ * into an admin-side injection vector - anyone who gets into the admin panel
  * could frame arbitrary third-party content on the site. Restricting the host
  * closes that off, at the cost of not supporting other map providers.
  *
@@ -50,7 +50,7 @@ const mapEmbedUrlSchema = z
       }
 
       // http:// would be blocked by the browser on an https page anyway, and
-      // silently render nothing — reject it here where we can say why.
+      // silently render nothing - reject it here where we can say why.
       if (parsed.protocol !== "https:") return false;
 
       return GOOGLE_MAPS_HOST.test(parsed.hostname);
@@ -68,7 +68,7 @@ const mapEmbedUrlSchema = z
  *
  * Every field is optional: the admin fills this in progressively and a
  * half-complete settings form must still save. Omitted leaves a column
- * untouched, null clears it — the upsert in the service relies on that
+ * untouched, null clears it - the upsert in the service relies on that
  * distinction, so do not relax these to plain `.optional()`.
  *
  * Phone numbers are deliberately loose. International formats vary too much
@@ -78,7 +78,7 @@ export const updateSiteSettingSchema = z
   .object({
     // ---- Store status ----
     // The one NOT NULL column on this model, so unlike every other field here
-    // it is `.optional()` WITHOUT `.nullable()` — omitted still means "leave
+    // it is `.optional()` WITHOUT `.nullable()` - omitted still means "leave
     // alone", but "clear it" is not a meaningful operation on a boolean.
     //
     // The admin panel deliberately sends this on its own, from a dedicated
@@ -118,7 +118,7 @@ export const updateSiteSettingSchema = z
     // Site-wide fallback title/description, used by any page that has nothing
     // more specific (the homepage, and anything without its own meta fields).
     //
-    // The limits are deliberately ABOVE what search engines display — Google
+    // The limits are deliberately ABOVE what search engines display - Google
     // truncates around 60 and 160 characters. The admin panel shows a counter
     // and warns past those, but still allows saving, so rejecting at 60/160
     // here would turn that soft warning into a hard failure.

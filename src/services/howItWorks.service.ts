@@ -13,8 +13,8 @@ import type { HowItWorksStep } from "../validators/howItWorks.schema.js";
 const VIDEO_UPLOAD_EXPIRY_SECONDS = 30 * 60;
 const POSTER_UPLOAD_EXPIRY_SECONDS = 15 * 60;
 
-// Deterministic pick when more than one row exists (should never happen —
-// see updateHowItWorks — but if it ever does, both admin and public reads
+// Deterministic pick when more than one row exists (should never happen -
+// see updateHowItWorks - but if it ever does, both admin and public reads
 // must agree on the same row rather than picking arbitrarily).
 const SINGLETON_ORDER_BY = { createdAt: "asc" as const };
 
@@ -47,7 +47,7 @@ export async function getHowItWorksUploadUrl(data: {
  * Public read. Deliberately stricter than the admin read: a section only
  * ever reaches the homepage once it has a video AND at least one step, even
  * if isActive is already true. This keeps a half-finished edit from ever
- * being visible — the admin's job is to finish it, not to remember to flip
+ * being visible - the admin's job is to finish it, not to remember to flip
  * isActive at exactly the right moment.
  */
 export async function getPublicHowItWorks() {
@@ -66,7 +66,7 @@ export async function getPublicHowItWorks() {
 }
 
 /**
- * Admin read. No isActive filter and no readiness check — the admin needs
+ * Admin read. No isActive filter and no readiness check - the admin needs
  * to see and edit the section while it's still incomplete.
  */
 export async function getAdminHowItWorks() {
@@ -82,7 +82,7 @@ export async function getAdminHowItWorks() {
 }
 
 /**
- * Singleton create-or-update. There is no :id on this endpoint by design —
+ * Singleton create-or-update. There is no :id on this endpoint by design -
  * find the one row (if any), create it on the first call, update it on
  * every call after. Ordered by createdAt so that in the vanishingly
  * unlikely case two concurrent first-saves both created a row, every read

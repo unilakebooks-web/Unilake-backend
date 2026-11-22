@@ -72,13 +72,13 @@ export async function updateGoogleReview(
 
   const updateData: Record<string, unknown> = {};
 
-  // `!== undefined` rather than truthiness — a rating of 0 would be rejected
+  // `!== undefined` rather than truthiness - a rating of 0 would be rejected
   // by Zod, but the same pattern keeps every field consistent.
   if (data.customerName !== undefined) updateData.customerName = data.customerName;
   if (data.rating !== undefined) updateData.rating = data.rating;
   if (data.reviewText !== undefined) updateData.reviewText = data.reviewText;
 
-  // Image: omitted = keep, a key = replace. There is no clear case — the
+  // Image: omitted = keep, a key = replace. There is no clear case - the
   // column is NOT NULL, which is why the validator refuses null here.
   //
   // Guard on oldUrl !== newUrl so an edit form that re-submits the SAME key
@@ -154,7 +154,7 @@ export async function deleteGoogleReview(id: string) {
 
   const r2Key = keyFromPublicUrl(existing.imageUrl);
 
-  // DB row first, then best-effort R2 cleanup — same ordering as
+  // DB row first, then best-effort R2 cleanup - same ordering as
   // CustomerReview, TeamMember and Blog.
   await prisma.googleReview.delete({ where: { id } });
 
@@ -169,14 +169,14 @@ export async function deleteGoogleReview(id: string) {
   }
 }
 
-/** Admin list — no isActive filter, the admin needs to see hidden rows too. */
+/** Admin list - no isActive filter, the admin needs to see hidden rows too. */
 export async function getAllGoogleReviews() {
   return prisma.googleReview.findMany({
     orderBy: { createdAt: "desc" },
   });
 }
 
-/** Public list — active only, newest first. Backed by @@index([isActive, createdAt]). */
+/** Public list - active only, newest first. Backed by @@index([isActive, createdAt]). */
 export async function getActiveGoogleReviews() {
   return prisma.googleReview.findMany({
     where: { isActive: true },

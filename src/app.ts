@@ -23,7 +23,7 @@ app.set("trust proxy", 1);
 
 const allowedOrigins = [
   "https://www.unilakekids.com",   // canonical production frontend
-  "https://unilakekids.com",       // apex — redirects to www, but be safe
+  "https://unilakekids.com",       // apex - redirects to www, but be safe
   "http://localhost:3000",         // local dev
 ];
 
