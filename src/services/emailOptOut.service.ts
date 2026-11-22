@@ -90,7 +90,7 @@ export async function applyUnsubscribe(
   return { scope: "GLOBAL" };
 }
 
-// ── Whose address can be trusted ────────────────────────────
+// -- Whose address can be trusted ----------------------------
 
 /** Sign-in providers that hand us the person's own, provider-confirmed address. */
 const SOCIAL_PROVIDERS = ["google", "facebook"];
@@ -123,7 +123,7 @@ async function hasTrustedAddress(userId: string): Promise<boolean> {
   return user !== null;
 }
 
-// ── The checkout box ────────────────────────────────────────
+// -- The checkout box ----------------------------------------
 
 export async function getMarketingConsent(
   userId: string
@@ -187,7 +187,7 @@ export async function setMarketingConsent(
   return { optedIn };
 }
 
-// ── The link in every bulk email ────────────────────────────
+// -- The link in every bulk email ----------------------------
 
 /** A random, unguessable token for an unsubscribe link (24 bytes). The address never appears in a URL. */
 async function createUnsubscribeToken(

@@ -13,7 +13,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 const UPLOAD_EXPIRY_SECONDS = 15 * 60;
 const MAX_SLUG_ATTEMPTS = 50;
 
-// Everything a list needs. `body` is deliberately excluded — it is the full
+// Everything a list needs. `body` is deliberately excluded - it is the full
 // HTML article and has no business travelling in a listing payload.
 const BLOG_LIST_SELECT = {
   id: true,
@@ -43,7 +43,7 @@ function slugify(title: string): string {
  * down to an empty string, which would otherwise make every such post collide
  * on "" and start suffixing off nothing.
  *
- * Bounded rather than a while(true) — a pathological title that somehow
+ * Bounded rather than a while(true) - a pathological title that somehow
  * collides 50 times should fail loudly, not spin.
  */
 async function generateUniqueSlug(title: string): Promise<string> {
@@ -76,7 +76,7 @@ async function generateUniqueSlug(title: string): Promise<string> {
  * travels back as a key and is resolved server-side at save time, but an
  * in-body image has to be written straight into the stored HTML as an absolute
  * src, so the caller needs the resolved URL up front. Handing it over here
- * keeps getPublicUrl() the single owner of that mapping — the alternative was
+ * keeps getPublicUrl() the single owner of that mapping - the alternative was
  * exposing the R2 base to the frontend bundle.
  */
 export async function getBlogUploadUrl(data: {
@@ -110,7 +110,7 @@ export async function createBlog(data: {
   const slug = await generateUniqueSlug(data.title);
 
   try {
-    // isActive is left unset so the DB default (false) applies — a new post is
+    // isActive is left unset so the DB default (false) applies - a new post is
     // never live while it is still being written.
     const blog = await prisma.blog.create({
       data: {
@@ -179,7 +179,7 @@ export async function updateBlog(
   if (data.metaDescription !== undefined)
     updateData.metaDescription = data.metaDescription;
 
-  // The slug is never touched here — it is frozen at create so that a title
+  // The slug is never touched here - it is frozen at create so that a title
   // edit can never 404 a link someone already shared.
 
   // Cover image: omitted = unchanged, a key = replace, null = clear.
@@ -259,7 +259,7 @@ export async function getBlogBySlugPublic(slug: string) {
   });
 
   // "No such slug" and "exists but unpublished" deliberately return the same
-  // 404 — same reasoning as the public comic detail endpoint. Do not leak
+  // 404 - same reasoning as the public comic detail endpoint. Do not leak
   // the existence of unpublished drafts.
   if (!blog) {
     throw new NotFoundError("Blog not found");
@@ -299,7 +299,7 @@ export async function deleteBlog(id: string) {
     ? getKeyFromPublicUrl(existing.coverImageUrl)
     : null;
 
-  // DB row first, then best-effort R2 cleanup — same ordering as
+  // DB row first, then best-effort R2 cleanup - same ordering as
   // CustomerReview and TeamMember.
   await prisma.blog.delete({ where: { id } });
 

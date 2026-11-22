@@ -8,7 +8,7 @@ import { AppError, ValidationError } from "../utils/errors.js";
 // ============================================================
 //
 // Sole entry point for sending transactional email. Notification service
-// (src/services/notification.service.ts — Layer 3) imports from here;
+// (src/services/notification.service.ts - Layer 3) imports from here;
 // no other file talks to Resend directly. Same pattern as shiprocket.ts
 // and runpodClient.ts.
 //
@@ -20,7 +20,7 @@ import { AppError, ValidationError } from "../utils/errors.js";
 // Retry policy:
 //   2 attempts total (1 real try + 1 retry) with 500ms backoff.
 //   Retries apply to network errors and HTTP 5xx / 429 only.
-//   Email is best-effort — callers wrap in try/catch and swallow (Decision D
+//   Email is best-effort - callers wrap in try/catch and swallow (Decision D
 //   in the notifyUser design). Never let email failure block business logic.
 
 const MAX_SEND_ATTEMPTS = 2;
@@ -29,9 +29,9 @@ const SEND_RETRY_DELAY_MS = 500;
 // Where customer replies go. Every email is sent FROM noreply@unilakekids.com,
 // which has no inbox (the domain has no MX record), so without this a reply
 // bounces. The templates in notification.service.ts ask customers NOT to reply
-// and to use the support email / WhatsApp instead — but some will reply
+// and to use the support email / WhatsApp instead - but some will reply
 // anyway, so this must still point at a mailbox someone reads. Hardcoded by
-// decision — change it here.
+// decision - change it here.
 const REPLY_TO_ADDRESS = "unilake.books@gmail.com";
 
 // Single Resend client instance, reused across all sends. SDK is thread-safe.
@@ -105,7 +105,7 @@ function sleep(ms: number): Promise<void> {
  * Decides whether a Resend failure is worth retrying.
  *
  * Retry:  network failures (fetch threw), HTTP 5xx, HTTP 429.
- * Skip:   HTTP 4xx other than 429 — invalid recipient, unverified sender,
+ * Skip:   HTTP 4xx other than 429 - invalid recipient, unverified sender,
  *         malformed payload. These will never succeed on retry.
  *
  * Resend SDK surfaces HTTP status inside the returned error object rather
@@ -135,7 +135,7 @@ function isRetryableError(err: unknown): boolean {
 /**
  * Naive HTML → plain-text fallback. Strips tags, collapses whitespace.
  * Called only when the caller doesn't provide their own `text` version.
- * Not a real HTML-to-text pipeline — just a courtesy so plaintext-only
+ * Not a real HTML-to-text pipeline - just a courtesy so plaintext-only
  * mail clients (screen readers, some corporate filters) see something
  * readable instead of raw markup.
  */
@@ -188,11 +188,11 @@ function htmlToPlainText(html: string): string {
 // ============================================================
 
 export type SendEmailParams = {
-  /** Recipient email. Single recipient — multi-send goes through separate calls. */
+  /** Recipient email. Single recipient - multi-send goes through separate calls. */
   to: string;
-  /** Subject line. No length enforcement — Gmail truncates at ~70 chars visually. */
+  /** Subject line. No length enforcement - Gmail truncates at ~70 chars visually. */
   subject: string;
-  /** Rich HTML body. Inline styles only — Gmail strips <style> blocks. */
+  /** Rich HTML body. Inline styles only - Gmail strips <style> blocks. */
   html: string;
   /**
    * Optional plaintext version. If omitted, we derive one from html.
@@ -222,7 +222,7 @@ export type SendEmailResult = {
  * WebhookEvent uniqueness).
  *
  * Errors: throws AppError on permanent failures. Callers should wrap in
- * try/catch and log/swallow — email failure must never block business logic.
+ * try/catch and log/swallow - email failure must never block business logic.
  */
 export async function sendEmail(
   params: SendEmailParams
@@ -284,13 +284,13 @@ export async function sendEmail(
       if (error) {
         // Attach a synthetic statusCode so isRetryableError can classify it.
         // Resend's error shape has a `name` (e.g. "invalid_recipient") and
-        // `message` — we surface both in our AppError.
+        // `message` - we surface both in our AppError.
         const status =
           "statusCode" in error && typeof error.statusCode === "number"
             ? error.statusCode
             : 502;
         throw new EmailSendError(
-          `Resend send failed: ${error.name ?? "unknown"} — ${error.message ?? ""} (HTTP ${status})`,
+          `Resend send failed: ${error.name ?? "unknown"}: ${error.message ?? ""} (HTTP ${status})`,
           error.name ?? "unknown",
           status
         );
@@ -313,11 +313,11 @@ export async function sendEmail(
     } catch (err) {
       lastError = err;
 
-      // Permanent failure — surface immediately.
+      // Permanent failure - surface immediately.
       if (!isRetryableError(err)) {
         logger.error(
           { to: params.to, subject: params.subject, err },
-          "[Email] Permanent failure — not retrying"
+          "[Email] Permanent failure, not retrying"
         );
         throw err;
       }
@@ -334,7 +334,7 @@ export async function sendEmail(
       // Retryable and have attempts left.
       logger.warn(
         { to: params.to, subject: params.subject, attempt, err },
-        "[Email] Transient failure — retrying"
+        "[Email] Transient failure, retrying"
       );
       await sleep(SEND_RETRY_DELAY_MS);
     }

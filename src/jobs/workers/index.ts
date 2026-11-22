@@ -8,11 +8,11 @@ import { sweepStuckPageVersions } from "./stuckPageSweeper.js";
 import { sweepExpiredCoupons } from "../../services/coupon.service.js";
 import { sweepSampleSessions } from "./sampleSweeper.js";
 
-// Hourly expiry sweep — audit 11.1.
+// Hourly expiry sweep - audit 11.1.
 const EXPIRY_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
-// Stuck-page sweep. First run shortly after boot — a restart is exactly when
-// stuck pages appear — but late enough for Redis and the DB to connect.
+// Stuck-page sweep. First run shortly after boot - a restart is exactly when
+// stuck pages appear - but late enough for Redis and the DB to connect.
 const STUCK_PAGE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STUCK_PAGE_FIRST_SWEEP_MS = 60 * 1000; // 1 minute
 // Switches off coupons whose end date has passed. Checkout checks the date itself,

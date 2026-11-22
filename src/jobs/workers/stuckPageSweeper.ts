@@ -9,7 +9,7 @@
 //
 // A row is only a candidate after STUCK_AFTER_MS without an update, and is only
 // failed once BullMQ confirms nothing is still going to run it. Age alone is not
-// enough — a page can legitimately sit in a long queue.
+// enough - a page can legitimately sit in a long queue.
 
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
@@ -21,7 +21,7 @@ import { settleTerminalPageFailure } from "./generationWorker.js";
 const STUCK_AFTER_MS = 30 * 60 * 1000;
 const SWEEP_BATCH_SIZE = 200;
 
-/** BullMQ states meaning a job is still going to run — leave the row alone. */
+/** BullMQ states meaning a job is still going to run - leave the row alone. */
 const LIVE_JOB_STATES = new Set([
   "active",
   "waiting",
@@ -30,7 +30,7 @@ const LIVE_JOB_STATES = new Set([
   "waiting-children",
 ]);
 
-// One sweep at a time per process. Overlap across instances is safe anyway —
+// One sweep at a time per process. Overlap across instances is safe anyway -
 // every write below is status-guarded.
 let sweepRunning = false;
 
@@ -91,7 +91,7 @@ export async function sweepStuckPageVersions(): Promise<number> {
 
         if (flipped) failed++;
       } catch (err) {
-        // Redis or DB unreachable — never guess. The row stays a candidate
+        // Redis or DB unreachable - never guess. The row stays a candidate
         // and is retried on the next sweep.
         errors++;
         logger.error(

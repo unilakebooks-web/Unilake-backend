@@ -3,9 +3,9 @@
 // Bill of Supply for paid INR orders.
 //
 // Two halves:
-//   1. assignBillNumber — runs inside the payment-captured transaction and
+//   1. assignBillNumber - runs inside the payment-captured transaction and
 //      gives the order its permanent serial ("BOS-26-00001") and issue date.
-//   2. buildBillOfSupplyPdf — builds the PDF in memory when an admin downloads
+//   2. buildBillOfSupplyPdf - builds the PDF in memory when an admin downloads
 //      it. Nothing is stored: not the PDF, not in R2. Re-downloading rebuilds
 //      the same bill from the order's saved number, date, book title and snapshot fields.
 
@@ -27,7 +27,7 @@ const ASSETS_DIR = path.resolve(
   "../assets"
 );
 
-// ── Seller details (fixed, printed on every bill) ──────────────────────────
+// -- Seller details (fixed, printed on every bill) --------------------------
 
 const SELLER_LINES = [
   "971, Babulal Karkhana",
@@ -62,7 +62,7 @@ function financialYearOf(date: Date): number {
   return month >= 4 ? year : year - 1;
 }
 
-/** "BOS-26-00001" — FY 2026-27, serial 1. Printed with a leading "#". */
+/** "BOS-26-00001" - FY 2026-27, serial 1. Printed with a leading "#". */
 function formatBillNumber(financialYear: number, serial: number): string {
   const yy = String(financialYear % 100).padStart(2, "0");
   return `${BILL_PREFIX}-${yy}-${String(serial).padStart(5, "0")}`;
@@ -71,7 +71,7 @@ function formatBillNumber(financialYear: number, serial: number): string {
 /**
  * Gives an order its Bill of Supply number and issue date. Call ONLY inside
  * the transaction that flips the order to PAID, and only when that flip
- * actually happened — so each paid order gets exactly one number, a webhook
+ * actually happened - so each paid order gets exactly one number, a webhook
  * redelivery never takes a second, and a rolled-back payment takes none.
  *
  * The counter is advanced with one INSERT … ON CONFLICT … RETURNING, which
@@ -163,7 +163,7 @@ async function loadBillData(orderId: string) {
   return { ...order, billNumber: order.billNumber, billIssuedAt: order.billIssuedAt };
 }
 
-// ── Fonts ───────────────────────────────────────────────────────────────────
+// -- Fonts -------------------------------------------------------------------
 //
 // Noto Sans for Latin text and the ₹ sign, Noto Sans Devanagari for Hindi. A
 // string is split into runs and each run drawn in whichever font has its
@@ -175,7 +175,7 @@ async function loadBillData(orderId: string) {
 // render as their separate letters. Still readable.
 
 type FontPair = { font: PDFFont; chars: Set<number> };
-/** `deva` is null on bills with no Hindi text — see embedFonts. */
+/** `deva` is null on bills with no Hindi text - see embedFonts. */
 type Fonts = { latin: FontPair; deva: FontPair | null };
 
 async function loadFontBytes(file: string) {
@@ -219,7 +219,7 @@ const JOINERS = /[‌‍]/;
 
 /**
  * Splits text into runs, each drawn in one font. Devanagari goes to the
- * Devanagari font first — Noto Sans also carries Devanagari glyphs, but only
+ * Devanagari font first - Noto Sans also carries Devanagari glyphs, but only
  * the dedicated font has the shaping rules that join the letters properly.
  * Spaces and joiners inside Hindi stay in the Hindi run so a phrase is shaped
  * as one piece. Everything else uses Noto Sans; anything neither font has
@@ -323,9 +323,9 @@ function wrapText(text: string, maxWidth: number, size: number, fonts: Fonts): s
   return lines;
 }
 
-// ── Formatting ──────────────────────────────────────────────────────────────
+// -- Formatting --------------------------------------------------------------
 
-/** "₹1,500.00" — Indian digit grouping. */
+/** "₹1,500.00" - Indian digit grouping. */
 function formatRupees(amount: Prisma.Decimal): string {
   return `₹${Number(amount).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
@@ -338,7 +338,7 @@ function formatIssueDate(date: Date): string {
   return date.toLocaleDateString("en-GB", { timeZone: IST });
 }
 
-// ── Layout ──────────────────────────────────────────────────────────────────
+// -- Layout ------------------------------------------------------------------
 //
 // A4 portrait, measured from the client's final layout ("Bill of Supply with
 // discount tab - final", 595.5 x 842.25 pt): every position below is read from
@@ -408,7 +408,7 @@ export type BillData = Awaited<ReturnType<typeof loadBillData>>;
 const billTitle = (data: BillData) =>
   (data.billBookTitle ?? data.orderSession.comic.title).trim();
 
-/** Draws the bill from already-loaded data. Pure — no DB access. */
+/** Draws the bill from already-loaded data. Pure - no DB access. */
 export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
@@ -431,7 +431,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
 
   const page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
 
-  // ── Logo: the wordmark on a rounded purple tile ────────────────────────────
+  // -- Logo: the wordmark on a rounded purple tile ----------------------------
   const tile = { x: 30.64, top: 23.26, width: 95.15, height: 36.23, radius: 9.74 };
   page.drawSvgPath(roundedRectPath(tile.width, tile.height, tile.radius), {
     x: tile.x,
@@ -448,7 +448,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     height: logoBox.height,
   });
 
-  // ── Title ──────────────────────────────────────────────────────────────────
+  // -- Title ------------------------------------------------------------------
   const title = "Bill of Supply";
   const titleSize = 26.35;
   drawText(page, title, {
@@ -458,7 +458,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     fonts: bold,
   });
 
-  // ── Billed By ──────────────────────────────────────────────────────────────
+  // -- Billed By --------------------------------------------------------------
   const blockTop = 81.96;
   const leftX = 30.64;
   drawText(page, "Billed By", { x: leftX, y: top(blockTop), size: BODY_SIZE, fonts: regular });
@@ -477,8 +477,8 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     })
   );
 
-  // ── Billed To ──────────────────────────────────────────────────────────────
-  // Name, then the address wrapped to the column, then the phone — the phone
+  // -- Billed To --------------------------------------------------------------
+  // Name, then the address wrapped to the column, then the phone - the phone
   // sits on the seller's phone line unless the address runs past it.
   const toX = 193.01;
   const toWidth = 155;
@@ -516,7 +516,7 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     });
   }
 
-  // ── Bill details (right column) ────────────────────────────────────────────
+  // -- Bill details (right column) --------------------------------------------
   const labelX = 359.3;
   const valueX = 451.8;
   const valueWidth = TABLE_RIGHT - valueX;
@@ -543,10 +543,10 @@ export async function renderBillOfSupplyPdf(data: BillData): Promise<Uint8Array>
     })
   );
 
-  // ── Table ──────────────────────────────────────────────────────────────────
+  // -- Table ------------------------------------------------------------------
   drawTable(page, data, { regular, bold });
 
-  // ── Footer notes ───────────────────────────────────────────────────────────
+  // -- Footer notes -----------------------------------------------------------
   const footerTop = TOTAL_BOTTOM + DISCOUNT_ROW_HEIGHT + 16.3;
   const noteSize = 10.5;
   wrapText(
@@ -695,7 +695,7 @@ function drawTable(
     );
   };
 
-  // Header — bold where the sample is bold (S.No, HSN, Amount); S.No is set smaller.
+  // Header - bold where the sample is bold (S.No, HSN, Amount); S.No is set smaller.
   const headers: [string, Fonts, number?][] = [
     ["S.No", fonts.bold, SNO_HEADER_SIZE],
     ["Description", fonts.regular],
@@ -715,7 +715,7 @@ function drawTable(
   const row = ["1", `${childName}_Book_${bookTitle}`, HSN_CODE, itemAmount, "1", itemAmount];
   row.forEach((text, col) => cell(col, HEADER_BOTTOM, ROW_BOTTOM, text, fonts.regular));
 
-  // Discount — always shown, never with the coupon code. Same look as the Grand
+  // Discount - always shown, never with the coupon code. Same look as the Grand
   // Total row: the label right-aligned against the Amount column, the discount in
   // it ("-" in front when there is one, plain 0.00 when there is none).
   const drawDiscountRow = () => {
@@ -736,7 +736,7 @@ function drawTable(
   };
   drawDiscountRow();
 
-  // Grand Total — label right-aligned against the Amount column.
+  // Grand Total - label right-aligned against the Amount column.
   const label = "Grand Total";
   drawText(page, label, {
     x: colX(AMOUNT_COL) - LABEL_GAP - textWidth(label, size, fonts.regular),

@@ -5,9 +5,9 @@ import { prisma } from "../../lib/prisma.js";
 import { createShipmentForSession } from "../../services/shiprocket.service.js";
 
 /**
- * Shiprocket worker — Phase A (auto).
+ * Shiprocket worker - Phase A (auto).
  *
- * Fires after PDF compilation succeeds. Thin wrapper — all logic lives in
+ * Fires after PDF compilation succeeds. Thin wrapper - all logic lives in
  * createShipmentForSession() in the service. Same pattern as pdfWorker.
  *
  * Retry behavior: BullMQ retries 3 times with exponential backoff (from
@@ -15,7 +15,7 @@ import { createShipmentForSession } from "../../services/shiprocket.service.js";
  * Order.status = SHIPROCKET_FAILED and OrderSession.status = SHIPMENT_FAILED
  * so the admin can see and manually resolve.
  *
- * Phase B (updateOrder + assignAwb + generatePickup) is not a queued job —
+ * Phase B (updateOrder + assignAwb + generatePickup) is not a queued job -
  * it runs inline from the admin endpoint in Section 7 via
  * pushDimensionsAssignAwbAndSchedulePickup().
  */
@@ -42,7 +42,7 @@ export const shiprocketWorker = new Worker(
 );
 
 /**
- * Final-failure handler — fires only after BullMQ has exhausted all retry
+ * Final-failure handler - fires only after BullMQ has exhausted all retry
  * attempts. Flips Order.status = SHIPROCKET_FAILED and OrderSession.status =
  * SHIPMENT_FAILED so the admin can see the failure and act (retry via the
  * admin endpoint in Section 7, or cancel + refund).
@@ -107,19 +107,19 @@ shiprocketWorker.on("failed", async (job, err) => {
             sessionFlipped: sessionFlip.count > 0,
             jobId: job.id,
           },
-          "[Shiprocket Worker] All retries exhausted — flipped to failure states"
+          "[Shiprocket Worker] All retries exhausted, flipped to failure states"
         );
       } else {
         logger.warn(
           { orderSessionId, orderId, jobId: job.id },
-          "[Shiprocket Worker] Final-failure handler fired but no status change — states already past this point"
+          "[Shiprocket Worker] Final-failure handler fired but no status change, states already past this point"
         );
       }
     });
   } catch (handlerErr) {
     logger.error(
       { orderSessionId, jobId: job.id, handlerErr },
-      "[Shiprocket Worker] Failed to flip failure states — manual intervention needed"
+      "[Shiprocket Worker] Failed to flip failure states, manual intervention needed"
     );
   }
 });

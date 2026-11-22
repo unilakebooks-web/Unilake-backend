@@ -30,7 +30,7 @@ export const listAdminUsersHandler = asyncHandler(
 
 // PATCH /api/admin/users/:userId/role
 // Auth: requireStaff (router mount in app.ts; Master only)
-// Body: { role: "ADMIN" | "SUB_ADMIN" | "USER" } — validated via validateBody in the route file.
+// Body: { role: "ADMIN" | "SUB_ADMIN" | "USER" } - validated via validateBody in the route file.
 //
 // The acting admin comes from the session cookie, never the body. Self-demotion
 // and last-admin demotion are refused with 409 by the service.

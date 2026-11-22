@@ -83,14 +83,14 @@ export const updateFontHandler = asyncHandler(
 // Streams the raw font file so the bubble-mapper canvas can draw text with the
 // same glyphs the print renderer uses.
 //
-// ⚠️ Deliberately NOT wrapped in sendSuccess — the second exception to the
+// ⚠️ Deliberately NOT wrapped in sendSuccess - the second exception to the
 // envelope rule after /health. The body is a binary font file; base64 inside
 // JSON would inflate it by a third for no benefit.
 //
 // Caching: `private, no-cache` + an ETag derived from the R2 key. The browser
 // always revalidates, and an unchanged font answers 304 from one DB lookup
 // without touching R2. Replacing a font's file changes its key, so the ETag
-// changes and the new file is served — never a stale one.
+// changes and the new file is served - never a stale one.
 export const getFontFileHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const { fontId } = req.params;

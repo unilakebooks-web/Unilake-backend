@@ -14,7 +14,7 @@ import type { OrderStatus } from "../generated/prisma/client.js";
  * Each stage carries BOTH a stable `code` and a display `label`. The split is
  * load-bearing: clients branch and pick pill colours on `code`, and show
  * `label`. Sending the label alone would force the UI to switch on display
- * copy, so renaming a stage would silently break styling and conditionals —
+ * copy, so renaming a stage would silently break styling and conditionals -
  * exactly the coupling the third bullet above exists to prevent.
  */
 
@@ -37,7 +37,7 @@ const MAPPING: Record<OrderStatus, PublicOrderStatus> = {
   PAID: { code: "PREPARING", label: "Comic being created" },
   // The customer's move: every paid page is generated and the book is waiting
   // on them to pick variants and send it to print. Nothing is happening
-  // server-side in this state, which is why it needs its own code — the UI has
+  // server-side in this state, which is why it needs its own code - the UI has
   // to be able to prompt them rather than imply we are still working.
   GENERATED: { code: "AWAITING_SELECTION", label: "Awaiting your selection" },
   CONFIRMED: { code: "PROCESSING", label: "Printing" },

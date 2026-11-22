@@ -725,7 +725,7 @@ describe("existing public routes still answer as before", () => {
   });
 });
 
-// ── which variant and which pages (the database filters themselves) ──
+// -- which variant and which pages (the database filters themselves) --
 
 async function colored(color: string) {
   return sharp({

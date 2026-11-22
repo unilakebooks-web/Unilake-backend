@@ -11,8 +11,8 @@ export const getGoogleReviewUploadUrlSchema = z.object({
 });
 
 /**
- * Whole stars only. The column is a plain Int — Prisma cannot express a CHECK
- * constraint — so this is the only thing keeping a 0 or a 7 out of the
+ * Whole stars only. The column is a plain Int - Prisma cannot express a CHECK
+ * constraint - so this is the only thing keeping a 0 or a 7 out of the
  * database. Never write `rating` from outside the service layer.
  */
 const ratingSchema = z

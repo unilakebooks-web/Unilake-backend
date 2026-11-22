@@ -30,7 +30,7 @@ export const r2Client = new S3Client({
  * @param contentType - The standard MIME type of the file (e.g., 'image/png', 'application/pdf')
  * @param options.contentDisposition - Optional Content-Disposition stored on the object.
  *   R2 returns it on every GET, which is how a download gets a real filename instead
- *   of the key's last segment (used for print PDFs — see utils/pdfFilename.ts).
+ *   of the key's last segment (used for print PDFs - see utils/pdfFilename.ts).
  *   Must be plain ASCII; omit it and the object is stored exactly as before.
  */
 
@@ -205,7 +205,7 @@ export const deleteFile = async (
  * Downloads an object from R2 straight into an in-memory Buffer.
  *
  * Preferred over downloadFileToLocalPath() when the bytes are only needed
- * transiently (e.g. probing image dimensions with Sharp) — avoids a temp file
+ * transiently (e.g. probing image dimensions with Sharp) - avoids a temp file
  * write/read/cleanup cycle.
  *
  * @param bucket - Targets either the 'public' or 'private' bucket from config
@@ -233,7 +233,7 @@ export const downloadFileToBuffer = async (
   return Buffer.from(bodyBytes);
 };
 
-// ── Share routes (feature 14) ────────────────────────────────────────────────────────────
+// -- Share routes (feature 14) ------------------------------------------------------------
 
 /** Thrown when a body ends before the size the object reported: a cut read, worth trying again. */
 export class StorageObjectCutError extends Error {

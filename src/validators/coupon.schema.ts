@@ -217,7 +217,7 @@ export const couponStatusBodySchema = z.object({
   isActive: z.boolean({ message: "isActive must be true or false" }).optional(),
 });
 
-// Query schema — parsed in the controller, there is no validateQuery middleware.
+// Query schema - parsed in the controller, there is no validateQuery middleware.
 export const listCouponsQuerySchema = z.object({
   // Query strings arrive as strings; coerce to number and default.
   page: z.coerce.number().int().min(1).default(1),

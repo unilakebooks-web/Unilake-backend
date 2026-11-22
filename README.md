@@ -1,4 +1,4 @@
-# UniLake Kids — Backend
+# UniLake Kids - Backend
 
 API, real-time updates and background processing for **UniLake Kids**, a store
 for personalised children's comic books. A parent picks a comic, enters their
@@ -40,14 +40,14 @@ customer email.
 
 | Concern | Choice |
 |---|---|
-| Runtime | Node.js 22, TypeScript (ESM), run directly with `tsx` — there is no build step |
+| Runtime | Node.js 22, TypeScript (ESM), run directly with `tsx` - there is no build step |
 | HTTP | Express 5 |
 | Validation | Zod 4 |
 | Database | PostgreSQL on **Neon**, via Prisma 7 with the `@prisma/adapter-neon` driver |
-| Auth | Better Auth — email/password, Google, Facebook; cookie sessions |
+| Auth | Better Auth - email/password, Google, Facebook; cookie sessions |
 | Queues | BullMQ on Redis (`ioredis`) |
-| Real-time | `ws` — a raw WebSocket server sharing the HTTP port |
-| Object storage | Cloudflare R2 (S3 API, `@aws-sdk/client-s3`) — one public and one private bucket |
+| Real-time | `ws` - a raw WebSocket server sharing the HTTP port |
+| Object storage | Cloudflare R2 (S3 API, `@aws-sdk/client-s3`) - one public and one private bucket |
 | AI generation | RunPod serverless endpoint running a ComfyUI face-swap workflow |
 | Image/PDF | `sharp`, `opentype.js` (text rendering), `pdf-lib` |
 | Payments | Razorpay |
@@ -98,10 +98,10 @@ Key properties:
 
 - **Node.js 22** (the Docker image uses `node:22`).
 - **A Neon database you own for development.** The runtime uses Neon's
-  serverless driver, which only talks to Neon — a plain local Postgres will not
+  serverless driver, which only talks to Neon - a plain local Postgres will not
   work. Create a Neon **branch** for yourself. Never develop against the
   production database.
-- **Redis** — locally (`docker run -p 6379:6379 redis:7`) or a managed instance.
+- **Redis** - locally (`docker run -p 6379:6379 redis:7`) or a managed instance.
 - Credentials for R2, RunPod, Razorpay (test mode), Shiprocket, Resend, and
   Google/Facebook OAuth. Ask the team for development credentials.
 
@@ -144,8 +144,8 @@ There are two staff roles: `ADMIN` (Master admin, full access) and `SUB_ADMIN`
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start with file watching (`tsx watch src/server.ts`) |
-| `npm start` | Start without watching — what the Docker image runs |
-| `npx tsc --noEmit` | Type-check the whole project — **run before every commit** |
+| `npm start` | Start without watching - what the Docker image runs |
+| `npx tsc --noEmit` | Type-check the whole project - **run before every commit** |
 | `npx prisma generate` | Regenerate the Prisma client after a schema change |
 | `npx prisma migrate dev --create-only --name <name>` | Create a migration without applying it (see [Database migrations](#database-migrations)) |
 | `npx prisma migrate deploy` | Apply pending migrations |
@@ -168,7 +168,7 @@ backend/
 │   ├── server.ts              # entry point: HTTP server + WebSocket + workers
 │   ├── app.ts                 # Express app: CORS, helmet, route mounting
 │   ├── config/
-│   │   ├── env.ts             # env loading + validation — the only place env is read
+│   │   ├── env.ts             # env loading + validation - the only place env is read
 │   │   ├── generation.ts      # generation limits and bubble/text defaults
 │   │   ├── shipping.ts        # default package dimensions + admin input bounds
 │   │   ├── stats.ts           # admin dashboard tunables (IST reporting, thresholds)
@@ -188,7 +188,7 @@ backend/
 │   │                          #   razorpay, shiprocket, email, logger, image
 │   ├── utils/                 # errors, asyncHandler, response helper, status mapping
 │   ├── types/                 # Express request augmentation (req.user, req.session)
-│   └── generated/prisma/      # GENERATED Prisma client — git-ignored, never edit
+│   └── generated/prisma/      # GENERATED Prisma client - git-ignored, never edit
 └── Dockerfile
 ```
 
@@ -215,14 +215,14 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
   `sendSuccess`. Error: `{ success: false, error: { code, message } }`. The
   frontend's HTTP client unwraps this envelope, so keep every JSON endpoint on it.
   (File downloads such as the customer CSV export are the deliberate exception.)
-- **Errors.** Throw the classes in `utils/errors.ts` — `ValidationError` (400),
+- **Errors.** Throw the classes in `utils/errors.ts` - `ValidationError` (400),
   `UnauthorizedError` (401), `ForbiddenError` (403), `NotFoundError` (404),
-  `ConflictError` (409) — or `AppError` with a custom status. Their message is
+  `ConflictError` (409) - or `AppError` with a custom status. Their message is
   shown to the user. Any other error becomes a generic 500 in production, with
   the real message only in development.
 - **Logging.** Use the Pino `logger`, with structured context first:
   `logger.error({ err, sessionId }, "message")`. Put errors under the **`err`**
-  key — Pino only serialises an Error's message and stack under that key.
+  key - Pino only serialises an Error's message and stack under that key.
 - **Money** is `Decimal` in the database and serialised as a **string**
   (`"1499.00"`). Requests send plain numbers.
 - **IDs** are UUIDs, except Better Auth user IDs, which are random strings.
@@ -237,7 +237,7 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
 
 | Mount | Auth | Purpose |
 |---|---|---|
-| `/api/auth/*` | — | Better Auth (sign-in, sign-up, OAuth callbacks, session) |
+| `/api/auth/*` | - | Better Auth (sign-in, sign-up, OAuth callbacks, session) |
 | `/api/public/*` | none | Catalogue, CMS content, and the personalisation flow (sessions, photo upload, generation, checkout, `POST …/confirm-payment`) |
 | `/api/user/*` | logged in | The customer's addresses, orders, tracking, and send-to-print |
 | `/api/admin/*` | `ADMIN` role; `SUB_ADMIN` only the order routes | Comics, pages, speech bubbles, fonts, pricing, CMS, orders and shipping, users, customers, stats (see "Staff roles" below) |
@@ -249,7 +249,7 @@ route  ──►  validateBody(schema)  ──►  controller  ──►  servic
 
 `requireStaff` guards the whole `/api/admin` router. A Master admin (`ADMIN`) passes everything; a `SUB_ADMIN` passes only the routes listed in `src/config/subAdminRoutes.ts` (the order routes, including changing a delivery address and retrying its carrier sync), and everything not listed is closed to them. Marking an address as synced and the sample-book routes are Master only. A role change applies on the next request (the role is read on every request). `tests/integration/adminRouteWalk.test.ts` walks every route the admin router registers (it needs the `.env.test` file but does not query the database), so a new route fails it until it is classified as staff or master in `tests/fixtures/adminRouteClassification.ts`. `requireAdmin` is kept but is no longer mounted.
 
-The route files (`src/routes/*.ts`) are the index — each route has a one-line
+The route files (`src/routes/*.ts`) are the index - each route has a one-line
 comment, and ordering notes where a literal path must come before a `:param`
 path.
 
@@ -261,7 +261,7 @@ mounted **before** `express.json()`, because both need the raw request body
 
 ## The order-session lifecycle
 
-`OrderSession` is one customer's in-progress book — it is *not* a login
+`OrderSession` is one customer's in-progress book - it is *not* a login
 session (that is Better Auth's `Session`). It is created anonymously when
 someone starts personalising a comic, and it moves through:
 
@@ -274,7 +274,7 @@ COMPLETED ◄─ SHIPMENT_QUEUED ◄─ COMPILING_PDF ◄─ CONFIRMED ◄─ PA
                   ▼                  ▼                  │ "Send to Print"
           SHIPMENT_FAILED       PDF_FAILED
 
-   FAILED — every generated page failed, or the session expired before payment
+   FAILED - every generated page failed, or the session expired before payment
 ```
 
 What happens at each stage:
@@ -307,7 +307,7 @@ What happens at each stage:
    webhooks keep tracking up to date; delivery sends email 6.
 
 **Expiry.** Unpaid sessions live for **7 days** from creation
-(`SESSION_LIFETIME_DAYS` in `session.service.ts` — the frontend keeps a copy of
+(`SESSION_LIFETIME_DAYS` in `session.service.ts` - the frontend keeps a copy of
 this window, change both together). After that they are flipped to `FAILED` on
 the next attempt to use them, and by the hourly sweeper. Sessions at
 `AWAITING_PAYMENT` or later never expire. Expired sessions are marked, not
@@ -317,17 +317,17 @@ deleted.
 
 `jobs/workers/generationWorker.ts`, per `PageVersion`:
 
-1. **Text stamping** — the page's speech bubbles are rendered onto the artwork
+1. **Text stamping** - the page's speech bubbles are rendered onto the artwork
    with `opentype.js` and `sharp`, substituting `{name}` and pronoun tokens.
    Bubble geometry and font size are stored as **fractions of the artwork**,
    not pixels, so artwork can be re-uploaded at any resolution.
-2. **Face swap** — only for pages with `hasFace`. The stamped page, the page's
+2. **Face swap** - only for pages with `hasFace`. The stamped page, the page's
    head mask and the child's photo are sent to RunPod with the ComfyUI workflow
    (`config/workflows/api-workflow.json`, patched per job in `sd/workflow.ts`),
    then polled until done.
-3. **Upload** — the print-resolution PNG and a web-sized WebP are stored under
+3. **Upload** - the print-resolution PNG and a web-sized WebP are stored under
    `sessions/{sessionId}/final/` in the public bucket.
-4. **Notify** — `page:ready` over WebSocket, then a check whether this was the
+4. **Notify** - `page:ready` over WebSocket, then a check whether this was the
    last outstanding page (which flips the session status).
 
 Retries: 3 attempts with exponential backoff. A page is only marked `FAILED`
@@ -337,7 +337,7 @@ after the final attempt.
 
 All six transactional emails live in `services/notification.service.ts`
 (shared layout + one template per milestone) and are sent through
-`lib/email.ts`. Sending is fire-and-forget — **an email failure never blocks
+`lib/email.ts`. Sending is fire-and-forget - **an email failure never blocks
 or rolls back business logic.** Each email is sent exactly once because its
 call site sits behind a status change that only one caller can win.
 
@@ -354,7 +354,7 @@ call site sits behind a status change that only one caller can win.
 - Default policy (`jobs/queues.ts`): 3 attempts, exponential backoff starting at
   2 s; completed jobs kept 24 h, failed jobs 7 days.
 - **Job IDs are idempotency keys.** Adding a job whose ID already exists is a
-  no-op in BullMQ — that is what stops a retried webhook from generating (and
+  no-op in BullMQ - that is what stops a retried webhook from generating (and
   paying RunPod for) the same page twice.
 - Generation jobs use **page number as priority**, so books progress side by
   side instead of one customer's whole book blocking the next.
@@ -407,18 +407,18 @@ bug.
    processed". Respond `400` only for permanent failures (bad signature);
    anything else is rethrown so the provider retries.
 5. **Notifications never throw.** Wrap and log; the business flow must continue.
-6. **Escape user input in emails.** Child names come from a public form — run
+6. **Escape user input in emails.** Child names come from a public form - run
    every interpolated value through `escapeHtml`.
 7. **Read configuration only through `config` from `config/env.ts`**, and add
    any new required variable to both `env.ts` and `.env.example`.
-8. **Never hand-edit `src/generated/`** — change `schema.prisma` and regenerate.
+8. **Never hand-edit `src/generated/`** - change `schema.prisma` and regenerate.
 
 ### Patched dependency
 
 `patches/opentype.js+2.0.0.patch` makes `opentype.js` skip font substitution
 tables it doesn't support instead of crashing, which some comic fonts trigger.
 It is applied automatically by `patch-package` on `npm install`. The Dockerfile
-copies `patches/` **before** `npm ci` — keep it that way, or the patch silently
+copies `patches/` **before** `npm ci` - keep it that way, or the patch silently
 won't apply in the image.
 
 ---
@@ -435,7 +435,7 @@ won't apply in the image.
    `20261006201804_comic_multi_gender_age_theme` is the cautionary example:
    it is Prisma's unedited output, and applying it wiped every comic's
    gender, age group and theme in production. It stays in the history
-   because production has applied it — never edit or delete a migration that
+   because production has applied it - never edit or delete a migration that
    has already been applied anywhere; fix forward with a new one.
 4. Apply it to your dev database (`npx prisma migrate deploy`), run
    `npx prisma generate`, then `npx tsc --noEmit`.
@@ -503,7 +503,7 @@ Tests cover the coupon and sample-book features and the sub-admin role guard (vi
 |---|---|
 | Server exits with `FATAL ERROR: Missing required environment variable` | A variable from `.env.example` is missing from `.env` |
 | Type errors mentioning `src/generated/prisma` or unknown model fields | Run `npx prisma generate` |
-| Pages stay "generating" forever | Redis not reachable, or RunPod credentials wrong — check the `[SD Worker]` log lines |
+| Pages stay "generating" forever | Redis not reachable, or RunPod credentials wrong - check the `[SD Worker]` log lines |
 | Payment succeeds but the order stays unpaid | No Razorpay webhook is reaching the backend (see above) |
-| Login works but the session isn't kept in the browser | Frontend and backend origins/cookie settings mismatch — `BETTER_AUTH_URL` must be this backend's public origin, and `NODE_ENV=production` enables cross-subdomain cookies |
+| Login works but the session isn't kept in the browser | Frontend and backend origins/cookie settings mismatch - `BETTER_AUTH_URL` must be this backend's public origin, and `NODE_ENV=production` enables cross-subdomain cookies |
 | The first request after a cold start fails once | Neon cold start; retry |

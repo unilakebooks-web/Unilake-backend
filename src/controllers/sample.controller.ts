@@ -39,7 +39,7 @@ export const listSamplesHandler = asyncHandler(
   }
 );
 
-// DELETE /api/admin/samples/:sessionId — ends the sample now; the sweep removes its files.
+// DELETE /api/admin/samples/:sessionId - ends the sample now; the sweep removes its files.
 export const discardSampleHandler = asyncHandler(
   async (req: Request, res: Response) => {
     await discardSample(parseSessionId(req.params));
@@ -47,7 +47,7 @@ export const discardSampleHandler = asyncHandler(
   }
 );
 
-// POST /api/admin/samples/:sessionId/pdf — sends the PDF of the chosen versions; stores nothing.
+// POST /api/admin/samples/:sessionId/pdf - sends the PDF of the chosen versions; stores nothing.
 export const downloadSamplePdfHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const bytes = await buildSamplePdf(parseSessionId(req.params), req.body);

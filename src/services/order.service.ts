@@ -14,7 +14,7 @@ import { AWAITING_CUSTOMER_PRINT } from "../config/reminders.js";
  * List all orders belonging to a user, most recent first.
  * Called from the customer-facing "My Orders" page.
  *
- * We return a curated shape — no razorpayPaymentId, no webhook internals,
+ * We return a curated shape - no razorpayPaymentId, no webhook internals,
  * no admin-only fields like shiprocketOrderId or awbNumber. Just what the
  * customer needs to see on the list card.
  */
@@ -31,7 +31,7 @@ export type UserGeneratedCover = GeneratedCover & {
 };
 
 /**
- * Generated covers for a batch of sessions, in ONE query — same rule as the
+ * Generated covers for a batch of sessions, in ONE query - same rule as the
  * admin screens (pickGeneratedCover): the variant that was sent to print wins,
  * otherwise page 1's newest finished variant. Sessions with nothing generated
  * are simply absent from the map; the client falls back to the marketing
@@ -94,7 +94,7 @@ export async function listUserOrders(userId: string) {
       // expiry window has passed: an unpaid (CREATED) order whose session is past
       // expiresAt. Paid orders always show, however old.
       //
-      // List-only, by decision — nothing is written. AWAITING_PAYMENT sessions
+      // List-only, by decision - nothing is written. AWAITING_PAYMENT sessions
       // stay exempt from expiry (EXPIRY_EXEMPT_STATUSES), so a customer who
       // still pays through an old Razorpay window is processed normally by the
       // webhook and the order reappears here as paid. The detail endpoint and
@@ -139,7 +139,7 @@ export async function listUserOrders(userId: string) {
     id: order.id,
     sessionId: order.orderSession.id,
     comic: order.orderSession.comic,
-    // Null when nothing is generated yet — the client shows the comic's
+    // Null when nothing is generated yet - the client shows the comic's
     // marketing thumbnail instead.
     generatedCover: covers.get(order.orderSession.id) ?? null,
     coverType: order.coverType,
@@ -157,7 +157,7 @@ export async function listUserOrders(userId: string) {
 
 /**
  * Get a single order by id, with ownership check.
- * Returns the customer-facing shape — includes shipping snapshot and PDF url
+ * Returns the customer-facing shape - includes shipping snapshot and PDF url
  * (needed for "Reprint" / "Download PDF"), excludes admin/gateway internals.
  */
 
@@ -241,12 +241,12 @@ export async function getUserOrder(orderId: string, userId: string) {
 // Deliberately narrow: only fields safe for user consumption.
 //
 // Raw `trackingStatus` (Shiprocket's inconsistent-casing text) is admin-only
-// per the Aug 29 decision — do NOT add it here. Admin endpoints (Section 7)
+// per the Aug 29 decision - do NOT add it here. Admin endpoints (Section 7)
 // return it separately alongside the mapped status.
 //
 // Ownership: Order has no userId of its own; it lives on OrderSession.
 // A null userId (anonymous session that never attached a login) also fails
-// the ownership check — treated as "not yours" rather than "no owner."
+// the ownership check - treated as "not yours" rather than "no owner."
 
 export type UserOrderTracking = {
   status: PublicOrderStatus;
@@ -298,14 +298,14 @@ export async function getTrackingForUser(
 // GENERATED COVER (shared by the admin list + detail endpoints)
 // ============================================================
 //
-// Both admin endpoints previously showed Comic.coverThumbnailUrls — the
+// Both admin endpoints previously showed Comic.coverThumbnailUrls - the
 // MARKETING thumbnail of the template, identical for every customer who
 // ordered that comic. What an admin actually needs is the personalised page
 // that this specific child's book opens on, which lives on PageVersion.
 
 /**
- * Page 1 is the front cover of every comic. There is no isCover flag on Page —
- * the cover is positional — so this constant is the single place that encodes
+ * Page 1 is the front cover of every comic. There is no isCover flag on Page -
+ * the cover is positional - so this constant is the single place that encodes
  * it. Change it here and both endpoints follow.
  */
 const COVER_PAGE_NUMBER = 1;
@@ -329,14 +329,14 @@ export type GeneratedCover = {
  * `isSelected` wins outright: sendToPrint writes it on exactly the variants
  * that went into the PDF, so for a CONFIRMED order it IS the printed cover.
  * Before send-to-print nothing is selected at all, so the newest variant is the
- * closest available truth — it is what the customer is looking at in their own
+ * closest available truth - it is what the customer is looking at in their own
  * preview, and what they are most likely to pick.
  *
  * Deliberately does NOT rely on the caller's ordering. The two call sites build
  * their candidate lists from different queries, and a positional assumption
  * here would silently pick the wrong variant if either query's orderBy changed.
  *
- * Returns null when nothing is generated yet — a legitimate state for an order
+ * Returns null when nothing is generated yet - a legitimate state for an order
  * at CREATED, or one whose page-1 generation final-failed. Callers render a
  * placeholder rather than falling back to the template thumbnail, which would
  * look like a generated cover and mislead whoever is checking what shipped.
@@ -350,7 +350,7 @@ function pickGeneratedCover(candidates: CoverCandidate[]): GeneratedCover | null
 
   // displayImageUrl is the ~250KB webp derivative and is what a browser should
   // render. finalImageUrl (the 4–5MB print master) is only reached on rows
-  // written before the derivative existed, or where building it failed —
+  // written before the derivative existed, or where building it failed -
   // buildAndUploadDisplayImage is best-effort by design and returns null rather
   // than failing the generation job.
   const imageUrl = chosen.displayImageUrl ?? chosen.finalImageUrl;
@@ -364,11 +364,11 @@ function pickGeneratedCover(candidates: CoverCandidate[]): GeneratedCover | null
 }
 
 // ============================================================
-// ADMIN ORDER LIST (Section 7 — endpoint 1 of 8)
+// ADMIN ORDER LIST (Section 7 - endpoint 1 of 8)
 // ============================================================
 //
 // Paginated + searchable + filterable list of ALL orders for the admin
-// panel. Row shape is deliberately narrow — enough to render the table
+// panel. Row shape is deliberately narrow - enough to render the table
 // row and decide which order to open. Full detail comes from the
 // per-order endpoint (endpoint 2 of 8).
 //
@@ -418,7 +418,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
   const skip = (filters.page - 1) * filters.pageSize;
   const take = filters.pageSize;
 
-  // Fire the two queries in parallel — count needs the same `where` as the list.
+  // Fire the two queries in parallel - count needs the same `where` as the list.
   const [orders, total] = await prisma.$transaction([
     prisma.order.findMany({
       where,
@@ -445,7 +445,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
         paidAfterDeletionAt: true,
         orderSession: {
           select: {
-            // Needed to key the batched cover lookup below — not rendered.
+            // Needed to key the batched cover lookup below - not rendered.
             id: true,
             photoDeletedAt: true,
             filesDeletedAt: true,
@@ -462,7 +462,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
   //
   // These cannot be nested into the row select above without Prisma issuing a
   // per-row subquery, so they are fetched separately and joined in memory. Cost
-  // is one extra query per PAGE of results regardless of pageSize — deliberately
+  // is one extra query per PAGE of results regardless of pageSize - deliberately
   // not an N+1. Bounded by pageSize × the per-page variant cap.
   //
   // Runs after the transaction because the session ids only exist once it has
@@ -543,7 +543,7 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
     paidAfterDeletion: !!o.paidAfterDeletionAt,
     childName: o.orderSession.childName,
     comicTitle: o.orderSession.comic.title,
-    // Null when nothing is generated yet — the client renders a placeholder.
+    // Null when nothing is generated yet - the client renders a placeholder.
     coverImageUrl:
       pickGeneratedCover(candidatesBySession.get(o.orderSession.id) ?? [])
         ?.imageUrl ?? null,
@@ -561,16 +561,16 @@ export async function listAdminOrders(filters: ListAdminOrdersQueryInput) {
 }
 
 // ============================================================
-// ADMIN ORDER DETAIL (Section 7 — endpoint 2 of 8)
+// ADMIN ORDER DETAIL (Section 7 - endpoint 2 of 8)
 // ============================================================
 //
 // Full-detail view for a single order. Everything the admin needs on
-// one screen — customer + payment + shipping + shipment + webhook
-// history — no separate calls required.
+// one screen - customer + payment + shipping + shipment + webhook
+// history - no separate calls required.
 //
 // Two decisions locked earlier this session:
 //   1. Include attached User's name + email (from OrderSession.user).
-//      Admin needs to distinguish "who paid" from "who receives" —
+//      Admin needs to distinguish "who paid" from "who receives" -
 //      the shipping snapshot can differ (gift shipping).
 //   2. WebhookEvent.payloadJson returned as-is, not trimmed. Admin
 //      panel renders it collapsed; audit trail per Aug 29 decision.
@@ -598,7 +598,7 @@ export async function getAdminOrderDetail(orderId: string) {
           },
           // Every finished page-1 variant for this session. Bounded by the
           // per-page variant cap (8 after payment), so this is a handful of
-          // rows — pickGeneratedCover decides which one is the cover.
+          // rows - pickGeneratedCover decides which one is the cover.
           pageVersions: {
             where: {
               page: { pageNumber: COVER_PAGE_NUMBER },
@@ -673,7 +673,7 @@ export async function getAdminOrderDetail(orderId: string) {
       razorpayPaymentId: order.razorpayPaymentId,
     },
 
-    // Null on orders without one (non-INR, or paid before bills existed) —
+    // Null on orders without one (non-INR, or paid before bills existed) -
     // the admin page only offers the download when this is set.
     bill: order.billNumber
       ? { billNumber: order.billNumber, billIssuedAt: order.billIssuedAt }
@@ -701,7 +701,7 @@ export async function getAdminOrderDetail(orderId: string) {
       awbNumber: order.awbNumber,
       courierId: order.courierId,
       courierName: order.courierName,
-      trackingStatus: order.trackingStatus, // raw — admin only
+      trackingStatus: order.trackingStatus, // raw - admin only
       trackingUrl: order.trackingUrl,
       trackingUpdatedAt: order.trackingUpdatedAt,
       isInternational: order.isInternational,

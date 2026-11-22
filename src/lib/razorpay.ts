@@ -7,7 +7,7 @@ import crypto from "crypto";
  * Verifies the HMAC-SHA256 signature Razorpay attaches to every webhook.
  *
  * @param rawBody       The exact bytes of the request body. MUST be the raw Buffer/string
- *                      as received on the wire — parsing to JSON changes byte-for-byte
+ *                      as received on the wire - parsing to JSON changes byte-for-byte
  *                      content and breaks the signature match.
  * @param signature     Value of the `x-razorpay-signature` request header.
  * @returns             true if the signature matches; false otherwise.
@@ -105,7 +105,7 @@ export function verifyWebhookSignature(
       .update(rawBody)
       .digest("hex");
 
-    // Timing-safe comparison — prevents timing-attack signature guessing.
+    // Timing-safe comparison - prevents timing-attack signature guessing.
     const expectedBuf = Buffer.from(expected, "hex");
     const receivedBuf = Buffer.from(signature, "hex");
 

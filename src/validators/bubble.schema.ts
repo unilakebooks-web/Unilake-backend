@@ -18,7 +18,7 @@ import {
 // "#FFAA00" is accepted and normalised rather than reported as malformed, while
 // genuinely bad input still fails against the original string the client sent.
 //
-// A factory rather than one schema so the error names the field that failed —
+// A factory rather than one schema so the error names the field that failed -
 // fontColor and nameColor share the rule but a bad nameColor must not report
 // itself as "fontColor must be…".
 export function hexColorSchema(fieldName: string) {
@@ -27,7 +27,7 @@ export function hexColorSchema(fieldName: string) {
     .trim()
     .regex(
       FONT_COLOR_PATTERN,
-      `${fieldName} must be a 6-digit hex colour like "#1a1a1a" — shorthand, alpha and colour names are not accepted`
+      `${fieldName} must be a 6-digit hex colour like "#1a1a1a": shorthand, alpha and colour names are not accepted`
     )
     .transform((value) => value.toLowerCase());
 }
@@ -36,7 +36,7 @@ export const fontColorSchema = hexColorSchema("fontColor");
 
 /**
  * The geometry and styling fields shared by every schema that describes a
- * bubble — currently createBubbleSchema and the preview-stamp endpoint.
+ * bubble - currently createBubbleSchema and the preview-stamp endpoint.
  *
  * Exported as raw field definitions rather than a schema so callers can spread
  * them into their own z.object() and add what they need. Re-typing these in a
@@ -102,7 +102,7 @@ export function refineBubbleBounds<T extends z.ZodTypeAny>(schema: T) {
 // x/y is the top-left corner; the whole rectangle must fit inside the page.
 export const createBubbleSchema = refineBubbleBounds(
   z.object({
-    // Geometry, font size, colour, placement and casing — shared with the
+    // Geometry, font size, colour, placement and casing - shared with the
     // preview endpoint so the two can never disagree about what is valid.
     ...bubbleGeometryFields,
     dialogue: z.string().min(1),
@@ -144,7 +144,7 @@ export const updateBubbleSchema = z
       .max(MAX_FONT_SIZE, `fontSize cannot exceed ${MAX_FONT_SIZE}`)
       .optional(),
     // Optional, never nullable: the column is NOT NULL, so "clear the colour"
-    // is not a thing a client can express — it sets #000000 instead.
+    // is not a thing a client can express - it sets #000000 instead.
     fontColor: fontColorSchema.optional(),
     // Unlike fontColor, nameColor IS nullable: null is how the client says
     // "same as the text colour" (the column is nullable for exactly that).

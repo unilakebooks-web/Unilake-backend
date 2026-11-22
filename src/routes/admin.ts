@@ -312,7 +312,7 @@ router.get("/status", (req, res) => {
 
 // OVERVIEW DASHBOARD STATS
 // Three endpoints, loaded independently by the overview page so the triage
-// band paints without waiting on the chart. All literal paths — no param route
+// band paints without waiting on the chart. All literal paths - no param route
 // lives under /stats, so there is no ordering hazard here.
 router.get("/stats/summary", getStatsSummaryHandler); // KPIs + pipeline + triage + recent + top comics
 router.get("/stats/timeseries", getStatsTimeseriesHandler); // chart series, IST buckets, zero-filled
@@ -325,7 +325,7 @@ router.get("/comics/:comicId", getAdminComicDetailHandler); // single comic full
 router.post("/comics/thumbnails/upload-urls", getThumbnailUploadUrlsBatchHandler);
 router.post("/comics", validateBody(createComicSchema), createComicHandler); // create comic
 router.delete("/comics/:comicId", deleteComicHandler); // delete comic
-// NOTE: /comics/reorder MUST stay above /comics/:comicId — both are PATCH with the
+// NOTE: /comics/reorder MUST stay above /comics/:comicId - both are PATCH with the
 // same segment count, so Express matches whichever is registered first.
 router.patch(
   "/comics/reorder",
@@ -369,7 +369,7 @@ router.patch(
 router.delete("/pages/:pageId", deletePageHandler); // delete page (cascades bubbles)
 
 // Bubble-mapping preview. Renders the page's text stamping with a supplied name
-// and pronoun so the admin can see the real output while mapping — same
+// and pronoun so the admin can see the real output while mapping - same
 // renderer the generation pipeline uses, no face swap, nothing persisted.
 // Bubbles travel in the body because the mapper holds unsaved edits locally.
 router.post(
@@ -382,7 +382,7 @@ router.patch(
   "/comics/:comicId/pages/reorder",
   validateBody(reorderPagesSchema),
   reorderPagesHandler
-); // reorder pages — send ALL page IDs in desired order
+); // reorder pages - send ALL page IDs in desired order
 
 // BUBBLES
 router.get("/pages/:pageId/bubbles", listPageBubblesHandler); // list all bubbles for a page with font info
@@ -416,7 +416,7 @@ router.get("/fonts/:fontId/file", getFontFileHandler);
 // COMIC FACTS (rotating lines on the generation screens)
 // Create/list hang off the comic; edit/toggle/delete use a flat /facts/:factId,
 // matching how pages, bubbles and fonts are addressed in this file.
-// Purely decorative — nothing here affects publishing or generation.
+// Purely decorative - nothing here affects publishing or generation.
 router.get("/comics/:comicId/facts", listComicFactsHandler); // ?placement= optional, includes inactive
 router.post(
   "/comics/:comicId/facts",
@@ -432,7 +432,7 @@ router.patch("/facts/:factId/status", toggleComicFactStatusHandler);
 router.delete("/facts/:factId", deleteComicFactHandler);
 
 // COMIC PREVIEW VIDEO
-// Literal 2nd segment, so it can never be captured by /comics/:comicId/* —
+// Literal 2nd segment, so it can never be captured by /comics/:comicId/* -
 // those all require a literal 3rd segment (pages, fonts, pricing, status).
 // The saved key travels back through the unified PATCH /comics/:comicId as
 // `videoKey`; there is deliberately no separate save endpoint.
@@ -516,7 +516,7 @@ router.patch("/customer-reviews/:id/status", toggleCustomerReviewStatusHandler);
 router.delete("/customer-reviews/:id", deleteCustomerReviewHandler);
 router.get("/customer-reviews", getAllCustomerReviewsHandler);
 
-// google reviews — homepage "Excellent On Google" section
+// google reviews - homepage "Excellent On Google" section
 // /upload-url stays ABOVE /:id: both are POST-adjacent param routes and
 // Express matches whichever is registered first.
 router.post(
@@ -549,7 +549,7 @@ router.post(
   validateBody(createTeamMemberSchema),
   createTeamMemberHandler
 );
-// NOTE: /team-members/reorder MUST stay above /team-members/:id — both are PATCH
+// NOTE: /team-members/reorder MUST stay above /team-members/:id - both are PATCH
 // with the same segment count, so Express matches whichever is registered first.
 router.patch(
   "/team-members/reorder",
@@ -580,7 +580,7 @@ router.patch(
 );
 
 // faqs
-// NOTE: /faqs/reorder MUST stay above /faqs/:id — both are PATCH with the
+// NOTE: /faqs/reorder MUST stay above /faqs/:id - both are PATCH with the
 // same segment count, so Express matches whichever is registered first.
 router.get("/faqs", getAllFaqsHandler);
 router.post("/faqs", validateBody(createFaqSchema), createFaqHandler);
@@ -595,7 +595,7 @@ router.delete("/faqs/:id", deleteFaqHandler);
 
 // blogs
 // /blogs/upload-url is a POST and /blogs/:id is GET/PATCH/DELETE, so there is
-// no same-method collision here — but keep the literal path above the param
+// no same-method collision here - but keep the literal path above the param
 // one anyway, matching the rest of this file.
 router.post(
   "/blogs/upload-url",
@@ -610,7 +610,7 @@ router.patch("/blogs/:id/status", toggleBlogStatusHandler);
 router.delete("/blogs/:id", deleteBlogHandler);
 
 
-// ORDERS (Section 7 — Shiprocket admin)
+// ORDERS (Section 7 - Shiprocket admin)
 // Route ordering note: literal paths (/orders/failed) will be registered
 // ABOVE /orders/:orderId when we get to endpoint 8. Follow that rule.
 router.get("/orders", listAdminOrdersHandler);
@@ -659,7 +659,7 @@ router.patch(
 );
 
 // CUSTOMERS (accounts with at least one paid order)
-// Read-only. Both paths are literal — no /customers/:id route exists — so
+// Read-only. Both paths are literal - no /customers/:id route exists - so
 // there is no ordering hazard. /export returns a CSV file, not JSON.
 router.get("/customers", listAdminCustomersHandler);
 router.get("/customers/export", exportAdminCustomersHandler);
@@ -667,7 +667,7 @@ router.get("/customers/export", exportAdminCustomersHandler);
 // SITE PAGES (privacy / terms / refund)
 // No create or delete: the slug set is fixed by the SitePageSlug enum, so the
 // PUT upserts and that is the only way a row ever comes into existence.
-// isActive is owned solely by the /status route — saving never publishes.
+// isActive is owned solely by the /status route - saving never publishes.
 router.get("/site-pages", getAdminSitePagesHandler);
 router.get("/site-pages/:slug", getAdminSitePageHandler);
 router.put(
@@ -677,7 +677,7 @@ router.put(
 );
 router.patch("/site-pages/:slug/status", toggleSitePageStatusHandler);
 
-// SITE SETTINGS (brand + contact details — singleton)
+// SITE SETTINGS (brand + contact details - singleton)
 // PATCH, not PUT: every field is optional and partial updates are the normal
 // case, matching /how-it-works.
 router.get("/site-settings", getAdminSiteSettingHandler);
@@ -718,7 +718,7 @@ router.post("/broadcasts/:id/test", sendTestBroadcastHandler);
 router.post("/broadcasts/:id/send", validateBody(startBroadcastSchema), startBroadcastHandler);
 router.post("/broadcasts/:id/cancel", cancelBroadcastHandler);
 
-// feedback — anonymous book suggestions. Contact enquiries are a separate
+// feedback - anonymous book suggestions. Contact enquiries are a separate
 // domain with its own table and routes; see below.
 router.get("/feedbacks", getAllFeedbacksHandler);
 router.patch(
@@ -729,7 +729,7 @@ router.patch(
 router.delete("/feedbacks/:id", deleteFeedbackHandler);
 
 
-// contact enquiries — /contact form submissions. No create route: those come in
+// contact enquiries - /contact form submissions. No create route: those come in
 // through the public router. No ordering hazard with /:id, the segment counts differ.
 router.get("/contact-enquiries", getAllContactEnquiriesHandler);
 router.patch(
@@ -756,7 +756,7 @@ router.patch("/coupons/:id/status", toggleCouponStatusHandler);
 router.delete("/coupons/:id", deleteCouponHandler);
 
 
-// sample books — an admin's try-out of a book, never paid for.
+// sample books - an admin's try-out of a book, never paid for.
 // Master admin only: requireStaff at the router mount in app.ts (not in subAdminRoutes.ts).
 router.get("/samples", listSamplesHandler);
 router.post("/samples", validateBody(createSampleBodySchema), createSampleHandler);

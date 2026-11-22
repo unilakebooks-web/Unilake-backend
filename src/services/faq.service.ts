@@ -59,7 +59,7 @@ export async function updateFaq(
 
   // Guard on old !== new. Re-sending the CURRENT placement on every save
   // (an edit form that resends every field) must be a no-op, not a jump to
-  // the bottom of the list — same bug class as re-sending an unchanged
+  // the bottom of the list - same bug class as re-sending an unchanged
   // imageKey in updateTeamMember.
   if (data.placement !== undefined && data.placement !== existing.placement) {
     updateData.placement = data.placement;
@@ -130,7 +130,7 @@ export async function reorderFaqs(orderedIds: string[]) {
     throw new ValidationError("One or more FAQ IDs do not exist");
   }
 
-  // 2. they must all belong to ONE placement — this is where the placement
+  // 2. they must all belong to ONE placement - this is where the placement
   // for the reorder comes from; the client never sends it.
   const placements = new Set(rows.map((r) => r.placement));
   if (placements.size > 1) {
@@ -147,7 +147,7 @@ export async function reorderFaqs(orderedIds: string[]) {
   }
   const placement = firstRow.placement;
 
-  // 3. must be the COMPLETE list for that placement, including inactive rows —
+  // 3. must be the COMPLETE list for that placement, including inactive rows -
   // the admin table shows both, so the drag list must contain both.
   const total = await prisma.faq.count({ where: { placement } });
   if (total !== orderedIds.length) {

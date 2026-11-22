@@ -29,7 +29,7 @@ export const reorderFaqsSchema = z.object({
     }),
 });
 
-// Query schemas — parsed manually in the controller, there is no validateQuery middleware.
+// Query schemas - parsed manually in the controller, there is no validateQuery middleware.
 export const publicFaqQuerySchema = z.object({
   placement: faqPlacementEnum,
 });

@@ -10,7 +10,7 @@ import {
 import { statsRangeQuerySchema } from "../validators/stats.schema.js";
 
 // Admin overview dashboard. Three endpoints rather than one so the page can
-// load them independently — the ops-triage band renders off /summary without
+// load them independently - the ops-triage band renders off /summary without
 // waiting on the chart, and a failing aggregate degrades one card instead of
 // blanking the screen.
 //
@@ -20,7 +20,7 @@ import { statsRangeQuerySchema } from "../validators/stats.schema.js";
 // GET /api/admin/stats/summary?range=7d|30d|all
 //
 // KPIs, the live pipeline snapshot, needs-attention counts, top comics and the
-// most recent orders. `range` affects money and volume only — status counts and
+// most recent orders. `range` affects money and volume only - status counts and
 // triage numbers are always current.
 
 export const getStatsSummaryHandler = asyncHandler(
@@ -60,7 +60,7 @@ export const getStatsTimeseriesHandler = asyncHandler(
 
 // GET /api/admin/stats/content-health
 //
-// Storefront configuration state. No query params — this is always a statement
+// Storefront configuration state. No query params - this is always a statement
 // about right now, and nothing on it varies with a date range.
 
 export const getContentHealthHandler = asyncHandler(

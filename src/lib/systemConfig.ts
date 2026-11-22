@@ -6,7 +6,7 @@ import { logger } from "./logger.js";
  *
  * SystemConfig is our persistence layer for small runtime state that must
  * survive server restarts AND be shared across processes (web + workers).
- * The Shiprocket auth token is the first user — cached here so all four
+ * The Shiprocket auth token is the first user - cached here so all four
  * running processes share one token instead of each logging in independently.
  *
  * Values are always stored as strings. If you need to persist a number,
@@ -17,7 +17,7 @@ import { logger } from "./logger.js";
 
 /**
  * Read a value from SystemConfig.
- * Returns null if the key doesn't exist — callers decide what "missing" means
+ * Returns null if the key doesn't exist - callers decide what "missing" means
  * (e.g. Shiprocket token missing = need to log in fresh).
  */
 export async function getSystemConfig(key: string): Promise<string | null> {
@@ -29,7 +29,7 @@ export async function getSystemConfig(key: string): Promise<string | null> {
 }
 
 /**
- * Write a value to SystemConfig. Upsert — creates if new, replaces if exists.
+ * Write a value to SystemConfig. Upsert - creates if new, replaces if exists.
  * `updatedAt` refreshes automatically via the @updatedAt directive in schema.
  */
 export async function setSystemConfig(

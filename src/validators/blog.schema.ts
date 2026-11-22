@@ -62,7 +62,7 @@ export const updateBlogSchema = z
   });
 
 // Query string, so the value arrives as "true"/"false" text.
-// NOT z.coerce.boolean() — that runs Boolean("false"), which is `true`.
+// NOT z.coerce.boolean() - that runs Boolean("false"), which is `true`.
 export const adminBlogQuerySchema = z.object({
   isActive: z
     .enum(["true", "false"], { message: "isActive must be true or false" })

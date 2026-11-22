@@ -22,13 +22,13 @@ const DISPLAY_WEBP_QUALITY = 80;
  * Builds the browser-facing version of a finished page image.
  *
  * Why this exists: the image we store at `PageVersion.finalImageUrl` is a
- * lossless PNG at print resolution — around 4–5 MB per page. That is correct
+ * lossless PNG at print resolution - around 4–5 MB per page. That is correct
  * for the printed book and wrong for a web page: a six-page preview came to
  * ~27 MB, which is roughly 90 seconds on 4G.
  *
  * Nearly all of that is the format, not the resolution. PNG stores every pixel
  * exactly; this artwork is photographic (face-swapped comic art), which is what
- * WebP is built for. The same image lands around 250 KB — an ~18× reduction with
+ * WebP is built for. The same image lands around 250 KB - an ~18× reduction with
  * no visible difference.
  *
  * The print master is untouched. This is an additional, separate file.
@@ -42,7 +42,7 @@ export const buildDisplayImage = async (buffer: Buffer): Promise<Buffer> => {
       width: DISPLAY_MAX_EDGE,
       height: DISPLAY_MAX_EDGE,
       // "inside" caps the LONG edge at DISPLAY_MAX_EDGE and preserves aspect
-      // ratio — it never crops, so the page is never silently reframed.
+      // ratio - it never crops, so the page is never silently reframed.
       fit: "inside",
       // Source artwork is ~2000px on the long edge, but a smaller page must not
       // be upscaled: that would add bytes and blur for no gain.
@@ -79,7 +79,7 @@ export const probeImageDimensions = async (
   }
 
   // Sharp resolves without throwing for some malformed files, but leaves
-  // width/height undefined — treat that as unreadable rather than trusting it.
+  // width/height undefined - treat that as unreadable rather than trusting it.
   if (!metadata.width || !metadata.height) {
     logger.warn({ label, metadata }, "Image metadata missing dimensions");
     throw new ValidationError(

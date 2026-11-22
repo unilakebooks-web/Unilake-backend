@@ -961,7 +961,7 @@ describe("review round: verified addresses, setup errors, development limits", (
       );
       fakes.send.mockRejectedValue(
         new EmailSendError(
-          `Resend send failed: ${name} — ${text} (HTTP ${status})`,
+          `Resend send failed: ${name}: ${text} (HTTP ${status})`,
           name,
           status
         )
@@ -982,7 +982,7 @@ describe("review round: verified addresses, setup errors, development limits", (
     const id = await startFor("OPTED_IN_ONLY", [a.email, b.email]);
     fakes.send.mockRejectedValueOnce(
       new EmailSendError(
-        "Resend send failed: validation_error — Invalid `to` field (HTTP 422)",
+        "Resend send failed: validation_error: Invalid `to` field (HTTP 422)",
         "validation_error",
         422
       )

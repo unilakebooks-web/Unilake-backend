@@ -5,7 +5,7 @@ import type { UpdateSiteSettingInput } from "../validators/siteSetting.schema.js
 /**
  * Matches the `@default("singleton")` on SiteSetting.id in schema.prisma.
  *
- * Because the id is fixed, this table holds exactly one row by construction —
+ * Because the id is fixed, this table holds exactly one row by construction -
  * every read and write targets the same primary key. That makes it simpler
  * than the HowItWorks singleton, which has to findFirst with a deterministic
  * orderBy to cope with duplicate rows that should never exist but might.
@@ -14,7 +14,7 @@ import type { UpdateSiteSettingInput } from "../validators/siteSetting.schema.js
 const SINGLETON_ID = "singleton";
 
 /**
- * Public read — consumed by the /contact page AND the site-wide Footer.
+ * Public read - consumed by the /contact page AND the site-wide Footer.
  *
  * Returns null rather than throwing when nothing has been saved yet. The
  * footer calls this on every page load, so a 404 on a fresh install would be
@@ -29,7 +29,7 @@ export async function getSiteSettingPublic() {
  * Admin read.
  *
  * Identical to the public read today. Kept as a separate function so there is
- * already a seam if the two ever need to diverge — the same reason the Blog
+ * already a seam if the two ever need to diverge - the same reason the Blog
  * and HowItWorks modules split theirs.
  */
 export async function getSiteSettingAdmin() {
@@ -40,7 +40,7 @@ export async function getSiteSettingAdmin() {
  * Create-or-update the one row.
  *
  * Zod has already stripped keys the caller omitted, so spreading `data`
- * straight into `update` touches only the columns actually sent — a PATCH with
+ * straight into `update` touches only the columns actually sent - a PATCH with
  * just `{ email }` leaves brandDescription and every social link alone. An
  * explicit null still comes through as a key and clears that column, which is
  * the distinction the validator's `.nullable().optional()` pairs exist to

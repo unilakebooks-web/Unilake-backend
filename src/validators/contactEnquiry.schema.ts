@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-// Unlike Feedback — which is anonymous by design and deliberately collects no
-// contact details — an enquiry exists to be answered. Email and phone are the
+// Unlike Feedback - which is anonymous by design and deliberately collects no
+// contact details - an enquiry exists to be answered. Email and phone are the
 // reply channel, so both are required rather than optional.
 export const createContactEnquirySchema = z.object({
   name: z.string().trim().min(1, "Name is required"),

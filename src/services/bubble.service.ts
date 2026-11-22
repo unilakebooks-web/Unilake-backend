@@ -128,7 +128,7 @@ export async function updateBubble(bubbleId: string, input: UpdateBubbleInput) {
   if (input.textCase !== undefined) data.textCase = input.textCase;
   if (input.sortOrder !== undefined) data.sortOrder = input.sortOrder;
 
-  // Handle fontId separately — it's a relation, not a plain field
+  // Handle fontId separately - it's a relation, not a plain field
   if (input.fontId !== undefined) {
     if (input.fontId === null) {
       data.font = { disconnect: true };
@@ -137,7 +137,7 @@ export async function updateBubble(bubbleId: string, input: UpdateBubbleInput) {
     }
   }
 
-  // The bounds cross-check can't live in Zod for a partial update — a body
+  // The bounds cross-check can't live in Zod for a partial update - a body
   // containing only `x` gives Zod no `width` to add it to. Merge the incoming
   // values over the stored ones and validate the resulting rectangle.
   const merged = {

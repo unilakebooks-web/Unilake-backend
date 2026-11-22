@@ -7,18 +7,18 @@ import type { ListAdminCustomersQueryInput } from "../validators/customer.schema
 // ADMIN CUSTOMER LIST
 // ============================================================
 //
-// One row per ACCOUNT that has bought at least one book — the "who are our
+// One row per ACCOUNT that has bought at least one book - the "who are our
 // customers and how do we reach them" view. Distinct from:
-//   - /admin/users  — every account, buyers or not;
-//   - /admin/orders — one row per order.
+//   - /admin/users  - every account, buyers or not;
+//   - /admin/orders - one row per order.
 //
 // Contact details, by decision:
 //   - email: the ACCOUNT email (User.email), the one they log in with;
 //   - phone: the shipping phone from their MOST RECENT paid order. Accounts
-//     carry no phone of their own — orders are the only place one exists.
+//     carry no phone of their own - orders are the only place one exists.
 //
 // Aggregation happens in memory over every paid order. One query, no N+1, and
-// it lets the list sort by last purchase — which Prisma cannot order users by
+// it lets the list sort by last purchase - which Prisma cannot order users by
 // directly. Fine at current volume (hundreds to low thousands of orders); if it
 // ever grows past that, move the grouping into SQL.
 
@@ -40,7 +40,7 @@ export const PAID_ORDER_STATUSES: OrderStatus[] = [
 /** Amount paid in one currency. Totals are never summed across currencies. */
 export interface CurrencyTotal {
   currency: string;
-  /** Decimal as a string, two places — same convention as Order.amount. */
+  /** Decimal as a string, two places - same convention as Order.amount. */
   amount: string;
 }
 
@@ -61,11 +61,11 @@ export interface AdminCustomerRow {
   lastPurchaseAt: Date;
 }
 
-/** Digits only — lets "98765 43210" match a stored "+919876543210". */
+/** Digits only - lets "98765 43210" match a stored "+919876543210". */
 const digitsOf = (value: string) => value.replace(/\D/g, "");
 
 /**
- * Builds the full customer list — every account with a paid order — newest
+ * Builds the full customer list - every account with a paid order - newest
  * purchase first, optionally narrowed by `search`.
  *
  * Search is case-insensitive against the name and account email, and against
@@ -82,7 +82,7 @@ export async function buildCustomerList(search?: string): Promise<AdminCustomerR
       // The filter is a guard, not an expectation.
       orderSession: { userId: { not: null } },
     },
-    // Newest first, so the first order seen per customer is their latest —
+    // Newest first, so the first order seen per customer is their latest -
     // that is what picks the phone and orders comicsBought.
     orderBy: { createdAt: "desc" },
     select: {
@@ -119,7 +119,7 @@ export async function buildCustomerList(search?: string): Promise<AdminCustomerR
       acc = {
         userId: user.id,
         // Better Auth always stores a name, but it can be empty for some
-        // social sign-ins — fall back to the name they shipped to.
+        // social sign-ins - fall back to the name they shipped to.
         name: user.name.trim() || order.shippingName?.trim() || "",
         email: user.email,
         phone: null,
@@ -137,7 +137,7 @@ export async function buildCustomerList(search?: string): Promise<AdminCustomerR
     // Orders arrive newest first, so each later one is older.
     acc.firstPurchaseAt = order.createdAt;
 
-    // Latest order with a phone wins — normally the very first one.
+    // Latest order with a phone wins - normally the very first one.
     if (order.shippingPhone) {
       if (acc.phone === null) acc.phone = order.shippingPhone;
       acc.phones.add(order.shippingPhone);
@@ -202,7 +202,7 @@ export async function listAdminCustomers(filters: ListAdminCustomersQueryInput) 
 // CSV EXPORT
 // ============================================================
 
-/** YYYY-MM-DD in India time — the business's day, as on the stats dashboard. */
+/** YYYY-MM-DD in India time - the business's day, as on the stats dashboard. */
 const toIstDate = (date: Date) =>
   date.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
@@ -215,7 +215,7 @@ const PHONE_LIKE = /^\+?[\d\s()-]+$/;
  * Formula injection: spreadsheet apps execute a cell that starts with `=`,
  * `+`, `-`, `@` (or a tab/CR). Names and emails are customer-typed, so such a
  * cell is prefixed with `'` to force it to plain text. Phone numbers are the
- * exception — "+919876543210" is legitimate and must stay as-is.
+ * exception - "+919876543210" is legitimate and must stay as-is.
  */
 function csvCell(value: string | number): string {
   let text = String(value);

@@ -13,7 +13,7 @@ const comicFactPlacementEnum = z.enum(["PRELOADER", "GENERATING"], {
 });
 
 // 200 is a display limit, not a storage one. These are read in a 3-second
-// window on a loading screen — anything longer cannot be finished before it
+// window on a loading screen - anything longer cannot be finished before it
 // rotates away. The admin panel shows a counter against the same number.
 const factTextSchema = z
   .string()
@@ -38,7 +38,7 @@ export const updateComicFactSchema = z
     message: "At least one field must be provided to update",
   });
 
-// Query string, parsed manually in the controller — there is no validateQuery
+// Query string, parsed manually in the controller - there is no validateQuery
 // middleware in this project.
 export const adminComicFactQuerySchema = z.object({
   placement: comicFactPlacementEnum.optional(),

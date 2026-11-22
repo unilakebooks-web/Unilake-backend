@@ -49,7 +49,7 @@ function noTrace(res: Response) {
   res.setHeader("Referrer-Policy", "no-referrer");
 }
 
-// ── The customer's side: the session id is the credential, as on every other session route ──
+// -- The customer's side: the session id is the credential, as on every other session route --
 
 export const getShareStateHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -88,7 +88,7 @@ export const revokeShareHandler = asyncHandler(
   }
 );
 
-// ── The viewer's side: the share token is the credential ──
+// -- The viewer's side: the share token is the credential --
 
 const notFoundBody = {
   success: false,

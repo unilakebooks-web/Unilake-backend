@@ -7,7 +7,7 @@ import {
 } from "../config/shipping.js";
 
 // Query params for GET /api/admin/orders
-// Sort is deliberately narrow — only createdAt / updatedAt. See DECISIONS.md
+// Sort is deliberately narrow - only createdAt / updatedAt. See DECISIONS.md
 // notes on Section 7 for reasoning.
 //
 // pageSize hard cap = 100 (defensive). Default = 20 per admin's request.

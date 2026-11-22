@@ -22,7 +22,7 @@ const err = (name: string, status: number, message = "") =>
   ({
     providerName: name,
     providerStatus: status,
-    message: `Resend send failed: ${name} — ${message} (HTTP ${status})`,
+    message: `Resend send failed: ${name}: ${message} (HTTP ${status})`,
   }) as EmailSendError;
 
 describe("classifyResendError", () => {

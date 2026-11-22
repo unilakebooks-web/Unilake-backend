@@ -13,13 +13,13 @@ export const razorpayWebhookHandler = asyncHandler(
     // express.raw() puts a Buffer here
     const rawBody = req.body as Buffer;
     const signature = req.header("x-razorpay-signature");
-    // Razorpay's own event identifier — unique per event, stable across its
+    // Razorpay's own event identifier - unique per event, stable across its
     // retries of that event. This is the idempotency key; see webhook.service.ts.
     const eventId = req.header("x-razorpay-event-id");
 
     try {
       await handleRazorpayWebhook(rawBody, signature, eventId);
-      // Always 200 on success — signals Razorpay to stop retrying.
+      // Always 200 on success - signals Razorpay to stop retrying.
       res.status(200).json({ received: true });
     } catch (error) {
       if (error instanceof WebhookVerificationError) {
@@ -31,7 +31,7 @@ export const razorpayWebhookHandler = asyncHandler(
         res.status(400).json({ error: error.message });
         return;
       }
-      // Any other error is unexpected — let Express error handler take it.
+      // Any other error is unexpected - let Express error handler take it.
       // Razorpay will retry, which is what we want on transient failures.
       throw error;
     }
@@ -40,7 +40,7 @@ export const razorpayWebhookHandler = asyncHandler(
 
 export const shiprocketWebhookHandler = asyncHandler(
   async (req: Request, res: Response) => {
-    // express.raw() puts a Buffer here — same as razorpay.
+    // express.raw() puts a Buffer here - same as razorpay.
     const rawBody = req.body as Buffer;
     // Shiprocket sends the shared secret in x-api-key (per our webhook
     // dashboard config: Auth Token Type = x-api-key).
@@ -48,7 +48,7 @@ export const shiprocketWebhookHandler = asyncHandler(
 
     try {
       await handleShiprocketWebhook(rawBody, providedToken);
-      // 200 acks the webhook — Shiprocket stops retrying this event.
+      // 200 acks the webhook - Shiprocket stops retrying this event.
       res.status(200).json({ received: true });
     } catch (error) {
       if (error instanceof WebhookVerificationError) {

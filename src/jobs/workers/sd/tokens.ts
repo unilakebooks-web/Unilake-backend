@@ -20,7 +20,7 @@ export function getPronouns(key: PronounKey): PronounSet {
 
 /**
  * One piece of substituted dialogue. `isName` is true only for text that came
- * from a {name} token — that is what Bubble.nameColor paints. Pronouns are
+ * from a {name} token - that is what Bubble.nameColor paints. Pronouns are
  * ordinary dialogue and take the bubble's normal colour.
  */
 export type DialogueSegment = {
@@ -37,7 +37,7 @@ const TOKEN_PATTERN =
  *
  * Splitting on a capturing group keeps the tokens in the output array, at the
  * odd indices. Every {name} is marked, not just the first. Adjacent plain
- * pieces are not merged — callers concatenate, so it would change nothing.
+ * pieces are not merged - callers concatenate, so it would change nothing.
  */
 export function substituteTokensToSegments(
   template: string,

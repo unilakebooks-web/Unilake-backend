@@ -55,7 +55,7 @@ export async function deleteTheme(themeId: any) {
 
   if (existing._count.comics > 0) {
     throw new ConflictError(
-      `Cannot delete theme "${existing.name}" — it still has ${existing._count.comics} comic(s) linked to it. Unlink them first.`
+      `Cannot delete theme "${existing.name}": it still has ${existing._count.comics} comic(s) linked to it. Unlink them first.`
     );
   }
 

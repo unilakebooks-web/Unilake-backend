@@ -40,7 +40,7 @@ const PAGE_IN_USE_MESSAGE =
   "This comic page is in one of the user's generated pages and thus cannot be deleted.";
 
 // Two artworks are treated as the same shape if their width/height ratios agree
-// to within this tolerance. Never compare ratios with === — 2048/1536 and
+// to within this tolerance. Never compare ratios with === - 2048/1536 and
 // 4096/3072 are both 1.333... but not bit-identical.
 const ASPECT_RATIO_TOLERANCE = 0.01;
 
@@ -175,7 +175,7 @@ export async function createPage(comicId: string, input: CreatePageInput) {
 
   // ComfyUI overlays mask and artwork pixel-for-pixel, so a size mismatch puts
   // the face in the wrong place on every copy. Reject it at upload time.
-  // A mask supplied without artwork can't be checked yet — it gets validated in
+  // A mask supplied without artwork can't be checked yet - it gets validated in
   // updatePage() when artwork is eventually attached.
   if (input.maskUrl !== undefined && artworkDimensions) {
     const maskDimensions = await probePageAsset(input.maskUrl, "mask");
@@ -306,7 +306,7 @@ export async function updatePage(pageId: string, input: UpdatePageInput) {
     data.artworkWidth = resultingArtwork.width;
     data.artworkHeight = resultingArtwork.height;
 
-    // A pure resolution change is harmless — bubble coords are normalized.
+    // A pure resolution change is harmless - bubble coords are normalized.
     // Only a changed aspect ratio actually distorts placement, so only warn
     // for that. Never blocks the update.
     if (previousArtwork && aspectRatioChanged(previousArtwork, resultingArtwork)) {
@@ -338,7 +338,7 @@ export async function updatePage(pageId: string, input: UpdatePageInput) {
     data,
   });
 
-  // Best-effort cleanup — the DB update must stand even if R2 is unreachable.
+  // Best-effort cleanup - the DB update must stand even if R2 is unreachable.
   for (const oldR2Key of oldR2KeysToDelete) {
     try {
       await deleteFile("public", oldR2Key);
@@ -374,7 +374,7 @@ export async function deletePage(pageId: string) {
   // page_versions_pageId_fkey constraint is ON DELETE RESTRICT, so Postgres
   // refuses the delete outright. Checked up front so the admin gets a message
   // that says why, instead of the generic 500 the raw FK error produced.
-  // Counts every PageVersion regardless of status or session expiry — the
+  // Counts every PageVersion regardless of status or session expiry - the
   // constraint does too.
   //
   // A page that sessions include but have not generated yet (a paid page in a
@@ -395,9 +395,9 @@ export async function deletePage(pageId: string) {
     .filter((url): url is string => Boolean(url))
     .map((url) => url.replace(`${publicBase}/`, ""));
 
-  // DB delete is the moment of truth. If it throws, we haven't touched R2 —
+  // DB delete is the moment of truth. If it throws, we haven't touched R2 -
   // caller sees an error and the page + its assets stay intact, exactly
-  // recoverable by retrying the delete. (Audit 8.9 — DB first, R2 second.)
+  // recoverable by retrying the delete. (Audit 8.9 - DB first, R2 second.)
   try {
     await prisma.page.delete({
       where: { id: pageId },
@@ -420,7 +420,7 @@ export async function deletePage(pageId: string) {
     } catch (error) {
       logger.warn(
         { error, pageId, key },
-        "Failed to delete page asset from R2 after DB delete — orphaned file"
+        "Failed to delete page asset from R2 after DB delete, orphaned file"
       );
     }
   }
@@ -455,7 +455,7 @@ export async function reorderComicPages(
   }
 
   // Unpublishing does NOT cancel in-flight sessions, and PDF compilation
-  // orders pages by pageNumber — reordering mid-order would reshuffle a book
+  // orders pages by pageNumber - reordering mid-order would reshuffle a book
   // someone already paid for. Same guard deleteComic uses.
   const activeSessionCount = await prisma.orderSession.count({
     where: {
@@ -466,7 +466,7 @@ export async function reorderComicPages(
 
   if (activeSessionCount > 0) {
     throw new ConflictError(
-      `Cannot reorder pages — this comic has ${activeSessionCount} active order session(s). Wait for them to complete or fail first.`
+      `Cannot reorder pages: this comic has ${activeSessionCount} active order session(s). Wait for them to complete or fail first.`
     );
   }
 
@@ -479,7 +479,7 @@ export async function reorderComicPages(
   // pages left untouched. The full set is mandatory.
   if (pages.length !== orderedPageIds.length) {
     throw new ValidationError(
-      `orderedPageIds must contain all ${pages.length} page(s) of this comic — received ${orderedPageIds.length}.`
+      `orderedPageIds must contain all ${pages.length} page(s) of this comic: received ${orderedPageIds.length}.`
     );
   }
 
@@ -495,7 +495,7 @@ export async function reorderComicPages(
   // Two-phase renumber. @@unique([comicId, pageNumber]) is enforced per
   // statement (Prisma's unique constraints are not deferrable), so writing
   // final numbers directly fails the moment two pages swap. Park everything
-  // on negatives first — createPageSchema enforces positive(), so no real
+  // on negatives first - createPageSchema enforces positive(), so no real
   // page can ever hold one.
   await prisma.$transaction(async (tx) => {
     for (const [index, id] of orderedPageIds.entries()) {
@@ -519,7 +519,7 @@ export async function reorderComicPages(
 }
 
 /**
- * Render a page's text stamping for the admin bubble mapper — no face swap.
+ * Render a page's text stamping for the admin bubble mapper - no face swap.
  *
  * This is the SAME renderer the generation pipeline uses, called with bubbles
  * supplied by the browser instead of read from the DB. That is deliberate: the
@@ -530,7 +530,7 @@ export async function reorderComicPages(
  * session. A buffer is produced, encoded, and dropped.
  *
  * Accuracy note: for a page with `hasFace: false` this is not an approximation
- * — the pipeline's stamped image IS the final image for those pages. For face
+ * - the pipeline's stamped image IS the final image for those pages. For face
  * pages it is the exact input the face swap receives.
  */
 export async function previewPageTextStamp(
@@ -618,7 +618,7 @@ export async function previewPageTextStamp(
   });
 
   // The print master is 4–5 MB of lossless PNG; a browser preview does not need
-  // that. Best-effort, exactly as the worker treats it — a resize failure must
+  // that. Best-effort, exactly as the worker treats it - a resize failure must
   // not throw away a render that already succeeded, so fall back to the PNG.
   let imageBuffer = stampedBuffer;
   let contentType = "image/png";

@@ -94,7 +94,7 @@ export const listAdminOrdersHandler = asyncHandler(
 
 // GET /api/admin/orders/:orderId
 // Auth: requireStaff (router mount in app.ts; sub-admin ok)
-// Full order detail — customer, payment, shipping, shipment, webhook history.
+// Full order detail - customer, payment, shipping, shipment, webhook history.
 
 const adminOrderDetailParamsSchema = z.object({
   orderId: z.string().uuid("Invalid order ID format"),
@@ -118,7 +118,7 @@ export const getAdminOrderDetailHandler = asyncHandler(
 
 // POST /api/admin/orders/:orderId/confirm-dimensions
 // Auth: requireStaff (router mount in app.ts; sub-admin ok)
-// Body: { length, breadth, height, weight } — validated via validateBody
+// Body: { length, breadth, height, weight } - validated via validateBody
 //       middleware in the route file.
 //
 // This triggers Phase B of the Shiprocket flow inline (~3–5s):
@@ -146,7 +146,7 @@ export const confirmDimensionsHandler = asyncHandler(
     }
 
     // Body already validated by validateBody(confirmDimensionsBodySchema)
-    // middleware — we can trust its shape here.
+    // middleware - we can trust its shape here.
     const { length, breadth, height, weight } = req.body as {
       length: number;
       breadth: number;
@@ -169,10 +169,10 @@ export const confirmDimensionsHandler = asyncHandler(
 //
 // Retries Phase A for an order stuck at SHIPROCKET_FAILED. Handles both
 // clean-retry (no Shiprocket IDs) and recovery (Shiprocket IDs present but
-// DB stuck) paths — see retryPhaseAForFailedOrder for details.
+// DB stuck) paths - see retryPhaseAForFailedOrder for details.
 //
 // Response `recovered: true` means we skipped the Shiprocket call because
-// the order already existed on their side — useful for admin logs.
+// the order already existed on their side - useful for admin logs.
 
 const retryShiprocketParamsSchema = z.object({
   orderId: z.string().uuid("Invalid order ID format"),
@@ -194,8 +194,8 @@ export const retryShiprocketHandler = asyncHandler(
       200,
       result,
       result.recovered
-        ? "Order recovered — Shiprocket already had this shipment, DB reconciled"
-        : "Shiprocket retry succeeded — order is ready to ship"
+        ? "Order recovered, Shiprocket already had this shipment, DB reconciled"
+        : "Shiprocket retry succeeded, order is ready to ship"
     );
   }
 );
@@ -204,7 +204,7 @@ export const retryShiprocketHandler = asyncHandler(
 // GET /api/admin/orders/:orderId/label
 // Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
-// Returns a FRESH label PDF URL from Shiprocket every call — never cached
+// Returns a FRESH label PDF URL from Shiprocket every call - never cached
 // on our side per DECISIONS. Admin frontend either opens the URL in a new
 // tab or triggers download.
 //
@@ -235,7 +235,7 @@ export const getOrderLabelHandler = asyncHandler(
 // Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
 // Streams the order's Bill of Supply PDF as a download. Built in memory on
-// every call and never stored — not in the DB, not in R2.
+// every call and never stored - not in the DB, not in R2.
 //
 // 409 when the order has no bill number (non-INR, or paid before billing).
 
@@ -252,7 +252,7 @@ export const getBillOfSupplyHandler = asyncHandler(
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-    // Customer name and address — never let a shared cache keep a copy.
+    // Customer name and address - never let a shared cache keep a copy.
     res.setHeader("Cache-Control", "no-store");
     res.status(200).send(Buffer.from(bytes));
   }
@@ -349,7 +349,7 @@ export const markAddressSyncedHandler = asyncHandler(
 // POST /api/admin/orders/:orderId/refresh-tracking
 // Auth: requireStaff (router mount in app.ts; sub-admin ok)
 //
-// Manual tracking refresh — hits Shiprocket's track-by-AWB endpoint and
+// Manual tracking refresh - hits Shiprocket's track-by-AWB endpoint and
 // reconciles the fresh data into our DB (first-write-wins on lifecycle
 // timestamps, forward-only on status transitions).
 //

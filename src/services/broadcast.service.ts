@@ -220,7 +220,7 @@ export async function getAudienceCounts() {
   };
 }
 
-// ── Draft management ────────────────────────────────────────
+// -- Draft management ----------------------------------------
 
 /** What a broadcast may send in a day: the daily budget minus the part kept for reminders. */
 const broadcastDailyCapacity = (settings: {
@@ -318,7 +318,7 @@ export async function deleteBroadcastDraft(id: string) {
     throw new ConflictError("This broadcast has already been started.");
 }
 
-// ── Preview and test ────────────────────────────────────────
+// -- Preview and test ----------------------------------------
 
 /** The footer link of a preview or a test goes to the unsubscribe page without a token: it does nothing. */
 const inertStopUrl = () => `${config.frontendUrl}/unsubscribe`;
@@ -373,7 +373,7 @@ export async function sendTestBroadcast(id: string, adminEmail: string) {
   }
 }
 
-// ── Start, cancel ───────────────────────────────────────────
+// -- Start, cancel -------------------------------------------
 
 /**
  * Takes the snapshot and starts sending. `confirmRecipientCount` is what the admin saw: if the list has
@@ -449,7 +449,7 @@ export async function cancelBroadcast(id: string) {
   return getBroadcast(id);
 }
 
-// ── Sending ─────────────────────────────────────────────────
+// -- Sending -------------------------------------------------
 
 type ClaimedRecipient = {
   recipientId: string;

@@ -78,7 +78,7 @@ def check_sunglasses(image_path, detection, image_width, image_height):
 
         eyes_look_dark_and_flat.append(is_dark and is_uniform)
 
-    # Require BOTH eyes to look dark and flat before flagging —
+    # Require BOTH eyes to look dark and flat before flagging -
     # reduces false positives from a single shadowed or partially-closed eye
     sunglasses_detected = all(eyes_look_dark_and_flat)
     return not sunglasses_detected

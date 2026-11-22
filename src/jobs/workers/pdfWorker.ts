@@ -6,11 +6,11 @@ import { compilePdfForSession } from "../../services/session.service.js";
 
 /**
  * PDF compilation worker.
- * Thin wrapper — all logic lives in compilePdfForSession() in the service.
+ * Thin wrapper - all logic lives in compilePdfForSession() in the service.
  *
  * Retry behavior: BullMQ retries 3 times with exponential backoff (from
  * defaultJobOptions in queues.ts). Only on final failure do we flip the
- * session to PDF_FAILED — transient errors get another shot first.
+ * session to PDF_FAILED - transient errors get another shot first.
  */
 export const pdfWorker = new Worker(
   "pdf-compilation",
@@ -35,7 +35,7 @@ export const pdfWorker = new Worker(
 );
 
 /**
- * Final-failure handler — fires only after BullMQ has exhausted all retry
+ * Final-failure handler - fires only after BullMQ has exhausted all retry
  * attempts (3 by default). Flips session to PDF_FAILED so admin can see it
  * and manually retry. Uses status guard so we don't overwrite a stale
  * SHIPMENT_QUEUED / COMPLETED / etc.
@@ -56,7 +56,7 @@ pdfWorker.on("failed", async (job, err) => {
   const { orderSessionId } = job.data;
 
   try {
-    // Guard on COMPILING_PDF only — don't overwrite if compilation actually
+    // Guard on COMPILING_PDF only - don't overwrite if compilation actually
     // succeeded on the last attempt (race between worker success and BullMQ
     // failure classification is extremely unlikely but this is cheap defense).
     const { count } = await prisma.orderSession.updateMany({
@@ -67,18 +67,18 @@ pdfWorker.on("failed", async (job, err) => {
     if (count > 0) {
       logger.error(
         { orderSessionId, jobId: job.id },
-        "[PDF Worker] All retries exhausted — session flipped to PDF_FAILED"
+        "[PDF Worker] All retries exhausted, session flipped to PDF_FAILED"
       );
     } else {
       logger.warn(
         { orderSessionId, jobId: job.id },
-        "[PDF Worker] Failed handler fired but session not at COMPILING_PDF — no status change"
+        "[PDF Worker] Failed handler fired but session not at COMPILING_PDF, no status change"
       );
     }
   } catch (handlerErr) {
     logger.error(
       { orderSessionId, jobId: job.id, handlerErr },
-      "[PDF Worker] Failed to flip session to PDF_FAILED — manual intervention needed"
+      "[PDF Worker] Failed to flip session to PDF_FAILED, manual intervention needed"
     );
   }
 });

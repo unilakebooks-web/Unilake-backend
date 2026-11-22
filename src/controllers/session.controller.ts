@@ -33,7 +33,7 @@ export const createSessionHandler = asyncHandler(
         userId = sessionData.user.id;
       }
     } catch {
-      // No valid session — that's fine, session stays anonymous
+      // No valid session - that's fine, session stays anonymous
     }
     const session = await createOrderSession(req.body, userId);
 
@@ -150,7 +150,7 @@ export const sendToPrintHandler = asyncHandler(
       );
     }
 
-    // Body validation — same safeParse pattern as regeneratePageHandler
+    // Body validation - same safeParse pattern as regeneratePageHandler
     // (rather than validateBody middleware) since we're already parsing
     // params inline. Keeps error handling consistent inside this handler.
     const body = sendToPrintBodySchema.safeParse(req.body);

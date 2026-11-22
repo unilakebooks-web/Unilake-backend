@@ -18,7 +18,7 @@ import type {
 // A role change takes effect on the target's very next request: requireStaff
 // calls auth.api.getSession() per request and Better Auth's cookie cache is
 // off, so the role is re-read from the DB every time. A demoted admin is NOT
-// signed out — they simply become a normal customer (agreed behaviour).
+// signed out - they simply become a normal customer (agreed behaviour).
 
 /**
  * The only fields the admin list exposes. Explicit so nothing auth-internal
@@ -58,7 +58,7 @@ export async function listAdminUsers(filters: ListAdminUsersQueryInput) {
   const skip = (filters.page - 1) * filters.pageSize;
   const take = filters.pageSize;
 
-  // adminCount is global (ignores search/filter) — it drives the header and
+  // adminCount is global (ignores search/filter) - it drives the header and
   // lets the UI explain why the last admin can't be demoted.
   const [users, total, adminCount] = await prisma.$transaction([
     prisma.user.findMany({
@@ -126,7 +126,7 @@ async function changeRoleIfUnchanged(
  *   4. The last remaining Master admin cannot be demoted → 409
  *      (inside the lock the target is read again: already changed → success, no longer a Master → 409)
  *
- * Guard 4 and the write share one transaction behind an advisory lock — see
+ * Guard 4 and the write share one transaction behind an advisory lock - see
  * ROLE_CHANGE_LOCK_KEY. Inside it the target is read again (it may have changed since the first
  * read), and only Master admins are counted. A change that is not a demotion cannot lower the
  * Master count, so it skips the lock; its write only applies if the role is still the one read

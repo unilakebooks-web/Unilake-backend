@@ -7,7 +7,7 @@ export const sendToPrintParamsSchema = z.object({
 })
 
 /**
- * Body — the customer's variant picks, one entry per page.
+ * Body - the customer's variant picks, one entry per page.
  *
  * Validation done here (fast, before hitting DB):
  *  - `selections` is a non-empty array

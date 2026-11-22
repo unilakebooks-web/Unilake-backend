@@ -12,7 +12,7 @@
 // numbers and the recent-orders list are always live snapshots of right now.
 //
 // "₹48,500 in the last 30 days" is a statement about a period. "5 orders
-// awaiting dimensions" is a statement about this moment — range-filtering it
+// awaiting dimensions" is a statement about this moment - range-filtering it
 // would hide a 40-day-old order that still has to be packed, which is exactly
 // the order someone needs to be told about.
 //
@@ -55,12 +55,12 @@ type Granularity = "day" | "month";
  * `since` is IST MIDNIGHT of the first day in the window, not a rolling
  * `now - N×24h`. That distinction is load-bearing: a rolling window starts
  * mid-day, so "7 days" would span eight calendar days with a partial one at
- * each end — the chart would draw 8 bars under a "7 days" label, and the
+ * each end - the chart would draw 8 bars under a "7 days" label, and the
  * revenue tile above it would count a different set of orders than the bars
  * below it. Anchoring to midnight makes the tile and the chart agree, and makes
  * both agree with what someone counting by hand would get.
  *
- * `since: null` for "all" rather than a sentinel date — callers omit the
+ * `since: null` for "all" rather than a sentinel date - callers omit the
  * `createdAt` clause entirely instead of comparing against the epoch, which
  * keeps the query plan clean and the intent obvious.
  */
@@ -91,8 +91,8 @@ function resolveRange(range: StatsRange): {
  * so every value goes through decimal.js instead. `listAdminOrders` already
  * returns `amount` as a string; this keeps the whole admin surface consistent.
  *
- * Accepts whatever the driver hands back for a Postgres `numeric` — string,
- * number, or Decimal — because the raw queries and the query builder do not
+ * Accepts whatever the driver hands back for a Postgres `numeric` - string,
+ * number, or Decimal - because the raw queries and the query builder do not
  * agree on which one they return.
  */
 function toMoneyString(
@@ -109,7 +109,7 @@ function toMoneyString(
  * locale is an implementation detail, the timezone is the part that matters.
  *
  * This must agree exactly with the `AT TIME ZONE` conversion in the timeseries
- * SQL — if the two ever drift, zero-filled buckets stop lining up with real
+ * SQL - if the two ever drift, zero-filled buckets stop lining up with real
  * ones and days silently duplicate or vanish from the chart.
  */
 function istDateKey(instant: Date): string {
@@ -125,7 +125,7 @@ function istDateKey(instant: Date): string {
  * The UTC instant at which the IST calendar day containing `instant` began.
  *
  * Built by re-parsing the IST date key with an explicit fixed offset, which is
- * exact for a zone without DST — see REPORTING_UTC_OFFSET for why that holds
+ * exact for a zone without DST - see REPORTING_UTC_OFFSET for why that holds
  * here and would not hold everywhere.
  */
 function istStartOfDay(instant: Date): Date {
@@ -202,7 +202,7 @@ const revenueStatusFilter = Prisma.sql`o.status::text IN (${Prisma.join(
 )})`;
 
 // ============================================================
-// 1. SUMMARY — KPIs, pipeline snapshot, triage, recent, top comics
+// 1. SUMMARY - KPIs, pipeline snapshot, triage, recent, top comics
 // ============================================================
 
 type RevenueBucket = {
@@ -224,7 +224,7 @@ type TopComicRawRow = {
 /**
  * Top comics by paid-order volume for the range.
  *
- * Raw because `Order` carries no `comicId` — the link runs
+ * Raw because `Order` carries no `comicId` - the link runs
  * orders → order_sessions → comics, and Prisma's `groupBy` can only group by
  * columns on the model being grouped.
  *
@@ -397,7 +397,7 @@ export async function getStatsSummary(range: StatsRange) {
   //
   // AOV divides through decimal.js rather than JS numbers, for the same reason
   // the totals do. A currency group only exists here if it has at least one
-  // row, so the divisor can never be zero — the guard is defence in depth.
+  // row, so the divisor can never be zero - the guard is defence in depth.
   const revenue: RevenueBucket[] = revenueGroups.map((group) => {
     const total = group._sum.amount ?? new Prisma.Decimal(0);
     const orderCount = group._count;
@@ -485,7 +485,7 @@ export async function getStatsSummary(range: StatsRange) {
 }
 
 // ============================================================
-// 2. TIMESERIES — the chart
+// 2. TIMESERIES - the chart
 // ============================================================
 
 type TimeseriesRawRow = {
@@ -503,7 +503,7 @@ export async function getStatsTimeseries(range: StatsRange) {
     : Prisma.empty;
 
   // Branched on the validated enum, never interpolated from input. `date_trunc`
-  // takes its unit as text, so this could technically be a bind parameter —
+  // takes its unit as text, so this could technically be a bind parameter -
   // two literal fragments keep it impossible to get wrong by accident.
   const truncUnit =
     granularity === "month" ? Prisma.sql`'month'` : Prisma.sql`'day'`;
@@ -512,7 +512,7 @@ export async function getStatsTimeseries(range: StatsRange) {
   //
   // `AT TIME ZONE` yields a `timestamp without time zone` holding IST wall-clock
   // time, and node-postgres parses that kind of value using the *Node process's*
-  // local timezone — so reading it back as a JS Date would re-shift it by
+  // local timezone - so reading it back as a JS Date would re-shift it by
   // whatever the server happens to be set to. `to_char` sidesteps the driver's
   // date handling completely and hands back the exact string the chart needs.
   const rows = await prisma.$queryRaw<TimeseriesRawRow[]>(Prisma.sql`
@@ -538,7 +538,7 @@ export async function getStatsTimeseries(range: StatsRange) {
   // than as a quiet day.
   //
   // With no rows at all there is nothing to fill and no currency to fill it
-  // for — an empty series is the honest answer, and the frontend renders its
+  // for - an empty series is the honest answer, and the frontend renders its
   // "not enough data yet" state.
   if (rows.length === 0) {
     return { range, granularity, points: [] };
@@ -577,14 +577,14 @@ export async function getStatsTimeseries(range: StatsRange) {
 }
 
 // ============================================================
-// 3. CONTENT HEALTH — is the storefront correctly configured right now
+// 3. CONTENT HEALTH - is the storefront correctly configured right now
 // ============================================================
 
 /**
  * Takes no range: this is always a statement about the present.
  *
  * Every check is a plain count. The panel's job is to make a misconfigured
- * storefront visible from the dashboard instead of from a customer complaint —
+ * storefront visible from the dashboard instead of from a customer complaint -
  * particularly the How It Works rule, whose real publish condition is stricter
  * than the `isActive` flag an admin sees in its own editor.
  */
@@ -616,7 +616,7 @@ export async function getContentHealth() {
     //
     // These two counts catch the failure modes that actually reach production:
     // a published comic with no pricing at all, and one carrying a rule from
-    // before the `mrp` column existed — which makes the storefront silently
+    // before the `mrp` column existed - which makes the storefront silently
     // drop the strike-through price.
     prisma.comic.count({
       where: { status: "PUBLISHED", pricingRules: { none: {} } },
@@ -672,7 +672,7 @@ export async function getContentHealth() {
   }
 
   // The real public readiness rule from getPublicHowItWorks: active is not
-  // enough on its own — a section with no video or no steps returns null to the
+  // enough on its own - a section with no video or no steps returns null to the
   // homepage no matter what the flag says.
   const howItWorksReady =
     !!howItWorks &&
@@ -688,7 +688,7 @@ export async function getContentHealth() {
     else if (group.placement === "COMIC") faqCounts.comic = group._count;
   }
 
-  // A slug with no row at all reads the same as an unpublished one — in both
+  // A slug with no row at all reads the same as an unpublished one - in both
   // cases the public endpoint 404s and the page is not live.
   const isSitePageLive = (slug: "PRIVACY" | "TERMS" | "REFUND") =>
     sitePages.some((page) => page.slug === slug && page.isActive);

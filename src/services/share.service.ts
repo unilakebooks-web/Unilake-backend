@@ -91,7 +91,7 @@ const isUniqueViolation = (error: unknown): boolean =>
   error instanceof Prisma.PrismaClientKnownRequestError &&
   error.code === "P2002";
 
-// ── The customer's side (session id) ────────────────────────
+// -- The customer's side (session id) ------------------------
 
 export interface ShareState {
   available: boolean;
@@ -221,7 +221,7 @@ export async function revokeShare(sessionId: string): Promise<void> {
   });
 }
 
-// ── The viewer's side (share token) ────────────────────────
+// -- The viewer's side (share token) ------------------------
 
 const shareViewSelect = (pageNumber?: number) =>
   ({

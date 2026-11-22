@@ -3,7 +3,7 @@ import { z } from "zod";
 // Address line 2 is required for every NEW or EDITED address. Addresses saved
 // before this rule may still have it null in the DB; they stay usable at
 // checkout (a business decision), and editing one only requires line2 if the
-// edit touches it — update keeps it optional, but never empty or null.
+// edit touches it - update keeps it optional, but never empty or null.
 export const createAddressSchema = z.object({
   label: z.string().min(1).max(50).optional(),
   name: z.string().min(1, "Recipient name is required").max(100),

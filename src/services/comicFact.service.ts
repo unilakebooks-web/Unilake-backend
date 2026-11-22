@@ -15,8 +15,8 @@ import { assertComicNotRetired, assertFactComicNotRetired } from "./retiredComic
  * not here.
  */
 
-// Insertion order. Display order is decided in the browser — the list is
-// shuffled per visit — so this exists purely so the ADMIN list does not
+// Insertion order. Display order is decided in the browser - the list is
+// shuffled per visit - so this exists purely so the ADMIN list does not
 // reshuffle itself every time the page is refreshed.
 const FACT_ORDER_BY = { createdAt: "asc" as const };
 
