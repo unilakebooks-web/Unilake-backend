@@ -437,6 +437,7 @@ describe("lists", () => {
     const item = (await listBlogsPublic()).find((b) => b.id === blog.id);
     expect(item).toBeDefined();
     expect(item).toHaveProperty("contentUpdatedAt");
+    expect(item).toHaveProperty("coverImageAlt");
     expect(item!.publishedAt).not.toBeNull();
     expect(item).not.toHaveProperty("body");
     const adminItem = (await listBlogsAdmin()).find((b) => b.id === blog.id);

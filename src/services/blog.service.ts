@@ -25,6 +25,7 @@ const BLOG_LIST_SELECT = {
   title: true,
   excerpt: true,
   coverImageUrl: true,
+  coverImageAlt: true,
   tags: true,
   isActive: true,
   createdAt: true,
