@@ -1422,6 +1422,10 @@ async function keyReferencedElsewhere(
       }),
       prisma.blog.count({ where: { coverImageUrl: named } }),
       prisma.googleReview.count({ where: { imageUrl: named } }),
+      // Share-preview pictures (feature 13): any comic, this one included, a post or a page naming the key keeps it.
+      prisma.comic.count({ where: { ogImageUrl: named } }),
+      prisma.blog.count({ where: { ogImageUrl: named } }),
+      prisma.pageSeo.count({ where: { ogImageUrl: named } }),
     ]);
     return site.some((n) => n > 0);
   }

@@ -183,6 +183,38 @@ describe("blog schemas", () => {
   });
 });
 
+describe("share image key folders", () => {
+  it("blog: a key outside blogs/ or with .. is refused, one inside is accepted", () => {
+    expect(
+      updateBlogSchema.safeParse({ ogImageKey: "blogs/a-x.webp" }).success
+    ).toBe(true);
+    expect(
+      updateBlogSchema.safeParse({ ogImageKey: "comics/thumbnails/x.webp" })
+        .success
+    ).toBe(false);
+    expect(
+      updateBlogSchema.safeParse({ ogImageKey: "blogs/../x.webp" }).success
+    ).toBe(false);
+    expect(
+      createBlogSchema.safeParse({ ...blogBase, ogImageKey: "other/x.webp" })
+        .success
+    ).toBe(false);
+  });
+
+  it("page SEO: a key outside page-seo/ or with .. is refused, one inside is accepted", () => {
+    expect(
+      upsertPageSeoSchema.safeParse({ ogImageKey: "page-seo/a-x.webp" }).success
+    ).toBe(true);
+    expect(
+      upsertPageSeoSchema.safeParse({ ogImageKey: "blogs/x.webp" }).success
+    ).toBe(false);
+    expect(
+      upsertPageSeoSchema.safeParse({ ogImageKey: "page-seo/../x.webp" })
+        .success
+    ).toBe(false);
+  });
+});
+
 describe("blog author in the site settings", () => {
   it("accepts the three fields and null to clear them", () => {
     const parsed = updateSiteSettingSchema.parse({

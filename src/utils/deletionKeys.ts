@@ -96,6 +96,9 @@ export const SCANNED_URL_COLUMNS = [
   "HowItWorks.posterUrl",
   "Blog.coverImageUrl",
   "GoogleReview.imageUrl",
+  "Comic.ogImageUrl",
+  "Blog.ogImageUrl",
+  "PageSeo.ogImageUrl",
 ];
 
 /** URL and key columns that cannot name a comic's file, with the reason (checked against the schema by the same test). */
@@ -125,4 +128,12 @@ export const IGNORED_URL_COLUMNS: Record<string, string> = {
   "ReminderSetting.googleReviewUrl": "a link to another site",
   "Broadcast.buttonUrl": "a link in an email",
   "SystemConfig.key": "the name of a setting, not an object key",
+  "Comic.coverThumbnailAlts": "alt text for the cover pictures, not a key",
+  "HeroImage.imageAlt": "alt text, not a key",
+  "TeamMember.imageAlt": "alt text, not a key",
+  "HowItWorks.posterAlt": "alt text, not a key",
+  "Blog.coverImageAlt": "alt text, not a key",
+  "PageSeo.ogImageAlt": "alt text, not a key",
+  "SiteSetting.blogAuthorInstagramUrl": "a link to another site",
+  "SiteSetting.blogAuthorLinkedinUrl": "a link to another site",
 };

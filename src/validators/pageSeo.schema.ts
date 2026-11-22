@@ -26,6 +26,10 @@ export const getPageSeoUploadUrlSchema = z.object({
     ),
 });
 
+// The folder POST /page-seo/upload-url writes to. Checked because the key is
+// later used to delete the replaced file: it must never name some other file.
+export const PAGE_SEO_IMAGE_KEY_PREFIX = "page-seo/";
+
 /**
  * Body for PUT /page-seo/:slug.
  *
@@ -43,7 +47,12 @@ export const upsertPageSeoSchema = z.object({
   metaDescription: seoText(320, "Meta description"),
   ogTitle: seoText(120, "Share title"),
   ogDescription: seoText(320, "Share description"),
-  ogImageKey: seoText(500, "Share image key"),
+  ogImageKey: seoText(500, "Share image key").refine(
+    (key) =>
+      key == null ||
+      (key.startsWith(PAGE_SEO_IMAGE_KEY_PREFIX) && !key.includes("..")),
+    { message: "Share image key is not valid. Upload the image again." }
+  ),
   ogImageAlt: seoText(200, "Alt text"),
 });
 

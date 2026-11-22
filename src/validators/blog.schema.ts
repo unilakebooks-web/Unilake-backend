@@ -41,7 +41,15 @@ const metaDescriptionSchema = z
 // the ids exist is checked by the service.
 const ogTitleSchema = seoText(120, "Share title");
 const ogDescriptionSchema = seoText(320, "Share description");
-const ogImageKeySchema = seoText(500, "Share image key");
+// The folder is checked because the key is later used to delete the replaced
+// file: it must never name some other file (a cover). Same rule as the comic's.
+export const BLOG_OG_IMAGE_KEY_PREFIX = "blogs/";
+const ogImageKeySchema = seoText(500, "Share image key").refine(
+  (key) =>
+    key == null ||
+    (key.startsWith(BLOG_OG_IMAGE_KEY_PREFIX) && !key.includes("..")),
+  { message: "Share image key is not valid. Upload the image again." }
+);
 const featuredComicIdsSchema = z
   .array(z.string().uuid("Each featured comic must be a valid id"))
   .max(6, "A blog can feature at most 6 comics")

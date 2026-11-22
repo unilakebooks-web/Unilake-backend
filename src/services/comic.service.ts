@@ -473,9 +473,12 @@ export const updateComic = async (comicId: string, data: UpdateComicInput) => {
     // if (data.generationNegativePrompt !== undefined)
     //   updateData.generationNegativePrompt = data.generationNegativePrompt;
 
-    const updatedComic = slugChange !== undefined
-      ? await updateComicWithNewSlug(comicId, slugChange, updateData)
-      : await prisma.comic.update({
+    // A changed address is written with its history row; otherwise a plain update.
+    const slugUpdated =
+      slugChange !== undefined
+        ? await updateComicWithNewSlug(comicId, slugChange, updateData)
+        : undefined;
+    const updatedComic = slugUpdated ?? await prisma.comic.update({
       where: { id: comicId },
       data: updateData,
     });

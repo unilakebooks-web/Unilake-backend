@@ -68,9 +68,12 @@ async function assertComicsExist(comicIds: string[]) {
 // The ordered replacement of a post's featured books. As a nested write inside
 // blog.update it is one transaction (old rows removed, new rows inserted with
 // their position), with no external call inside it.
+const featuredComicsCreate = (comicIds: string[]) =>
+  comicIds.map((comicId, position) => ({ comicId, position }));
+
 const featuredComicsWrite = (comicIds: string[]) => ({
   deleteMany: {},
-  create: comicIds.map((comicId, position) => ({ comicId, position })),
+  create: featuredComicsCreate(comicIds),
 });
 
 function slugify(title: string): string {
@@ -190,8 +193,11 @@ export async function createBlog(data: {
         ...(data.coverImageAlt != null && {
           coverImageAlt: data.coverImageAlt,
         }),
+        // A new post has no rows to replace: deleteMany exists only on update.
         ...(data.featuredComicIds !== undefined && {
-          featuredComics: featuredComicsWrite(data.featuredComicIds),
+          featuredComics: {
+            create: featuredComicsCreate(data.featuredComicIds),
+          },
         }),
       },
       include: FEATURED_COMIC_IDS_INCLUDE,
@@ -320,9 +326,9 @@ export async function updateBlog(
       data: updateData,
       include: FEATURED_COMIC_IDS_INCLUDE,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // A featured comic was deleted between assertComicsExist and the insert.
-    if (error.code === "P2003") {
+    if ((error as { code?: string }).code === "P2003") {
       throw new ValidationError("One or more featured comics were not found");
     }
     throw error;
@@ -469,7 +475,7 @@ export async function deleteBlog(id: string) {
       await deleteFile("public", ogR2Key);
     } catch (error) {
       logger.warn(
-        { error, blogId: id, ogR2Key },
+        { err: error, blogId: id, ogR2Key },
         "Blog deleted but share image R2 cleanup failed"
       );
     }

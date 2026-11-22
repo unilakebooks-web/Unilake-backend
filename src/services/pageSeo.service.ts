@@ -171,7 +171,7 @@ export async function upsertPageSeo(
       logger.info({ slug, key }, "Old page SEO share image deleted from R2");
     } catch (error) {
       logger.warn(
-        { error, slug, key },
+        { err: error, slug, key },
         "Page SEO share image replaced/cleared but old R2 file cleanup failed"
       );
     }

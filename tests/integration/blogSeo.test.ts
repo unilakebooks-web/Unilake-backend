@@ -393,6 +393,13 @@ describe("share fields and alt", () => {
     expect((await rowOf(blog.id)).ogImageUrl).toBeNull();
   });
 
+  it("deleting a blog removes its share image file", async () => {
+    const blog = await makeBlog("ogDelete", { ogImageKey: "blogs/og5.webp" });
+    expect(deleteFile).not.toHaveBeenCalled();
+    await deleteBlog(blog.id);
+    expect(deleteFile).toHaveBeenCalledWith("public", "blogs/og5.webp");
+  });
+
   it("null clears a share field and the slug stays frozen", async () => {
     const blog = await makeBlog("ogClear", { ogTitle: "Gone soon" });
     const updated = await updateBlog(blog.id, {
