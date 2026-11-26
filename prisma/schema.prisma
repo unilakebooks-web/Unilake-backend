@@ -969,6 +969,12 @@ model Blog {
   publishedAt      DateTime?
   featuredComics   BlogComic[]
 
+  // This post's own author (a guest author), shown instead of the site-wide
+  // blog author in SiteSetting. Empty name = the post uses the site-wide author.
+  authorName         String?
+  authorInstagramUrl String?
+  authorLinkedinUrl  String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1081,7 +1087,7 @@ model SiteSetting {
   metaTitle       String?
   metaDescription String?
 
-  // The one author shown on every blog post.
+  // The author shown on every blog post that has no author of its own.
   blogAuthorName         String?
   blogAuthorInstagramUrl String?
   blogAuthorLinkedinUrl  String?

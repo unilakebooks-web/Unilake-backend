@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { altText, seoText } from "./seoText.schema.js";
+import { optionalWebUrl } from "./siteSetting.schema.js";
 
 export const getBlogUploadUrlSchema = z.object({
   fileName: z.string().min(1, "File name is required"),
@@ -50,6 +51,13 @@ const ogImageKeySchema = seoText(500, "Share image key").refine(
     (key.startsWith(BLOG_OG_IMAGE_KEY_PREFIX) && !key.includes("..")),
   { message: "Share image key is not valid. Upload the image again." }
 );
+// The post's own author, for a guest post. A blank name stores null and the post
+// shows the site-wide author from the settings instead. The links are rendered as
+// href on the post, so only http:// or https:// addresses are accepted.
+const authorNameSchema = seoText(100, "Author name");
+const authorInstagramUrlSchema = optionalWebUrl("Author Instagram URL");
+const authorLinkedinUrlSchema = optionalWebUrl("Author LinkedIn URL");
+
 const featuredComicIdsSchema = z
   .array(z.string().uuid("Each featured comic must be a valid id"))
   .max(6, "A blog can feature at most 6 comics")
@@ -71,6 +79,9 @@ export const createBlogSchema = z.object({
   ogImageKey: ogImageKeySchema,
   coverImageAlt: altText,
   featuredComicIds: featuredComicIdsSchema,
+  authorName: authorNameSchema,
+  authorInstagramUrl: authorInstagramUrlSchema,
+  authorLinkedinUrl: authorLinkedinUrlSchema,
 });
 
 export const updateBlogSchema = z
@@ -87,6 +98,9 @@ export const updateBlogSchema = z
     ogImageKey: ogImageKeySchema,
     coverImageAlt: altText,
     featuredComicIds: featuredComicIdsSchema,
+    authorName: authorNameSchema,
+    authorInstagramUrl: authorInstagramUrlSchema,
+    authorLinkedinUrl: authorLinkedinUrlSchema,
     // NOTE: `slug` and `isActive` are deliberately absent.
     // slug is frozen after create so shared links never 404.
     // isActive is owned exclusively by PATCH /blogs/:id/status.

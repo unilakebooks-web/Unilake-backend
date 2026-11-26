@@ -161,6 +161,9 @@ export async function createBlog(data: {
   ogImageKey?: string | null;
   coverImageAlt?: string | null;
   featuredComicIds?: string[];
+  authorName?: string | null;
+  authorInstagramUrl?: string | null;
+  authorLinkedinUrl?: string | null;
 }) {
   const slug = await generateUniqueSlug(data.title);
   await assertComicsExist(data.featuredComicIds ?? []);
@@ -193,6 +196,14 @@ export async function createBlog(data: {
         }),
         ...(data.coverImageAlt != null && {
           coverImageAlt: data.coverImageAlt,
+        }),
+        // The post's own author; left unset, the post shows the site-wide author.
+        ...(data.authorName != null && { authorName: data.authorName }),
+        ...(data.authorInstagramUrl != null && {
+          authorInstagramUrl: data.authorInstagramUrl,
+        }),
+        ...(data.authorLinkedinUrl != null && {
+          authorLinkedinUrl: data.authorLinkedinUrl,
         }),
         // A new post has no rows to replace: deleteMany exists only on update.
         ...(data.featuredComicIds !== undefined && {
@@ -240,6 +251,9 @@ export async function updateBlog(
     ogImageKey?: string | null;
     coverImageAlt?: string | null;
     featuredComicIds?: string[];
+    authorName?: string | null;
+    authorInstagramUrl?: string | null;
+    authorLinkedinUrl?: string | null;
   }
 ) {
   const existing = await prisma.blog.findUnique({ where: { id } });
@@ -266,6 +280,11 @@ export async function updateBlog(
     updateData.ogDescription = data.ogDescription;
   if (data.coverImageAlt !== undefined)
     updateData.coverImageAlt = data.coverImageAlt;
+  if (data.authorName !== undefined) updateData.authorName = data.authorName;
+  if (data.authorInstagramUrl !== undefined)
+    updateData.authorInstagramUrl = data.authorInstagramUrl;
+  if (data.authorLinkedinUrl !== undefined)
+    updateData.authorLinkedinUrl = data.authorLinkedinUrl;
 
   // contentUpdatedAt moves only when the reader-visible content really
   // differs from what is stored: the admin form resends every field on every
