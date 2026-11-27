@@ -137,4 +137,6 @@ export const IGNORED_URL_COLUMNS: Record<string, string> = {
   "PageSeo.ogImageAlt": "alt text, not a key",
   "SiteSetting.blogAuthorInstagramUrl": "a link to another site",
   "SiteSetting.blogAuthorLinkedinUrl": "a link to another site",
+  "Blog.authorInstagramUrl": "a link to another site",
+  "Blog.authorLinkedinUrl": "a link to another site",
 };

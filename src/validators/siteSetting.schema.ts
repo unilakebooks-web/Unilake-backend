@@ -26,9 +26,9 @@ const optionalUrl = (label: string) =>
 /**
  * Blog author profile link. Only http:// or https:// addresses: z.string().url() also accepts
  * javascript: and data:, and these links are rendered as href on every blog post. An empty
- * string clears the link, the same as null.
+ * string clears the link, the same as null. Also used for a post's own author (blog.schema.ts).
  */
-const optionalWebUrl = (label: string) =>
+export const optionalWebUrl = (label: string) =>
   z
     .string()
     .trim()
@@ -158,7 +158,8 @@ export const updateSiteSettingSchema = z
     linkedinUrl: optionalUrl("LinkedIn URL"),
 
     // ---- Blog author ----
-    // The one author shown on every blog post. The links are web addresses only (http or https).
+    // The author shown on every blog post that has no author of its own. The links are web
+    // addresses only (http or https).
     blogAuthorName: optionalText(100, "Blog author name"),
     blogAuthorInstagramUrl: optionalWebUrl("Blog author Instagram URL"),
     blogAuthorLinkedinUrl: optionalWebUrl("Blog author LinkedIn URL"),
